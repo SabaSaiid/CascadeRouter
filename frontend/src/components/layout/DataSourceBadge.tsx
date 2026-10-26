@@ -1,5 +1,5 @@
 import type { FC } from 'react';
-import { Radio, Database, ShieldAlert } from 'lucide-react';
+import { Check, Database, Radio, TriangleAlert } from 'lucide-react';
 import type { DataSourceMode } from '../../types';
 
 interface DataSourceBadgeProps {
@@ -8,71 +8,55 @@ interface DataSourceBadgeProps {
   interactive?: boolean;
 }
 
+const MODES: DataSourceMode[] = ['live', 'recorded', 'mock'];
+
+const CONFIG = {
+  live: {
+    label: 'Live — Nebius',
+    icon: Radio,
+    dot: 'bg-[var(--cr-pass)] animate-pulse',
+    className: 'text-[var(--cr-pass)]',
+  },
+  recorded: {
+    label: 'Recorded run',
+    icon: Database,
+    dot: 'bg-[var(--cr-accent)]',
+    className: 'text-[var(--cr-accent)]',
+  },
+  mock: {
+    label: 'Mock data',
+    icon: TriangleAlert,
+    dot: 'bg-[var(--cr-warn)]',
+    className: 'text-[var(--cr-warn)]',
+  },
+} satisfies Record<DataSourceMode, { label: string; icon: typeof Check; dot: string; className: string }>;
+
 export const DataSourceBadge: FC<DataSourceBadgeProps> = ({
   mode,
   onModeChange,
   interactive = true,
 }) => {
-  const getBadgeConfig = () => {
-    switch (mode) {
-      case 'live':
-        return {
-          label: 'LIVE NEBIUS API',
-          icon: Radio,
-          className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20',
-          dotClass: 'bg-emerald-400 animate-pulse',
-        };
-      case 'recorded':
-        return {
-          label: 'RECORDED REPLAY',
-          icon: Database,
-          className: 'bg-blue-500/10 text-blue-400 border-blue-500/30 hover:bg-blue-500/20',
-          dotClass: 'bg-blue-400',
-        };
-      case 'mock':
-      default:
-        return {
-          label: 'OFFLINE MOCK FIXTURE',
-          icon: ShieldAlert,
-          className: 'bg-amber-500/10 text-amber-300 border-amber-500/30 hover:bg-amber-500/20',
-          dotClass: 'bg-amber-400',
-        };
-    }
+  const cfg = CONFIG[mode];
+  const Icon = cfg.icon;
+
+  const cycle = () => {
+    if (!onModeChange) return;
+    const next = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+    onModeChange(next);
   };
 
-  const config = getBadgeConfig();
-  const Icon = config.icon;
-
-  if (!interactive || !onModeChange) {
-    return (
-      <div
-        id="data-source-badge"
-        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border ${config.className}`}
-        title="Active Telemetry Data Mode"
-      >
-        <span className={`w-2 h-2 rounded-full ${config.dotClass}`} />
-        <Icon className="w-3.5 h-3.5" />
-        <span>{config.label}</span>
-      </div>
-    );
-  }
-
   return (
-    <div className="relative inline-block text-left" id="data-source-selector">
-      <div
-        className={`inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold border cursor-pointer transition-colors ${config.className}`}
-        onClick={() => {
-          const nextMode: DataSourceMode =
-            mode === 'live' ? 'mock' : mode === 'mock' ? 'recorded' : 'live';
-          onModeChange(nextMode);
-        }}
-        title="Click to toggle data source mode (Live / Mock / Recorded)"
-      >
-        <span className={`w-2 h-2 rounded-full ${config.dotClass}`} />
-        <Icon className="w-3.5 h-3.5" />
-        <span>{config.label}</span>
-        <span className="text-[10px] opacity-60 underline ml-0.5">Toggle</span>
-      </div>
-    </div>
+    <button
+      id="data-source-badge"
+      type="button"
+      onClick={interactive ? cycle : undefined}
+      disabled={!interactive || !onModeChange}
+      title="Toggle data source (Live / Mock / Recorded)"
+      className="btn-ghost flex items-center gap-2 text-[var(--cr-muted)] cr-transition"
+    >
+      <span className={`inline-block w-2 h-2 rounded-full ${cfg.dot}`} aria-hidden="true" />
+      <Icon className={`w-3.5 h-3.5 ${cfg.className}`} aria-hidden="true" />
+      <span className={`text-xs ${cfg.className}`}>{cfg.label}</span>
+    </button>
   );
 };

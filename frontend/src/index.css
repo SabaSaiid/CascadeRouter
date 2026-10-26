@@ -1,36 +1,486 @@
+/* ==============================================================================
+   CascadeRouter IDE – Design System
+   Tokens → CSS custom properties, mapped into Tailwind theme via @theme.
+   IBM Plex Sans for UI. IBM Plex Mono for code, paths, model IDs.
+   ============================================================================= */
+
+/* IBM Plex Sans + IBM Plex Mono loaded via Google Fonts CDN in index.html */
 @import "tailwindcss";
 
-@layer base {
-  * {
-    border-color: rgba(255, 255, 255, 0.08);
-  }
+/* --------------------------------------------------------------------------- */
+/* Design tokens                                                                */
+/* --------------------------------------------------------------------------- */
+:root {
+  /* Canvas */
+  --cr-canvas:      #0F1115;
+  --cr-panel:       #151821;
+  --cr-raised:      #1B1F2A;
+  --cr-line:        #262B38;
+
+  /* Text */
+  --cr-text:        #E9ECF2;
+  --cr-muted:       #A6AEBD;
+  --cr-subtle:      #7E8799;   /* minimum – never dimmer */
+
+  /* Accent (single) */
+  --cr-accent:      #5B8CFF;
+
+  /* Status – small icons / text only, never filled backgrounds */
+  --cr-pass:        #3FB68B;
+  --cr-fail:        #E5646E;
+  --cr-warn:        #E0A93B;
+
+  /* Type scale */
+  --cr-fs-xs:   12px;
+  --cr-fs-sm:   13px;
+  --cr-fs-base: 14px;
+  --cr-fs-md:   16px;
+  --cr-fs-lg:   20px;
+  --cr-fs-xl:   28px;
+
+  /* Spacing grid (4px) */
+  --cr-space-1: 4px;
+  --cr-space-2: 8px;
+  --cr-space-3: 12px;
+  --cr-space-4: 16px;
+  --cr-space-5: 20px;
+
+  /* Radii */
+  --cr-r-chip:    4px;
+  --cr-r-control: 6px;
+  --cr-r-panel:   10px;
+
+  /* Layout */
+  --cr-header-h:    56px;
+  --cr-left-w:      264px;
+  --cr-right-w:     400px;
+}
+
+/* --------------------------------------------------------------------------- */
+/* Tailwind v4 theme extension                                                  */
+/* --------------------------------------------------------------------------- */
+@theme {
+  --color-canvas:   var(--cr-canvas);
+  --color-panel:    var(--cr-panel);
+  --color-raised:   var(--cr-raised);
+  --color-line:     var(--cr-line);
+  --color-cr-text:  var(--cr-text);
+  --color-muted:    var(--cr-muted);
+  --color-subtle:   var(--cr-subtle);
+  --color-accent:   var(--cr-accent);
+  --color-pass:     var(--cr-pass);
+  --color-fail:     var(--cr-fail);
+  --color-warn:     var(--cr-warn);
+
+  --font-sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* --------------------------------------------------------------------------- */
+/* Base reset                                                                   */
+/* --------------------------------------------------------------------------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  background-color: #090d16;
-  color: #f1f5f9;
+  font-family: var(--font-sans);
+  font-size: var(--cr-fs-sm);
+  background: var(--cr-canvas);
+  color: var(--cr-text);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
 }
 
-code, pre, .font-mono {
-  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+/* Tabular figures everywhere numbers appear */
+.num {
+  font-variant-numeric: tabular-nums;
 }
 
-/* Custom workbench scrollbars */
-::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+/* Monospace surfaces */
+code, pre, .mono {
+  font-family: var(--font-mono);
 }
 
-::-webkit-scrollbar-track {
-  background: rgba(11, 15, 23, 0.8);
+/* --------------------------------------------------------------------------- */
+/* Scrollbars – thin, quiet                                                    */
+/* --------------------------------------------------------------------------- */
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--cr-line); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--cr-subtle); }
+
+/* --------------------------------------------------------------------------- */
+/* Focus ring – accent, 2px                                                    */
+/* --------------------------------------------------------------------------- */
+:focus-visible {
+  outline: 2px solid var(--cr-accent);
+  outline-offset: 2px;
+  border-radius: var(--cr-r-control);
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(71, 85, 105, 0.4);
-  border-radius: 9999px;
+/* --------------------------------------------------------------------------- */
+/* Transitions – only state-change, respect reduced-motion                     */
+/* --------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: no-preference) {
+  .cr-transition {
+    transition: background-color 140ms ease, color 140ms ease,
+                border-color 140ms ease, opacity 140ms ease;
+  }
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.6);
+/* --------------------------------------------------------------------------- */
+/* Hairline border helper                                                       */
+/* --------------------------------------------------------------------------- */
+.cr-border-t { border-top: 1px solid var(--cr-line); }
+.cr-border-b { border-bottom: 1px solid var(--cr-line); }
+.cr-border-r { border-right: 1px solid var(--cr-line); }
+.cr-border-l { border-left: 1px solid var(--cr-line); }
+.cr-border   { border: 1px solid var(--cr-line); }
+
+/* --------------------------------------------------------------------------- */
+/* Button primitives                                                            */
+/* --------------------------------------------------------------------------- */
+
+/* Primary – exactly one visible at a time */
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--cr-r-control);
+  background: var(--cr-accent);
+  color: #fff;
+  font-size: var(--cr-fs-xs);
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: none;
+  min-height: 32px;
+  white-space: nowrap;
 }
+.btn-primary:hover { background: #7aa6ff; }
+.btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Outline */
+.btn-outline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: var(--cr-r-control);
+  background: transparent;
+  color: var(--cr-muted);
+  font-size: var(--cr-fs-xs);
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: 1px solid var(--cr-line);
+  min-height: 32px;
+  white-space: nowrap;
+}
+.btn-outline:hover { color: var(--cr-text); border-color: var(--cr-subtle); }
+.btn-outline:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Ghost / text button */
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--cr-r-control);
+  background: transparent;
+  color: var(--cr-muted);
+  font-size: var(--cr-fs-xs);
+  font-weight: 500;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  border: none;
+  min-height: 32px;
+  white-space: nowrap;
+}
+.btn-ghost:hover { color: var(--cr-text); background: var(--cr-raised); }
+
+/* --------------------------------------------------------------------------- */
+/* Chip                                                                         */
+/* --------------------------------------------------------------------------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: var(--cr-r-chip);
+  font-size: var(--cr-fs-xs);
+  font-weight: 500;
+  border: 1px solid var(--cr-line);
+  color: var(--cr-muted);
+  background: var(--cr-raised);
+  white-space: nowrap;
+}
+
+.chip-accent {
+  border-color: color-mix(in srgb, var(--cr-accent) 30%, transparent);
+  color: var(--cr-accent);
+  background: color-mix(in srgb, var(--cr-accent) 8%, transparent);
+}
+
+.chip-pass {
+  border-color: color-mix(in srgb, var(--cr-pass) 30%, transparent);
+  color: var(--cr-pass);
+  background: color-mix(in srgb, var(--cr-pass) 8%, transparent);
+}
+
+.chip-warn {
+  border-color: color-mix(in srgb, var(--cr-warn) 30%, transparent);
+  color: var(--cr-warn);
+  background: color-mix(in srgb, var(--cr-warn) 8%, transparent);
+}
+
+/* --------------------------------------------------------------------------- */
+/* Progress trail dots                                                          */
+/* --------------------------------------------------------------------------- */
+.progress-trail {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.trail-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--cr-fs-xs);
+  color: var(--cr-subtle);
+  white-space: nowrap;
+}
+
+.trail-step.done   { color: var(--cr-pass); }
+.trail-step.active { color: var(--cr-text); }
+
+.trail-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cr-line);
+  flex-shrink: 0;
+}
+
+.trail-step.done   .trail-dot { background: var(--cr-pass); }
+.trail-step.active .trail-dot { background: var(--cr-accent); }
+
+.trail-connector {
+  width: 24px;
+  height: 1px;
+  background: var(--cr-line);
+  flex-shrink: 0;
+}
+
+/* --------------------------------------------------------------------------- */
+/* Benchmark table                                                              */
+/* --------------------------------------------------------------------------- */
+.benchmark-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.benchmark-table th,
+.benchmark-table td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.benchmark-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--cr-panel);
+}
+
+/* Column widths – fits at 1366px without horizontal scroll               */
+/* Call col: 160px; 4 model cols: ~118px each; total ≤ 1366-264-400=702px */
+.col-call  { width: 160px; min-width: 140px; }
+.col-model { width: 120px; min-width: 108px; }
+
+/* Recommended cell highlight */
+.cell-recommended {
+  outline: 1px solid var(--cr-accent);
+  outline-offset: -1px;
+  background: color-mix(in srgb, var(--cr-accent) 6%, var(--cr-raised));
+  border-radius: 2px;
+}
+
+/* Failed cell – muted, no red fill */
+.cell-failed {
+  color: var(--cr-subtle);
+}
+
+/* Row height */
+.benchmark-row td {
+  height: 48px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--cr-line);
+}
+
+.benchmark-row:hover td {
+  background: color-mix(in srgb, var(--cr-accent) 3%, transparent);
+}
+
+.benchmark-row.row-selected td {
+  background: color-mix(in srgb, var(--cr-accent) 6%, transparent);
+}
+
+/* Accent left bar for selected table row */
+.benchmark-row.row-selected td:first-child {
+  box-shadow: inset 2px 0 0 var(--cr-accent);
+}
+
+/* --------------------------------------------------------------------------- */
+/* Diff viewer                                                                  */
+/* --------------------------------------------------------------------------- */
+.diff-line-add {
+  background: color-mix(in srgb, var(--cr-pass) 12%, transparent);
+  color: var(--cr-pass);
+}
+
+.diff-line-del {
+  background: color-mix(in srgb, var(--cr-fail) 12%, transparent);
+  color: var(--cr-fail);
+}
+
+.diff-line-header {
+  color: var(--cr-accent);
+  font-weight: 600;
+}
+
+.diff-line-ctx {
+  color: var(--cr-muted);
+}
+
+/* --------------------------------------------------------------------------- */
+/* Skeleton loader                                                              */
+/* --------------------------------------------------------------------------- */
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position:  200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(90deg,
+    var(--cr-raised) 25%,
+    var(--cr-line)   50%,
+    var(--cr-raised) 75%
+  );
+  background-size: 200% 100%;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skeleton { animation: shimmer 1.4s ease infinite; }
+}
+
+/* --------------------------------------------------------------------------- */
+/* Left pane node rows                                                          */
+/* --------------------------------------------------------------------------- */
+.node-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--cr-line);
+  min-height: 56px;
+}
+
+.node-row:hover { background: var(--cr-raised); }
+
+.node-row.node-selected {
+  background: color-mix(in srgb, var(--cr-accent) 7%, var(--cr-panel));
+}
+
+/* 2px accent bar on left for selected */
+.node-row.node-selected::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: var(--cr-accent);
+  border-radius: 0 1px 1px 0;
+}
+
+/* --------------------------------------------------------------------------- */
+/* Tabs (right pane)                                                            */
+/* --------------------------------------------------------------------------- */
+.tab-bar {
+  display: flex;
+  border-bottom: 1px solid var(--cr-line);
+  padding: 0 16px;
+  gap: 0;
+}
+
+.tab-btn {
+  padding: 10px 12px;
+  font-size: var(--cr-fs-xs);
+  font-weight: 500;
+  color: var(--cr-subtle);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  margin-bottom: -1px;
+  white-space: nowrap;
+  min-height: 32px;
+}
+
+.tab-btn:hover { color: var(--cr-muted); }
+.tab-btn[aria-selected="true"] {
+  color: var(--cr-text);
+  border-bottom-color: var(--cr-accent);
+}
+
+/* --------------------------------------------------------------------------- */
+/* Mock data warning banner                                                     */
+/* --------------------------------------------------------------------------- */
+.mock-banner {
+  background: color-mix(in srgb, var(--cr-warn) 15%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--cr-warn) 30%, transparent);
+  color: var(--cr-warn);
+  font-size: var(--cr-fs-xs);
+  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --------------------------------------------------------------------------- */
+/* Spend bar                                                                    */
+/* --------------------------------------------------------------------------- */
+.spend-bar-track {
+  height: 2px;
+  background: var(--cr-line);
+  border-radius: 1px;
+  overflow: hidden;
+  margin-top: 3px;
+}
+
+.spend-bar-fill {
+  height: 100%;
+  background: var(--cr-accent);
+  border-radius: 1px;
+  transition: width 300ms ease;
+}
+
+/* --------------------------------------------------------------------------- */
+/* Policy YAML syntax hues (3 max)                                             */
+/* --------------------------------------------------------------------------- */
+.yaml-key   { color: var(--cr-accent); }
+.yaml-str   { color: var(--cr-pass); }
+.yaml-num   { color: var(--cr-warn); }
+.yaml-com   { color: var(--cr-subtle); }

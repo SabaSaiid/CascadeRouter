@@ -1,21 +1,12 @@
-import { useState, type FC } from 'react';
-import {
-  Activity,
-  CheckCircle2,
-  XCircle,
-  Clock,
-  Coins,
-  Sparkles,
-  Zap,
-  BarChart3,
-  AlertCircle,
-} from 'lucide-react';
+import { useState, useId, type FC } from 'react';
+import { Check, X } from 'lucide-react';
 import {
   NEMOTRON_CATALOG,
   type BenchmarkMetric,
   type BenchmarkRun,
   type ScanResult,
 } from '../../types';
+import { fmtCost, fmtMs, verdictSentence, shortModelName } from '../../utils/metrics';
 
 interface BenchmarkPaneProps {
   benchmarkRun: BenchmarkRun | null;
@@ -26,248 +17,406 @@ interface BenchmarkPaneProps {
   onSelectNode: (nodeId: string) => void;
 }
 
+// Short display names for table columns
+const MODEL_LABELS: Record<string, string> = {
+  'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B': 'Nano',
+  'nvidia/Nemotron-3_5-Lightning':          'Lightning',
+  'nvidia/Nemotron-3.5-Super-VL':           'Super',
+  'nvidia/Nemotron-3-Ultra-550b-a55b':      'Ultra',
+};
+
+const QUALITY_THRESHOLD = 0.92;
+
+interface DrawerMetric {
+  metric: BenchmarkMetric;
+  modelLabel: string;
+}
+
 export const BenchmarkPane: FC<BenchmarkPaneProps> = ({
   benchmarkRun,
   scanResult,
-  onRunBenchmark,
   isBenchmarking,
   selectedNodeId,
   onSelectNode,
 }) => {
-  const [activeCellMetric, setActiveCellMetric] = useState<BenchmarkMetric | null>(null);
+  const tableId = useId();
+  const [drawerData, setDrawerData] = useState<DrawerMetric | null>(null);
+  const [qualityThreshold] = useState(QUALITY_THRESHOLD);
 
-  const nodes = scanResult?.nodes || [];
+  const nodes = scanResult?.nodes ?? [];
+
+  const openDrawer = (metric: BenchmarkMetric, modelLabel: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDrawerData((prev) =>
+      prev?.metric.model_id === metric.model_id ? null : { metric, modelLabel }
+    );
+  };
+
+  const closeDrawer = () => setDrawerData(null);
 
   return (
-    <div className="flex flex-col h-full bg-[#0b0f19] border-r border-slate-800/80 overflow-hidden">
-      {/* Pane Header */}
-      <div className="p-3 border-b border-slate-800 bg-[#0e1424]/70 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-emerald-400" />
-          <span className="text-xs font-semibold uppercase tracking-wider text-slate-300">
-            Nemotron Benchmark Matrix (Nebius Token Factory)
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
-            <span className="text-slate-500">Quality Hurdle:</span>
-            <span className="font-mono text-emerald-400 font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
-              &ge; 0.92
-            </span>
-          </div>
-          <button
-            onClick={onRunBenchmark}
-            disabled={nodes.length === 0 || isBenchmarking}
-            className="flex items-center gap-1 px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-800 text-white rounded text-xs font-medium transition-colors"
+    <div className="flex flex-col h-full bg-[var(--cr-canvas)] overflow-hidden min-w-0">
+      {/* Toolbar */}
+      <div className="px-4 py-3 cr-border-b flex items-center gap-4 bg-[var(--cr-panel)]">
+        <h2 className="text-xs font-semibold text-[var(--cr-text)] whitespace-nowrap">
+          Benchmark
+        </h2>
+        {/* Quality threshold – could be made editable in a future iteration */}
+        <span className="text-xs text-[var(--cr-subtle)] whitespace-nowrap">
+          Quality ≥{' '}
+          <span className="num text-[var(--cr-muted)] font-medium">{qualityThreshold}</span>
+        </span>
+        {isBenchmarking && (
+          <span
+            className="text-xs text-[var(--cr-accent)]"
+            aria-live="polite"
+            aria-atomic="true"
           >
-            <Zap className="w-3 h-3" />
-            <span>{isBenchmarking ? 'Running Matrix...' : 'Run Benchmark'}</span>
-          </button>
-        </div>
+            Running…
+          </span>
+        )}
       </div>
 
-      {/* Progress & Concurrency Banner */}
+      {/* Progress banner */}
       {isBenchmarking && (
-        <div className="px-4 py-2 bg-indigo-950/50 border-b border-indigo-800/50 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-indigo-400 animate-ping" />
-            <span className="text-xs text-indigo-200">
-              Benchmarking {nodes.length} nodes across 4 Nemotron tiers with bounded concurrency (4 workers)...
-            </span>
-          </div>
-          <span className="text-xs font-mono text-indigo-300 font-bold">
-            {benchmarkRun?.progress_pct || 45}%
-          </span>
+        <div
+          className="px-4 py-2 cr-border-b text-xs text-[var(--cr-muted)]"
+          aria-live="polite"
+          role="status"
+        >
+          <span className="num">
+            {benchmarkRun?.progress_pct ?? 0}%
+          </span>{' '}
+          complete — {benchmarkRun?.current_step ?? 'Evaluating…'}
         </div>
       )}
 
-      {/* Benchmark Matrix Container */}
-      <div className="flex-1 overflow-auto p-4">
+      {/* Table container */}
+      <div className="flex-1 overflow-auto">
         {nodes.length === 0 ? (
-          <div className="h-64 flex flex-col items-center justify-center text-center p-6 text-slate-500 border border-dashed border-slate-800 rounded-xl">
-            <BarChart3 className="w-10 h-10 text-slate-600 mb-2" />
-            <h3 className="text-sm font-semibold text-slate-300">Matrix Idle</h3>
-            <p className="text-xs text-slate-500 mt-1 max-w-sm">
-              Scan repository first to populate LLM nodes, then run the benchmark across NVIDIA Nemotron tiers.
+          <div className="flex flex-col items-center justify-center h-48 gap-2">
+            {/* Skeleton rows */}
+            <div className="w-full max-w-lg px-4 space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="skeleton h-12 rounded" />
+              ))}
+            </div>
+            <p className="text-xs text-[var(--cr-subtle)] mt-2">
+              Scan a repository, then run the benchmark.
             </p>
           </div>
         ) : (
-          <div className="min-w-[700px]">
-            {/* Model Tier Header Row */}
-            <div className="grid grid-cols-[180px_repeat(4,1fr)] gap-2 mb-2 pb-2 border-b border-slate-800/80">
-              <div className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider flex items-end pb-1">
-                LLM Call Site
-              </div>
-              {NEMOTRON_CATALOG.map((model) => (
-                <div
-                  key={model.id}
-                  className="p-2.5 rounded-lg bg-[#111726] border border-slate-800/90 flex flex-col justify-between"
+          <table
+            id={tableId}
+            className="benchmark-table"
+            aria-label="Nemotron tier benchmark results"
+          >
+            <thead>
+              <tr>
+                {/* Call column */}
+                <th
+                  scope="col"
+                  className="col-call px-4 py-2.5 text-left cr-border-b"
+                  style={{ background: 'var(--cr-panel)' }}
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-slate-200 truncate" title={model.name}>
-                      {model.name}
-                    </span>
-                    <span
-                      className={`text-[9px] font-semibold px-1.5 py-0.5 rounded uppercase tracking-wider ${
-                        model.tier === 'efficient'
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                          : model.tier === 'balanced'
-                          ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
-                          : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                      }`}
+                  <span className="text-xs font-medium text-[var(--cr-muted)]">Call</span>
+                </th>
+
+                {/* Model columns */}
+                {NEMOTRON_CATALOG.map((model) => {
+                  const label = MODEL_LABELS[model.id] ?? model.name;
+                  const isBaseline = /ultra/i.test(model.id);
+                  return (
+                    <th
+                      key={model.id}
+                      scope="col"
+                      className="col-model px-2 py-2 cr-border-b"
+                      style={{ background: 'var(--cr-panel)' }}
                     >
-                      {model.tier}
-                    </span>
-                  </div>
-                  <div className="mt-2 text-[10px] font-mono text-slate-400 flex items-center justify-between border-t border-slate-800 pt-1.5">
-                    <span>In: ${model.inputPricePerM}/1M</span>
-                    <span>Out: ${model.outputPricePerM}/1M</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Matrix Data Rows */}
-            <div className="space-y-2.5">
-              {nodes.map((node) => {
-                const nodeBench = benchmarkRun?.nodes.find((n) => n.node_id === node.node_id);
-                const isSelected = selectedNodeId === node.node_id;
-
-                return (
-                  <div
-                    key={node.node_id}
-                    onClick={() => onSelectNode(node.node_id)}
-                    className={`grid grid-cols-[180px_repeat(4,1fr)] gap-2 p-2 rounded-xl border transition-all ${
-                      isSelected
-                        ? 'bg-indigo-950/20 border-indigo-500/40 shadow-lg'
-                        : 'bg-[#0f1422]/60 border-slate-800/60 hover:border-slate-700/80'
-                    }`}
-                  >
-                    {/* Node Label Column */}
-                    <div className="flex flex-col justify-center pr-2">
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" />
-                        <span className="font-mono text-xs font-bold text-slate-200 truncate" title={node.node_id}>
-                          {node.node_id}
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-xs font-semibold text-[var(--cr-text)]">
+                          {label}
+                          {isBaseline && (
+                            <span className="ml-1 text-[10px] text-[var(--cr-subtle)] font-normal">
+                              current
+                            </span>
+                          )}
+                        </span>
+                        <span className="mono text-[10px] text-[var(--cr-subtle)] whitespace-nowrap overflow-hidden text-ellipsis block">
+                          {`$${model.inputPricePerM}/$${model.outputPricePerM}/1M`}
                         </span>
                       </div>
-                      <span className="text-[10px] font-mono text-slate-500 truncate mt-1">
-                        {node.file_path.split('/').pop()}:{node.line_number}
-                      </span>
-                    </div>
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
 
-                    {/* 4 Model Metric Cells */}
-                    {NEMOTRON_CATALOG.map((model) => {
-                      const metric = nodeBench?.metrics_by_model[model.id];
-                      const isRecommended = nodeBench?.recommended_model_id === model.id;
+            <tbody>
+              {nodes.map((node) => {
+                const nodeBench = benchmarkRun?.nodes.find((n) => n.node_id === node.node_id);
+                const isRowSelected = selectedNodeId === node.node_id;
 
-                      if (!metric) {
-                        return (
-                          <div
-                            key={model.id}
-                            className="h-24 rounded-lg bg-slate-900/40 border border-slate-800/40 flex items-center justify-center text-slate-600 text-xs font-mono"
-                          >
-                            {isBenchmarking ? (
-                              <span className="animate-pulse text-indigo-400 text-[11px]">Benchmarking...</span>
-                            ) : (
-                              'Pending'
-                            )}
-                          </div>
-                        );
-                      }
+                // Verdict sentence data
+                const sentenceMetrics = NEMOTRON_CATALOG.map((model) => {
+                  const m = nodeBench?.metrics_by_model[model.id];
+                  return {
+                    name: MODEL_LABELS[model.id] ?? model.name,
+                    passes: m?.passes_validation ?? false,
+                    cost: m?.estimated_cost_usd ?? 0,
+                    quality: m?.quality_score ?? 0,
+                    latency: m?.total_latency_ms ?? 0,
+                  };
+                });
 
-                      return (
-                        <div
-                          key={model.id}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveCellMetric(metric);
-                            onSelectNode(node.node_id);
-                          }}
-                          className={`p-2.5 rounded-lg border transition-all cursor-pointer relative ${
-                            isRecommended
-                              ? 'bg-gradient-to-b from-emerald-950/40 to-slate-900/90 border-emerald-500/60 shadow-md shadow-emerald-950/40'
-                              : metric.passes_validation
-                              ? 'bg-slate-900/80 border-slate-800 hover:border-slate-700 hover:bg-slate-900'
-                              : 'bg-rose-950/20 border-rose-900/50 hover:border-rose-800/70'
-                          }`}
-                        >
-                          {/* Recommended Ribbon */}
-                          {isRecommended && (
-                            <div className="absolute -top-2 right-2 px-1.5 py-0.5 rounded bg-emerald-500 text-[9px] font-bold text-slate-950 uppercase tracking-wider flex items-center gap-0.5 shadow">
-                              <Sparkles className="w-2.5 h-2.5" />
-                              <span>FinOps Pick</span>
-                            </div>
-                          )}
+                const recModelId = nodeBench?.recommended_model_id ?? null;
+                const recName = recModelId ? (MODEL_LABELS[recModelId] ?? shortModelName(recModelId)) : null;
 
-                          {/* Top Row: Latency & Quality Pass/Fail */}
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="font-mono font-semibold text-slate-200 flex items-center gap-1">
-                              <Clock className="w-3 h-3 text-slate-500" />
-                              {metric.total_latency_ms}ms
-                            </span>
-                            {metric.passes_validation ? (
-                              <span
-                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400"
-                                title={`Quality score: ${metric.quality_score} >= 0.92`}
-                              >
-                                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                <span>PASS</span>
-                              </span>
-                            ) : (
-                              <span
-                                className="inline-flex items-center gap-1 text-[10px] font-semibold text-rose-400"
-                                title={metric.validation_errors.join('; ')}
-                              >
-                                <XCircle className="w-3 h-3 text-rose-400" />
-                                <span>FAIL</span>
-                              </span>
-                            )}
-                          </div>
+                const verdict = nodeBench
+                  ? verdictSentence(
+                      node.function_name ?? node.node_id,
+                      sentenceMetrics,
+                      recName,
+                      qualityThreshold
+                    )
+                  : null;
 
-                          {/* Middle Row: FinOps Cost */}
-                          <div className="mt-2 flex items-center justify-between text-[11px] font-mono">
-                            <span className="text-slate-500 flex items-center gap-1">
-                              <Coins className="w-3 h-3 text-amber-500/70" />
-                              Cost:
-                            </span>
-                            <span className="font-bold text-emerald-300">
-                              ${metric.estimated_cost_usd.toFixed(6)}
-                            </span>
-                          </div>
-
-                          {/* Bottom Row: TTFT & Tokens */}
-                          <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500 font-mono">
-                            <span>TTFT: {metric.time_to_first_token_ms || '--'}ms</span>
-                            <span>{metric.input_tokens + metric.output_tokens} tok</span>
-                          </div>
+                return (
+                  <>
+                    <tr
+                      key={node.node_id}
+                      className={`benchmark-row cr-transition cursor-pointer ${isRowSelected ? 'row-selected' : ''}`}
+                      onClick={() => {
+                        onSelectNode(node.node_id);
+                        closeDrawer();
+                      }}
+                      aria-selected={isRowSelected}
+                    >
+                      {/* Call label cell */}
+                      <td className="col-call px-4">
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-sm font-medium text-[var(--cr-text)] truncate" title={node.function_name ?? node.node_id}>
+                            {node.function_name ?? node.node_id}
+                          </span>
+                          <span className="mono text-xs text-[var(--cr-subtle)] truncate">
+                            {node.file_path.split('/').pop()}:{node.line_number}
+                          </span>
                         </div>
-                      );
-                    })}
-                  </div>
+                      </td>
+
+                      {/* Model metric cells */}
+                      {NEMOTRON_CATALOG.map((model) => {
+                        const metric = nodeBench?.metrics_by_model[model.id];
+                        const isRecommended = nodeBench?.recommended_model_id === model.id;
+                        const label = MODEL_LABELS[model.id] ?? model.name;
+
+                        if (!metric) {
+                          return (
+                            <td key={model.id} className="col-model px-2 py-2">
+                              <div className="h-10 flex items-center">
+                                {isBenchmarking ? (
+                                  <div className="skeleton h-8 w-full rounded" />
+                                ) : (
+                                  <span className="text-xs text-[var(--cr-subtle)]">—</span>
+                                )}
+                              </div>
+                            </td>
+                          );
+                        }
+
+                        const passes = metric.passes_validation;
+                        const isActive =
+                          drawerData?.metric.model_id === metric.model_id &&
+                          drawerData?.modelLabel === label;
+
+                        return (
+                          <td
+                            key={model.id}
+                            className={`col-model px-2 py-2 ${!passes ? 'cell-failed' : ''}`}
+                          >
+                            <div
+                              className={`rounded px-2 py-1.5 cursor-pointer cr-transition ${
+                                isRecommended
+                                  ? 'cell-recommended'
+                                  : isActive
+                                  ? 'bg-[var(--cr-raised)]'
+                                  : 'hover:bg-[var(--cr-raised)]'
+                              }`}
+                              onClick={(e) => openDrawer(metric, label, e)}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  openDrawer(metric, label, e as unknown as React.MouseEvent);
+                                }
+                              }}
+                              aria-label={`${label}: ${passes ? 'Pass' : 'Fail'}, ${fmtCost(metric.estimated_cost_usd)}`}
+                              aria-pressed={isActive}
+                            >
+                              {/* Line 1: pass/fail icon + cost */}
+                              <div className="flex items-center gap-1.5">
+                                {passes ? (
+                                  <>
+                                    <Check
+                                      className="w-3 h-3 text-[var(--cr-pass)] shrink-0"
+                                      aria-hidden="true"
+                                    />
+                                    <span className="sr-only">Pass</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <X
+                                      className="w-3 h-3 text-[var(--cr-fail)] shrink-0"
+                                      aria-hidden="true"
+                                    />
+                                    <span className="sr-only">Fail</span>
+                                  </>
+                                )}
+                                <span className="num mono text-xs font-medium text-[var(--cr-text)]">
+                                  {fmtCost(metric.estimated_cost_usd)}
+                                </span>
+                              </div>
+                              {/* Line 2: latency + quality */}
+                              <div className="mt-0.5 flex items-center gap-1 text-[10px] text-[var(--cr-subtle)]">
+                                <span className="num">{metric.total_latency_ms} ms</span>
+                                <span aria-hidden="true">·</span>
+                                <span className="num">q {metric.quality_score.toFixed(2)}</span>
+                              </div>
+                            </div>
+                          </td>
+                        );
+                      })}
+                    </tr>
+
+                    {/* Verdict row */}
+                    {verdict && (
+                      <tr
+                        key={`verdict-${node.node_id}`}
+                        aria-label="Verdict"
+                      >
+                        <td
+                          colSpan={NEMOTRON_CATALOG.length + 1}
+                          className="px-4 py-1.5"
+                          style={{ borderBottom: '1px solid var(--cr-line)' }}
+                        >
+                          <p className="text-xs text-[var(--cr-subtle)] italic">
+                            {verdict}
+                          </p>
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 );
               })}
-            </div>
+            </tbody>
+          </table>
+        )}
+
+        {/* Table legend */}
+        {nodes.length > 0 && (
+          <div className="px-4 py-3 flex items-center gap-4 text-[10px] text-[var(--cr-subtle)]">
+            <span className="flex items-center gap-1">
+              <Check className="w-3 h-3 text-[var(--cr-pass)]" aria-hidden="true" />
+              Pass (quality ≥ {qualityThreshold})
+            </span>
+            <span className="flex items-center gap-1">
+              <X className="w-3 h-3 text-[var(--cr-fail)]" aria-hidden="true" />
+              Fail
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="inline-block w-3 h-3 rounded border border-[var(--cr-accent)]" aria-hidden="true" />
+              Recommended
+            </span>
+            <span>Click a cell to inspect details</span>
           </div>
         )}
       </div>
 
-      {/* Telemetry Inspector Drawer */}
-      {activeCellMetric && (
-        <div className="p-3 border-t border-slate-800 bg-[#0e1424] flex items-center justify-between text-xs">
-          <div className="flex items-center gap-3">
-            <span className="font-semibold text-slate-300">{activeCellMetric.model_name}:</span>
-            <span className="text-slate-400 font-mono">
-              Quality Score: <strong className="text-emerald-400">{activeCellMetric.quality_score}</strong>
-            </span>
-            <span className="text-slate-400 font-mono">
-              Tokens: In <strong>{activeCellMetric.input_tokens}</strong> / Out <strong>{activeCellMetric.output_tokens}</strong>
-            </span>
+      {/* Detail drawer */}
+      {drawerData && (
+        <div
+          className="cr-border-t bg-[var(--cr-panel)] px-4 py-4"
+          role="region"
+          aria-label={`Detail: ${drawerData.modelLabel}`}
+        >
+          <div className="flex items-start justify-between gap-4 mb-3">
+            <div>
+              <span className="text-sm font-semibold text-[var(--cr-text)]">
+                {drawerData.modelLabel}
+              </span>
+              {drawerData.metric.is_estimated && (
+                <span className="ml-2 chip">estimated</span>
+              )}
+            </div>
+            <button
+              type="button"
+              className="btn-ghost p-0 min-h-0 text-xs"
+              onClick={closeDrawer}
+              aria-label="Close detail drawer"
+            >
+              ✕
+            </button>
           </div>
-          {activeCellMetric.validation_errors.length > 0 && (
-            <div className="flex items-center gap-1 text-rose-400 text-[11px]">
-              <AlertCircle className="w-3.5 h-3.5" />
-              <span>{activeCellMetric.validation_errors[0]}</span>
+
+          <div className="grid grid-cols-3 gap-x-6 gap-y-2 text-xs">
+            <div>
+              <div className="text-[var(--cr-subtle)]">Tokens in / out</div>
+              <div className="num font-medium text-[var(--cr-muted)]">
+                {drawerData.metric.input_tokens} / {drawerData.metric.output_tokens}
+              </div>
+            </div>
+            <div>
+              <div className="text-[var(--cr-subtle)]">TTFT</div>
+              <div className="num font-medium text-[var(--cr-muted)]">
+                {fmtMs(drawerData.metric.time_to_first_token_ms)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[var(--cr-subtle)]">Total latency</div>
+              <div className="num font-medium text-[var(--cr-muted)]">
+                {fmtMs(drawerData.metric.total_latency_ms)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[var(--cr-subtle)]">Quality score</div>
+              <div
+                className={`num font-medium ${
+                  drawerData.metric.passes_validation
+                    ? 'text-[var(--cr-pass)]'
+                    : 'text-[var(--cr-fail)]'
+                }`}
+              >
+                {drawerData.metric.quality_score.toFixed(3)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[var(--cr-subtle)]">Estimated cost</div>
+              <div className="num font-medium text-[var(--cr-muted)]">
+                {fmtCost(drawerData.metric.estimated_cost_usd)}
+              </div>
+            </div>
+            <div>
+              <div className="text-[var(--cr-subtle)]">Status</div>
+              <div
+                className={`font-medium ${
+                  drawerData.metric.passes_validation
+                    ? 'text-[var(--cr-pass)]'
+                    : 'text-[var(--cr-fail)]'
+                }`}
+              >
+                {drawerData.metric.passes_validation ? 'Pass' : 'Fail'}
+              </div>
+            </div>
+          </div>
+
+          {drawerData.metric.validation_errors.length > 0 && (
+            <div className="mt-3 text-xs text-[var(--cr-fail)]">
+              <div className="text-[var(--cr-subtle)] mb-1">Failure reason</div>
+              <ul className="space-y-0.5">
+                {drawerData.metric.validation_errors.map((err, i) => (
+                  <li key={i}>— {err}</li>
+                ))}
+              </ul>
             </div>
           )}
         </div>

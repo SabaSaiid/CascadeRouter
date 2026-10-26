@@ -82,8 +82,21 @@ export default function App() {
     }
   };
 
+  // Derive per-node recommended models for RepositoryPane chips
+  const recommendedModels: Record<string, string> = {};
+  if (benchmarkRun) {
+    for (const nodeBench of benchmarkRun.nodes) {
+      if (nodeBench.recommended_model_id) {
+        recommendedModels[nodeBench.node_id] = nodeBench.recommended_model_id;
+      }
+    }
+  }
+
+  // Compute total spend from optimizeResult (data-driven, not hard-coded)
+  const totalSpendUsd = optimizeResult?.total_baseline_cost_usd;
+
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#080c14] text-slate-100 overflow-hidden font-sans">
+    <div className="flex flex-col h-screen w-screen bg-[var(--cr-canvas)] text-[var(--cr-text)] overflow-hidden">
       {/* Top IDE Header */}
       <Header
         dataSourceMode={dataSourceMode}
@@ -96,20 +109,22 @@ export default function App() {
         isOptimizing={isOptimizing}
         hasScanResults={!!scanResult && scanResult.nodes.length > 0}
         hasBenchmarkResults={!!benchmarkRun && benchmarkRun.nodes.length > 0}
+        totalSpendUsd={totalSpendUsd}
       />
 
-      {/* Main 3-Pane Workbench Workspace */}
-      <main className="flex-1 grid grid-cols-1 md:grid-cols-[340px_1fr_420px] overflow-hidden divide-x divide-slate-800">
-        {/* Left Pane: Repository & AST Analysis */}
+      {/* Main 3-pane workbench */}
+      <main className="flex-1 flex overflow-hidden divide-x divide-[var(--cr-line)]">
+        {/* Left pane */}
         <RepositoryPane
           scanResult={scanResult}
           onScan={(path) => handleScan(path)}
           isScanning={isScanning}
           selectedNodeId={selectedNodeId}
           onSelectNode={setSelectedNodeId}
+          recommendedModels={recommendedModels}
         />
 
-        {/* Center Pane: Nemotron Benchmark Matrix */}
+        {/* Centre pane */}
         <BenchmarkPane
           benchmarkRun={benchmarkRun}
           scanResult={scanResult}
@@ -119,7 +134,7 @@ export default function App() {
           onSelectNode={setSelectedNodeId}
         />
 
-        {/* Right Pane: FinOps Optimization & Diff */}
+        {/* Right pane */}
         <OptimizationPane
           optimizeResult={optimizeResult}
           onOptimize={handleOptimize}
