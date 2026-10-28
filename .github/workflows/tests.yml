@@ -22,17 +22,15 @@ jobs:
 
       - name: Install Backend Dependencies
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
-          pip install pytest pytest-asyncio pytest-cov pydantic pyyaml fastapi httpx
+          python -m pip install -r requirements.txt
+          python -m pip check
 
       - name: Run Backend Unit & Integration Tests
         env:
-          NEBIUS_API_KEY: "mock-key-for-ci"
-          DATA_SOURCE_MODE: "mock"
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          PYTEST_ADDOPTS: ""
         run: |
-          python -m pytest tests/ -v --ignore=tests/fixtures/ || true
+          python -B -m pytest -p no:cacheprovider tests/ -v --ignore=tests/fixtures/ --basetemp "${RUNNER_TEMP}/cascaderouter-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
   frontend-check:
     name: Frontend Typecheck & Build
@@ -46,12 +44,8 @@ jobs:
         with:
           node-version: 20
 
-      - name: Check Frontend (if present)
+      - name: Check Frontend
+        working-directory: frontend
         run: |
-          if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
-            cd frontend
-            npm ci || npm install
-            npm run build || true
-          else
-            echo "Frontend directory not initialized yet. Skipping step."
-          fi
+          npm ci
+          npm run build
