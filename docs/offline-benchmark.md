@@ -183,4 +183,5 @@ failures become controlled errors, never successful jobs or raw tracebacks.
 
 No Python 3.11 runtime, hosted CI, live model benchmark or genuine production
 dataset execution is implied by local tests. The installed test runtime is Python
-3.14.3. Optimization and patch generation remain outside this phase.
+3.14.3. Phase 4.5 adds [offline optimization](optimization.md) over authenticated
+retained results. Patch generation remains unimplemented.

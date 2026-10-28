@@ -12,7 +12,7 @@ import hashlib
 import json
 import unicodedata
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_EVEN, localcontext
 from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Annotated, Literal
@@ -266,7 +266,7 @@ class HealthResponse(APIModel):
         "registry_unconfigured", "executor_unconfigured", "execution_not_approved",
         "lifecycle_unavailable", "storage_unavailable",
     ] | None = None
-    optimization_available: Literal[False] = False
+    optimization_available: bool = False
 
 
 class SchemaShapeSummary(APIModel):
@@ -1199,3 +1199,258 @@ class BenchmarkVersionRegistration(APIModel):
 BenchmarkMeasurement.model_rebuild()
 BenchmarkSummary.model_rebuild()
 JobResponse.model_rebuild()
+
+
+# Offline optimization consumes the existing immutable plan and measurements.
+# No caller-submitted metrics, model choices, paths or executable rules are accepted.
+OptimizationReason = Literal[
+    "lowest_recorded_cost", "baseline_lowest_cost", "no_eligible_alternative",
+    "baseline_ineligible", "candidate_evidence_incomplete", "quality_failed",
+    "quality_unavailable", "cost_unavailable", "threshold_not_met",
+    "evidence_unavailable", "test_evidence", "approval_unavailable",
+    "threshold_unconfigured", "benchmark_incomplete",
+]
+
+
+def optimization_threshold(value):
+    value = _decimal_value(value)
+    if value > 1 or value.as_tuple().exponent < -6:
+        raise ValueError("Quality thresholds require a decimal from zero to one with at most six fractional digits.")
+    return value
+
+
+class OptimizationRequest(APIModel):
+    analysis_id: AnalysisId
+    run_id: RunId
+    case_set: VersionedReference
+    evaluation_profile: VersionedReference
+
+
+class OptimizationCandidate(APIModel):
+    model: ModelVersion
+    provenance: BenchmarkProvenance
+    eligibility: Literal["eligible", "rejected", "insufficient"]
+    reasons: tuple[OptimizationReason, ...] = Field(max_length=4)
+    planned_cases: Annotated[int, Field(ge=1, le=64)]
+    passed_cases: Annotated[int, Field(ge=0, le=64)]
+    failed_cases: Annotated[int, Field(ge=0, le=64)]
+    unresolved_cases: Annotated[int, Field(ge=0, le=64)]
+    quality_pass_rate: Decimal | None = None
+    cost_total_usd: Decimal | None = None
+    latency_ms: MetricPopulation
+    measurement_digest: Digest | None = None
+
+    @field_validator("reasons", mode="before")
+    @classmethod
+    def bounded_reasons(cls, value):
+        return _sequence(value, 4)
+
+    @field_validator("quality_pass_rate", mode="before")
+    @classmethod
+    def rate(cls, value):
+        return None if value is None else optimization_threshold(value)
+
+    @field_validator("cost_total_usd", mode="before")
+    @classmethod
+    def cost(cls, value):
+        return None if value is None else _decimal_value(value)
+
+    @field_serializer("quality_pass_rate", "cost_total_usd", when_used="json")
+    def decimals(self, value):
+        return None if value is None else format(value, "f")
+
+    @model_validator(mode="after")
+    def consistent_candidate(self):
+        if (self.passed_cases + self.failed_cases + self.unresolved_cases != self.planned_cases
+                or self.latency_ms.unit != "ms" or self.latency_ms.sample_count > self.planned_cases
+                or len(self.reasons) != len(set(self.reasons))):
+            raise ValueError("Candidate coverage must agree with its evidence.")
+        if (self.quality_pass_rate is not None) != (self.unresolved_cases == 0):
+            raise ValueError("Quality requires decisive evidence for every planned case.")
+        if self.quality_pass_rate is not None:
+            with localcontext() as context:
+                context.prec = 80
+                rate = (Decimal(self.passed_cases) / self.planned_cases).quantize(Decimal("0.000001"), rounding=ROUND_HALF_EVEN)
+            if self.quality_pass_rate != rate:
+                raise ValueError("The observed pass rate must match actual case counts.")
+        expected = "rejected" if self.failed_cases else "insufficient" if self.unresolved_cases or self.cost_total_usd is None else "eligible"
+        if self.eligibility != expected:
+            raise ValueError("Eligibility must follow actual quality and cost coverage.")
+        required_reasons = {name for name, condition in (("quality_failed", self.failed_cases),
+                            ("quality_unavailable", self.unresolved_cases), ("cost_unavailable", self.cost_total_usd is None)) if condition}
+        if set(self.reasons) - {"threshold_not_met"} != required_reasons:
+            raise ValueError("Candidate reasons must describe actual evidence gaps.")
+        if self.eligibility == "eligible":
+            if (self.reasons or self.passed_cases != self.planned_cases or self.quality_pass_rate != 1
+                    or self.cost_total_usd is None or self.measurement_digest is None):
+                raise ValueError("Eligibility requires complete passing, costed evidence.")
+        elif not self.reasons:
+            raise ValueError("Exclusion requires a controlled reason.")
+        return self
+
+
+class RoutingDecision(APIModel):
+    analysis_id: AnalysisId
+    node_id: NodeId
+    provenance: BenchmarkProvenance
+    status: Literal["recommended", "baseline_retained", "inconclusive", "unavailable"]
+    reason: OptimizationReason
+    baseline_model_id: ModelIdentifier
+    selected_model_id: ModelIdentifier | None = None
+    differs_from_baseline: bool = False
+    quality_threshold: Decimal | None
+    candidates: tuple[OptimizationCandidate, ...] = Field(max_length=9)
+    recorded_savings_usd: Decimal | None = None
+
+    _model_ids = field_validator("baseline_model_id", "selected_model_id")(LLMNode.safe_model_identifier)
+
+    @field_validator("candidates", mode="before")
+    @classmethod
+    def bounded_candidates(cls, value):
+        return _sequence(value, 9)
+
+    @field_validator("quality_threshold", mode="before")
+    @classmethod
+    def threshold(cls, value):
+        return None if value is None else optimization_threshold(value)
+
+    @field_validator("recorded_savings_usd", mode="before")
+    @classmethod
+    def money(cls, value):
+        return None if value is None else _decimal_value(value)
+
+    @field_serializer("quality_threshold", "recorded_savings_usd", when_used="json")
+    def decimals(self, value):
+        return None if value is None else format(value, "f")
+
+    @model_validator(mode="after")
+    def truthful_selection(self):
+        models = {item.model.identifier: item for item in self.candidates}
+        if len(models) != len(self.candidates) or any(item.provenance != self.provenance for item in self.candidates):
+            raise ValueError("Candidate identities and provenance must be distinct and consistent.")
+        for item in self.candidates:
+            if self.quality_threshold is None or (("threshold_not_met" in item.reasons) != (
+                    item.quality_pass_rate is not None and item.quality_pass_rate < self.quality_threshold)):
+                raise ValueError("Threshold exclusions must follow the configured threshold.")
+        decisive = self.status in ("recommended", "baseline_retained")
+        if not decisive:
+            if self.selected_model_id is not None or self.differs_from_baseline or self.recorded_savings_usd is not None:
+                raise ValueError("Unresolved decisions cannot assert a model selection or savings.")
+        else:
+            baseline, selected = models.get(self.baseline_model_id), models.get(self.selected_model_id)
+            if (self.quality_threshold is None or baseline is None or selected is None
+                    or baseline.eligibility != "eligible" or selected.eligibility != "eligible"
+                    or any(item.eligibility == "insufficient" for item in self.candidates)):
+                raise ValueError("Decisions require an eligible baseline and complete comparable candidates.")
+            changed = self.selected_model_id != self.baseline_model_id
+            if self.differs_from_baseline != changed or (self.status == "recommended") != changed:
+                raise ValueError("Decision status must describe the actual selection.")
+            if (changed and self.reason != "lowest_recorded_cost") or (not changed and self.reason not in ("baseline_lowest_cost", "no_eligible_alternative")):
+                raise ValueError("Decision reasons must describe the actual selection.")
+            with localcontext() as context:
+                context.prec = 80
+                saving = baseline.cost_total_usd - selected.cost_total_usd
+            if saving < 0 or self.recorded_savings_usd != saving or (changed and saving == 0):
+                raise ValueError("Savings require an established lower recorded cost.")
+            if any(item.eligibility == "eligible" and item.cost_total_usd < selected.cost_total_usd for item in self.candidates):
+                raise ValueError("Selected model must minimize eligible recorded cost.")
+            expected_model = min((item for item in self.candidates if item.eligibility == "eligible"),
+                                 key=lambda item: (item.cost_total_usd, item.model != baseline.model, item.model.identifier))
+            if selected != expected_model:
+                raise ValueError("Tied minimum costs must follow the deterministic tie rule.")
+        return self
+
+
+class OptimizationResult(APIModel):
+    schema_version: Literal["cascaderouter.optimization.v1"] = "cascaderouter.optimization.v1"
+    objective_version: Literal["all-checks-then-cost.v1"] = "all-checks-then-cost.v1"
+    configuration_version: Literal["zero-cost.optimizer.v1"] = "zero-cost.optimizer.v1"
+    configuration_digest: Digest
+    run_id: RunId
+    benchmark_digest: Digest
+    plan: BenchmarkPlan
+    approval_manifest_digest: Digest | None
+    recording_dataset_digest: Digest | None
+    quality_threshold: Decimal | None
+    provenance: BenchmarkProvenance
+    status: Literal["complete", "inconclusive", "unavailable"]
+    decisions: tuple[RoutingDecision, ...] = Field(min_length=1, max_length=16)
+    nodes_considered: Annotated[int, Field(ge=1, le=16)]
+    nodes_eligible: Annotated[int, Field(ge=0, le=16)]
+    nodes_recommended: Annotated[int, Field(ge=0, le=16)]
+    nodes_retained: Annotated[int, Field(ge=0, le=16)]
+    nodes_inconclusive: Annotated[int, Field(ge=0, le=16)]
+    nodes_unavailable: Annotated[int, Field(ge=0, le=16)]
+    decisions_complete: bool
+    diagnostics: tuple[OptimizationReason, ...] = Field(default=(), max_length=4)
+
+    @field_validator("decisions", "diagnostics", mode="before")
+    @classmethod
+    def bounds(cls, value, info):
+        return _sequence(value, 16 if info.field_name == "decisions" else 4)
+
+    _threshold = field_validator("quality_threshold", mode="before")(RoutingDecision.threshold)
+
+    @field_serializer("quality_threshold", when_used="json")
+    def decimal_threshold(self, value):
+        return None if value is None else format(value, "f")
+
+    @model_validator(mode="after")
+    def consistent_result(self):
+        if (self.provenance != self.plan.provenance or self.nodes_considered != len(self.decisions)
+                or tuple(item.node_id for item in self.decisions) != tuple(sorted(self.plan.node_ids))
+                or any(item.analysis_id != self.plan.analysis_id or item.provenance != self.provenance
+                       or item.baseline_model_id != self.plan.models[0].identifier or item.quality_threshold != self.quality_threshold
+                       for item in self.decisions)):
+            raise ValueError("Decisions must retain the exact plan and provenance.")
+        for name, state in (("nodes_recommended", "recommended"), ("nodes_retained", "baseline_retained"),
+                            ("nodes_inconclusive", "inconclusive"), ("nodes_unavailable", "unavailable")):
+            if getattr(self, name) != sum(item.status == state for item in self.decisions):
+                raise ValueError("Decision counts must agree.")
+        if self.nodes_eligible != sum(any(candidate.eligibility == "eligible" for candidate in item.candidates) for item in self.decisions):
+            raise ValueError("Eligible-node count must reflect validated candidates.")
+        complete = self.nodes_recommended + self.nodes_retained == self.nodes_considered
+        expected = "complete" if complete else "unavailable" if self.nodes_unavailable == self.nodes_considered else "inconclusive"
+        if self.decisions_complete != complete or self.status != expected:
+            raise ValueError("Incomplete decisions cannot claim completion.")
+        for decision in self.decisions:
+            if decision.candidates and tuple(item.model for item in decision.candidates) != self.plan.models:
+                raise ValueError("Candidates must preserve exact planned model versions.")
+            if any(item.planned_cases != len(self.plan.case_ids) for item in decision.candidates):
+                raise ValueError("Candidate coverage must use the exact planned case population.")
+        if self.nodes_recommended + self.nodes_retained and self.provenance == "recorded" and (
+                self.approval_manifest_digest is None or self.recording_dataset_digest is None):
+            raise ValueError("Recorded decisions require retained approval and dataset identities.")
+        return self
+
+
+class RoutingPolicyArtifact(APIModel):
+    status: Literal["available", "partial", "unavailable"]
+    reason: Literal["no_eligible_routes", "serializer_unavailable", "serialization_failed"] | None = None
+    route_count: Annotated[int, Field(ge=0, le=16)]
+    yaml_content: Annotated[str, Field(max_length=524288)] | None = None
+    digest: Digest | None = None
+
+    @model_validator(mode="after")
+    def consistent_artifact(self):
+        if self.status == "unavailable":
+            if self.reason is None or self.route_count != 0 or self.yaml_content is not None or self.digest is not None:
+                raise ValueError("Unavailable policy cannot claim routes or bytes.")
+        elif (self.reason is not None or self.route_count == 0 or self.yaml_content is None
+              or len(self.yaml_content.encode("utf-8")) > 524288
+              or hashlib.sha256(self.yaml_content.encode("utf-8")).hexdigest() != self.digest):
+            raise ValueError("Policy bytes require an integrity digest and actual routes.")
+        return self
+
+
+class OptimizationResponse(APIModel):
+    result: OptimizationResult
+    policy: RoutingPolicyArtifact
+
+    @model_validator(mode="after")
+    def consistent_response(self):
+        routes = self.result.nodes_recommended + self.result.nodes_retained
+        if self.policy.status != "unavailable" and (self.policy.route_count != routes
+                or (self.policy.status == "available") != self.result.decisions_complete):
+            raise ValueError("Policy completeness must match the decisions.")
+        return self

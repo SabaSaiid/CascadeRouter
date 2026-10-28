@@ -7,11 +7,13 @@
 configuration and unit tests remain authoritative. Phase 4.2 adds the local
 FastAPI factory, repository authorizer, compiler adapter and immutable SQLite
 snapshots. Phase 4.3 adds persistent local benchmark jobs and approved recorded-run
-replay, documented in [benchmark-jobs.md](benchmark-jobs.md). Optimization and
-patching remain absent.
+replay, documented in [benchmark-jobs.md](benchmark-jobs.md). Patching remains absent.
 Phase 4.4 adds guarded, operator-approved captured-output evaluation and evidence
 metrics; see [offline-benchmark.md](offline-benchmark.md). It adds no inference
 runtime, provider SDK or outbound execution.
+Phase 4.5 adds reference-only offline optimization and pure safe-YAML policy
+generation; see [optimization.md](optimization.md) for its explicit objective,
+approval gates, request/response contracts and current consumer limitations.
 
 **Mandatory zero-cost policy:** this and all subsequent backend phases must remain
 local and independent of paid inference/search providers. No provider credentials,
@@ -284,7 +286,8 @@ Missing root policy, missing storage or incompatible storage never broaden acces
 Health reports initialization readiness, not a fresh database probe or available
 worker capacity. Benchmark capability is false unless approved local registry and
 recorded replay are configured (or explicit test injection is enabled). Health
-reports benchmark provenance separately. Optimization remains unavailable.
+reports benchmark provenance separately. Optimization readiness additionally
+requires approved production evidence and an explicit quality threshold.
 Retrieval preserves the original timestamp, analysis ID and `data_source: live`:
 it is the retained result of actual static analysis, not a new scan or mock. It
 does not re-open old source files. A newly configured policy must still contain
@@ -450,9 +453,12 @@ uses the existing frontend lock with `npm ci` and propagates build failures. The
 existing Node 20 target is retained; the lock requires 20.19+ on that major.
 There is no successful hosted-CI result implied by these configuration changes.
 
-## Later endpoints (proposed, not implemented)
+## Offline optimization (Phase 4.5)
 
-- `POST /api/optimize`: recommendations from actual eligible measurements.
+`POST /api/optimize` is implemented using persisted analysis/run and exact
+case/profile version references. It returns honest unavailable decisions when
+only test evidence or no approved executor exists. Detailed semantics and policy
+limitations are in [optimization.md](optimization.md).
 
 New local evaluation, runtime routing, patching and regression execution require
 separate implementations and acceptance gates under the zero-cost policy. Paid

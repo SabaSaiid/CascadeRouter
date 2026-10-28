@@ -13,8 +13,10 @@ import stat
 import unicodedata
 from pathlib import Path
 from typing import Annotated
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from backend.schemas import optimization_threshold
 
 
 class ConfigurationError(ValueError):
@@ -46,6 +48,7 @@ class BackendConfig(BaseModel):
     benchmark_recordings_path: Path | None = Field(default=None, repr=False, exclude=True)
     permitted_benchmark_data_roots: tuple[Path, ...] = Field(default=(), repr=False, exclude=True)
     benchmark_approval_manifest_path: Path | None = Field(default=None, repr=False, exclude=True)
+    optimization_quality_threshold: Decimal | None = None
     max_concurrent_provider_requests: Annotated[int, Field(ge=1, le=16)] = 4
     max_requests_per_job: Annotated[int, Field(ge=1, le=1024)] = 64
     max_output_tokens: Annotated[int, Field(ge=1, le=8192)] = 1024
@@ -54,6 +57,11 @@ class BackendConfig(BaseModel):
     provider_timeout_seconds: Annotated[int, Field(ge=1, le=120)] = 30
     job_timeout_seconds: Annotated[int, Field(ge=1, le=1800)] = 300
     job_retention_seconds: Annotated[int, Field(ge=1, le=604800)] = 86400
+
+    @field_validator("optimization_quality_threshold", mode="before")
+    @classmethod
+    def explicit_quality_threshold(cls, value):
+        return None if value is None else optimization_threshold(value)
 
     @field_validator("bind_host")
     @classmethod

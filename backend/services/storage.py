@@ -337,6 +337,24 @@ class AnalysisStorage:
                 count += 1
             connection.commit()
 
+    def verify_benchmark_versions(self, records):
+        """Read-only check of already registered identities; never auto-register evidence."""
+        if type(records) not in (tuple, list) or len(records) > 2048:
+            raise ServiceError("capacity_exceeded")
+        try:
+            entries = tuple(BenchmarkVersionRegistration(kind=row[0], identifier=row[1], version=row[2],
+                                                         digest=row[3], provenance=row[4]) for row in records)
+        except (ValidationError, IndexError, TypeError):
+            raise ServiceError("source_conflict") from None
+        with self._job_connection() as connection:
+            for item in entries:
+                row = connection.execute(
+                    "SELECT digest FROM benchmark_versions WHERE kind = ? AND identifier = ? AND version = ? AND provenance = ?",
+                    (item.kind, item.identifier, item.version, item.provenance),
+                ).fetchone()
+                if row is None or row[0] != item.digest:
+                    raise ServiceError("source_conflict")
+
     @contextmanager
     def job_lease(self):
         """One lifecycle owner per database, including across local processes."""

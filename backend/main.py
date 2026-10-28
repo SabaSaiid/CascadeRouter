@@ -19,12 +19,14 @@ from starlette.middleware.cors import CORSMiddleware
 from backend.api.boundaries import LOCAL_ORIGINS, RequestBoundary, error_response
 from backend.api.scan import router
 from backend.api.jobs import router as jobs_router
+from backend.api.optimization import router as optimization_router
 from backend.compiler.ast_scanner import _is_link
 from backend.config import BackendConfig, ConfigurationError
 from backend.services.errors import ServiceError
 from backend.services.scan_service import ScanService
 from backend.services.benchmark_cases import BenchmarkExecutor, BenchmarkRegistry, load_local_assets
 from backend.services.jobs import JobService
+from backend.services.optimization import OptimizationService
 
 
 def create_app(settings: BackendConfig | None = None, *, benchmark_registry: BenchmarkRegistry | None = None,
@@ -54,6 +56,7 @@ def create_app(settings: BackendConfig | None = None, *, benchmark_registry: Ben
                 logging.getLogger("cascaderouter.api").error("Job lifecycle services unavailable.")
         app.state.scan_service = service
         app.state.job_service = jobs
+        app.state.optimization_service = None if service is None else OptimizationService(settings, service, jobs)
         try:
             yield
         finally:
@@ -63,10 +66,12 @@ def create_app(settings: BackendConfig | None = None, *, benchmark_registry: Ben
                 service.close()
             app.state.scan_service = None
             app.state.job_service = None
+            app.state.optimization_service = None
 
     app = FastAPI(title="CascadeRouter local scan API", version="1", lifespan=lifespan)
     app.state.scan_service = None
     app.state.job_service = None
+    app.state.optimization_service = None
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, _error):
@@ -79,6 +84,7 @@ def create_app(settings: BackendConfig | None = None, *, benchmark_registry: Ben
 
     app.include_router(router)
     app.include_router(jobs_router)
+    app.include_router(optimization_router)
     app.add_middleware(CORSMiddleware, allow_origins=list(LOCAL_ORIGINS), allow_methods=["GET", "POST"],
                        allow_headers=["Content-Type"], allow_credentials=False)
     app.add_middleware(RequestBoundary, settings=settings)

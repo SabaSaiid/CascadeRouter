@@ -200,3 +200,39 @@ def asset_environment(offline_environment, tmp_path):
     env.configure = configure
     env.data_root, env.registry_path, env.recording_path, env.manifest_path = data_root, registry_path, recording_path, manifest_path
     return env
+
+
+@pytest.fixture
+def optimization_environment(offline_environment):
+    """Synthetic captures always retain test provenance, including policy tests."""
+    from decimal import Decimal
+    from backend.compiler.metrics import aggregate
+    from backend.compiler.router_optimizer import OptimizationSnapshot
+    from backend.schemas import BenchmarkSummary, RecordingEvidence, VersionedReference
+    env = offline_environment
+
+    def build(*, rates=None, outputs=None, cases=None, profile=None, latency=None, tokens=1000000):
+        rates = rates if rates is not None else {"local/baseline": "1.00", "local/candidate": "0.50"}
+        prices = tuple(env.price(model, input_usd_per_million=rate, output_usd_per_million="0")
+                       for model, rate in rates.items() if rate is not None)
+        price_map = {price.model_id: price for price in prices}
+        def evidence(model, case):
+            price = price_map.get(model)
+            return RecordingEvidence(source_id="test-optimization-capture", captured_at="2026-10-28T00:00:00Z",
+                input_tokens=tokens, output_tokens=0, latency_ms=latency,
+                pricing_reference=None if price is None else VersionedReference(identifier=price.identifier, version=price.version))
+        registry, document, executor = env.make_offline(cases=cases, profile=profile, outputs=outputs, evidence=evidence, prices=prices)
+        plan = registry.resolve(env.request, env.analysis, env.settings, executor)
+        job = env.storage.create_job(env.request, plan, lambda _: None)
+        env.storage.transition_job(job.run_id, ("queued",), status="running")
+        records = tuple(executor.execute(plan, threading.Event(), datetime.max.replace(tzinfo=timezone.utc)))
+        for record in records:
+            env.storage.transition_job(job.run_id, ("running",), measurement=record)
+        statuses = {item.evaluation_status for item in records}
+        summary = BenchmarkSummary(provenance="test", evaluation_status="failed" if "failed" in statuses else "passed" if statuses == {"passed"} else "inconclusive",
+                                   metrics=aggregate(plan, records))
+        job = env.storage.transition_job(job.run_id, ("running",), status="complete", result=summary)
+        return SimpleNamespace(registry=registry, document=document, executor=executor, job=job,
+            snapshot=OptimizationSnapshot(job, Decimal("0.92"), "a" * 64))
+    env.build_optimization = build
+    return env

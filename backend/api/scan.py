@@ -25,6 +25,7 @@ async def health(request: Request) -> HealthResponse:
     return HealthResponse(scan_available=available, analysis_retrieval_available=available,
                           configuration_required=not available, benchmark_available=benchmarks,
                           benchmark_provenance=jobs.executor.provenance if benchmarks else None,
+                          optimization_available=request.app.state.optimization_service is not None and request.app.state.optimization_service.available,
                           benchmark_unavailable_reason="lifecycle_unavailable" if jobs is None else jobs.unavailable_reason)
 
 
