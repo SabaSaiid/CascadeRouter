@@ -9,6 +9,9 @@ FastAPI factory, repository authorizer, compiler adapter and immutable SQLite
 snapshots. Phase 4.3 adds persistent local benchmark jobs and approved recorded-run
 replay, documented in [benchmark-jobs.md](benchmark-jobs.md). Optimization and
 patching remain absent.
+Phase 4.4 adds guarded, operator-approved captured-output evaluation and evidence
+metrics; see [offline-benchmark.md](offline-benchmark.md). It adds no inference
+runtime, provider SDK or outbound execution.
 
 **Mandatory zero-cost policy:** this and all subsequent backend phases must remain
 local and independent of paid inference/search providers. No provider credentials,
@@ -348,8 +351,8 @@ not create replacement threads. Admission limits are per application process;
 run one process through the supported entry point.
 
 Storage requires an existing absolute local directory outside **every** permitted
-repository root. It uses `analyses.sqlite3`, now schema `PRAGMA user_version = 2`
-after the transactional Phase 4.3 migration preserving version-1 snapshots,
+repository root. It uses `analyses.sqlite3`, now schema `PRAGMA user_version = 3`
+after transactional migrations preserving version-1 snapshots and version-2 jobs,
 parameterized values, transactions, a primary key and update/delete rejection
 triggers. Unknown/corrupt schemas are unavailable and are never dropped or
 migrated implicitly. Payloads are validated public `ScanResponse` JSON plus

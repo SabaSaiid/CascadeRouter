@@ -44,6 +44,8 @@ class BackendConfig(BaseModel):
     max_job_result_bytes: Annotated[int, Field(ge=1024, le=8 * 1024 * 1024)] = 1024 * 1024
     benchmark_registry_path: Path | None = Field(default=None, repr=False, exclude=True)
     benchmark_recordings_path: Path | None = Field(default=None, repr=False, exclude=True)
+    permitted_benchmark_data_roots: tuple[Path, ...] = Field(default=(), repr=False, exclude=True)
+    benchmark_approval_manifest_path: Path | None = Field(default=None, repr=False, exclude=True)
     max_concurrent_provider_requests: Annotated[int, Field(ge=1, le=16)] = 4
     max_requests_per_job: Annotated[int, Field(ge=1, le=1024)] = 64
     max_output_tokens: Annotated[int, Field(ge=1, le=8192)] = 1024
@@ -66,7 +68,7 @@ class BackendConfig(BaseModel):
             raise ValueError("Remote binding is outside the initial local-only policy.")
         return str(address)
 
-    @field_validator("permitted_repository_roots", mode="before")
+    @field_validator("permitted_repository_roots", "permitted_benchmark_data_roots", mode="before")
     @classmethod
     def usable_roots(cls, value: object) -> tuple[Path, ...]:
         if type(value) not in (tuple, list) or len(value) > 16:
@@ -116,7 +118,7 @@ class BackendConfig(BaseModel):
             return None
         return cls.usable_roots([value])[0]
 
-    @field_validator("benchmark_registry_path", "benchmark_recordings_path", mode="before")
+    @field_validator("benchmark_registry_path", "benchmark_recordings_path", "benchmark_approval_manifest_path", mode="before")
     @classmethod
     def explicit_local_asset(cls, value: object) -> Path | None:
         if value is None:
@@ -151,6 +153,13 @@ class BackendConfig(BaseModel):
         if any(path.is_relative_to(root) for path in (self.benchmark_registry_path, self.benchmark_recordings_path)
                if path is not None for root in self.permitted_repository_roots):
             raise ValueError("Trusted benchmark assets must be outside permitted scan roots.")
+        if self.benchmark_approval_manifest_path is not None and any(
+            self.benchmark_approval_manifest_path.is_relative_to(root)
+            for root in (*self.permitted_repository_roots, *self.permitted_benchmark_data_roots)
+        ):
+            raise ValueError("Operator approval must be outside source and benchmark-data roots.")
+        if self.storage_directory is not None and any(self.storage_directory.is_relative_to(root) for root in self.permitted_benchmark_data_roots):
+            raise ValueError("Storage must be outside benchmark-data roots.")
         return self
 
     def require_repository_roots(self) -> tuple[Path, ...]:

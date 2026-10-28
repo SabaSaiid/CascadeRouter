@@ -8,7 +8,8 @@ or search provider integration, credentials, billing configuration or outbound
 provider calls are implemented or authorized. The unused OpenAI SDK requirement
 has been removed. Scanning OpenAI syntax does not import that SDK or target code.
 
-Production execution supports **approved recorded-run replay only**. No approved
+Production execution now supports **approved offline captured-output evaluation**,
+with [Phase 4.4 approval, metrics and schema details](offline-benchmark.md). No approved
 datasets or genuine recordings were supplied during this implementation, so the
 default product registry/executor is unconfigured and job creation is unavailable.
 Health identifies missing registry/executor, unapproved execution or unavailable
@@ -19,8 +20,11 @@ outputs, latency, tokens, costs, evaluations or successful benchmark outcomes.
 `test` and `recorded` are distinct benchmark provenances. Scan provenance remains
 unchanged. Test executors/registries require explicit `create_app` injection with
 `allow_test_benchmarks=True`; test assets cannot be enabled by startup JSON.
-Production accepts exactly the built-in `ReplayExecutor` with recorded provenance
-and a local registry. There is no provider plugin, dynamic executor import, shell
+Production accepts exactly the built-in `OfflineBenchmarkExecutor`, with an
+operator-manifest approval capability, recorded provenance and a local registry.
+The older measurement-only `ReplayExecutor` is retained for test compatibility;
+caller-supplied recorded labels do not authorize production execution.
+There is no provider plugin, dynamic executor import, shell
 command, target-test execution, subprocess runner or implicit mock fallback.
 
 ## HTTP and shared contracts
@@ -76,24 +80,30 @@ schema or model-output text is included in a job plan or result.
 `BenchmarkRegistryDocument` (`cascaderouter.registry.v1`) requires explicit
 `origin`, `approved: true`, versioned `case_sets`, `evaluation_profiles` and
 `models`. Each local case has a bounded identifier, explicit `input_text` and an
-optional supplied `expected_output`. Profiles identify their approved criteria;
-replay performs no new evaluation. Input/expected text remains in trusted registry
+optional supplied `expected_output`. Phase 4.4 case sets additionally pin provenance,
+validation version and content digest; profiles pin a built-in mechanism, optional
+local schema and content digest. The offline engine evaluates captured outputs;
+the legacy replay interface performs no new evaluation. Input/expected text remains in trusted registry
 memory and is bound by digest, never copied into SQLite jobs. IDs are unique and
 registry JSON is capped at 1 MiB.
 
-`RecordingDocument` (`cascaderouter.recordings.v1`) requires `provenance`,
+The legacy test-compatible `RecordingDocument` (`cascaderouter.recordings.v1`) requires `provenance`,
 `approved: true`, a non-secret `source_id`, an aware `recorded_at`, and bounded
 per-analysis recordings. Each binds the exact immutable analysis ID/digest,
 registry digest, case-set/profile versions and unique unit measurements. The file
 is capped at 4 MiB. Replay requires every requested unit to exist and returns
 those supplied measurements verbatim. It does not measure replay wall time as
 model latency, infer missing tokens/cost, reconstruct prompts or contact models.
-Registry/recording approval is a trusted operator attestation, not cryptographic
-proof that historical measurements are authentic. Supply genuine approved data.
+Phase 4.4 production uses `OfflineRecordingDocument`, guarded data roots and a
+separate operator manifest, rather than trusting this legacy document's approval
+flag. Integrity cannot by itself prove that historical measurements are authentic.
 
 Production startup JSON may explicitly name `benchmark_registry_path` and
 `benchmark_recordings_path`, both absolute regular local JSON files outside every
-permitted scan root. The existing `python -B -m backend.main --config ABSOLUTE_JSON`
+permitted scan root. Phase 4.4 additionally requires `permitted_benchmark_data_roots`
+and `benchmark_approval_manifest_path`; the latter must be outside data/source
+roots and pin each approved asset's raw SHA-256 and provenance.
+The existing `python -B -m backend.main --config ABSOLUTE_JSON`
 entry point loads only those files. Symlinks/reparse points, unsupported schemas,
 invalid approvals, oversized/changing files and `test` assets fail closed. Missing
 or invalid assets leave health's `benchmark_available` false; there is no demo
@@ -168,9 +178,10 @@ forced termination or hard CPU/I/O deadline is made.
 
 ## Persistence, ownership and restart
 
-Jobs reuse `analyses.sqlite3`. Initialization validates the exact version-1
-schema, adds the job table/triggers transactionally, and advances `user_version`
-to 2. Migration failure rolls back without losing immutable scan snapshots.
+Jobs reuse `analyses.sqlite3`. Initialization validates the exact version-1 or
+version-2 schema, migrates transactionally, and advances `user_version` to 3.
+Version 3 adds an immutable benchmark-version catalog; scans and jobs are preserved.
+Migration failure rolls back without losing immutable scan snapshots.
 Unknown versions or schemas are never replaced implicitly. SQL values are
 parameterized; foreign keys bind jobs to retained analyses. Terminal records,
 plans and idempotency keys cannot be silently overwritten or deleted.

@@ -8,8 +8,11 @@ no filesystem access and does not authorize a repository.
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 import unicodedata
 from datetime import datetime, timezone
+from decimal import Decimal
 from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Annotated, Literal
@@ -549,6 +552,9 @@ class BenchmarkPlan(APIModel):
     execution_digest: Digest
     provenance: BenchmarkProvenance
 
+    case_set_digest: Digest | None = None
+    evaluation_profile_digest: Digest | None = None
+
     @field_validator("node_ids", "models", "case_ids", mode="before")
     @classmethod
     def bounded_inputs(cls, value, info):
@@ -598,15 +604,23 @@ class BenchmarkMeasurement(APIModel):
     input_tokens: CountMeasurement
     output_tokens: CountMeasurement
     cost_usd: NumberMeasurement
-    evaluation_status: Literal["passed", "failed", "inconclusive", "unavailable"]
+    evaluation_status: Literal["passed", "failed", "inconclusive", "unavailable", "skipped", "not_run"]
     quality_score: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] | None = None
+    evaluation: CaseEvaluation | None = None
+    ttft_ms: NumberMeasurement | None = None
+    calculated_cost: CostCalculation | None = None
+    recording_id: Identifier | None = None
+    evidence_digest: Digest | None = None
+    output_available: bool | None = None
 
     _safe_id = field_validator("model_id")(LLMNode.safe_model_identifier)
 
     @model_validator(mode="after")
     def score_availability(self):
-        if self.evaluation_status == "unavailable" and self.quality_score is not None:
+        if self.evaluation_status in ("unavailable", "not_run", "skipped") and self.quality_score is not None:
             raise ValueError("Unavailable evaluation has no score.")
+        if self.evaluation is not None and self.evaluation.status != self.evaluation_status:
+            raise ValueError("Evaluation status must agree with its checks.")
         return self
 
     def unit_key(self) -> tuple[str, str, str]:
@@ -616,6 +630,7 @@ class BenchmarkMeasurement(APIModel):
 class BenchmarkSummary(APIModel):
     provenance: BenchmarkProvenance
     evaluation_status: Literal["passed", "failed", "inconclusive"]
+    metrics: OfflineMetrics | None = None
 
 
 class JobError(APIModel):
@@ -690,6 +705,17 @@ class JobResponse(APIModel):
             expected = "failed" if "failed" in statuses else "passed" if statuses == {"passed"} else "inconclusive"
             if self.result.evaluation_status != expected:
                 raise ValueError("Summary quality must reflect the supplied evaluations.")
+            metrics = self.result.metrics
+            if metrics is not None:
+                if (metrics.provenance != self.plan.provenance or metrics.planned_units != self.progress.total_units
+                        or metrics.processed_units != len(keys) or metrics.planned_cases != len(self.plan.case_ids)
+                        or metrics.valid_recorded_outputs != sum(item.output_available is True for item in self.measurements)
+                        or metrics.evaluated_units != sum(item.evaluation is not None and bool(item.evaluation.checks_ran) for item in self.measurements)):
+                    raise ValueError("Metric coverage must match persisted units.")
+                for state in ("passed", "failed", "skipped", "inconclusive", "not_run"):
+                    actual = sum(("not_run" if item.evaluation_status == "unavailable" else item.evaluation_status) == state for item in self.measurements)
+                    if getattr(metrics, state) != actual:
+                        raise ValueError("Metric evaluation counts must match persisted units.")
         if self.status in ("queued", "running", "cancelling", "complete", "cancelled") and self.error is not None:
             raise ValueError("This state cannot carry a terminal failure.")
         if self.status in ("error", "interrupted") and self.error is None:
@@ -711,11 +737,15 @@ class LocalBenchmarkCase(APIModel):
     identifier: Identifier
     input_text: Annotated[str, Field(min_length=1, max_length=8192, repr=False)]
     expected_output: Annotated[str, Field(max_length=8192)] | None = Field(default=None, repr=False)
+    skip_reason: Literal["operator_excluded"] | None = None
 
 
 class BenchmarkCaseSet(APIModel):
     identifier: Identifier
     version: Identifier
+    provenance: Literal["local", "test"] | None = None
+    validation_version: Literal["offline.v1"] | None = None
+    content_digest: Digest | None = None
     cases: tuple[LocalBenchmarkCase, ...] = Field(min_length=1, max_length=64)
 
     @field_validator("cases", mode="before")
@@ -723,11 +753,26 @@ class BenchmarkCaseSet(APIModel):
     def bounded_cases(cls, value):
         return _sequence(value, 64)
 
+    @model_validator(mode="after")
+    def pinned_version(self):
+        if self.content_digest is not None and content_digest(self, exclude={"content_digest"}) != self.content_digest:
+            raise ValueError("Case-set content does not match its version digest.")
+        return self
+
 
 class EvaluationProfile(APIModel):
     identifier: Identifier
     version: Identifier
     criteria_id: Identifier
+    mechanism: Literal["exact", "json", "json_schema"] | None = None
+    validation_schema_json: Annotated[str, Field(max_length=16384)] | None = Field(default=None, repr=False)
+    content_digest: Digest | None = None
+
+    @model_validator(mode="after")
+    def pinned_version(self):
+        if self.content_digest is not None and content_digest(self, exclude={"content_digest"}) != self.content_digest:
+            raise ValueError("Profile content does not match its version digest.")
+        return self
 
 
 class BenchmarkRegistryDocument(APIModel):
@@ -810,3 +855,347 @@ class RecordingDocument(APIModel):
         if any(item.provenance != self.provenance for record in self.recordings for item in record.measurements):
             raise ValueError("Record provenance cannot be relabelled.")
         return self
+
+
+def content_digest(model: APIModel, *, exclude: set[str] | None = None) -> str:
+    """Canonical structured-content identity; never a source-code fingerprint."""
+    data = model.model_dump(mode="json", exclude=exclude or set())
+    return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
+EvaluationStatus = Literal["passed", "failed", "skipped", "inconclusive", "not_run"]
+EvaluationReason = Literal[
+    "matched", "mismatch", "output_unavailable", "ground_truth_unavailable", "operator_excluded",
+    "invalid_json", "schema_mismatch", "profile_unavailable", "invalid_expected_output", "resource_limit",
+]
+
+
+class CaseEvaluation(APIModel):
+    status: EvaluationStatus
+    reason: EvaluationReason
+    checks_ran: tuple[Literal["exact", "json", "json_schema"], ...] = Field(default=(), max_length=3)
+    validation_status: Literal["passed", "failed", "not_run"]
+
+    @field_validator("checks_ran", mode="before")
+    @classmethod
+    def checks(cls, value):
+        return _sequence(value, 3)
+
+    @model_validator(mode="after")
+    def actual_checks(self):
+        if len(self.checks_ran) != len(set(self.checks_ran)):
+            raise ValueError("Checks must be distinct.")
+        if self.status in ("passed", "failed") and not self.checks_ran:
+            raise ValueError("Decisive evaluation requires actual checks.")
+        if self.status in ("not_run", "skipped") and self.checks_ran:
+            raise ValueError("Unrun/excluded cases have no checks.")
+        if self.status == "passed" and (self.reason != "matched" or self.validation_status != "passed"):
+            raise ValueError("A pass requires matching evidence.")
+        return self
+
+
+def _decimal_value(value):
+    if type(value) is str and re.fullmatch(r"(?:0|[1-9][0-9]{0,23})(?:\.[0-9]{1,18})?", value):
+        return Decimal(value)
+    if type(value) is Decimal and value.is_finite() and not value.is_signed() and value.adjusted() <= 23 and value.as_tuple().exponent >= -18:
+        return value
+    raise ValueError("Financial values require bounded nonnegative decimal strings.")
+
+
+class PinnedPricing(APIModel):
+    identifier: Identifier
+    version: Identifier
+    model_id: ModelIdentifier
+    provenance: BenchmarkProvenance
+    source_id: Identifier
+    effective_at: datetime
+    currency: Literal["USD"] = "USD"
+    input_usd_per_million: Decimal
+    output_usd_per_million: Decimal
+    digest: Digest
+
+    _prices = field_validator("input_usd_per_million", "output_usd_per_million", mode="before")(_decimal_value)
+    _model = field_validator("model_id")(LLMNode.safe_model_identifier)
+
+    @field_validator("effective_at", mode="before")
+    @classmethod
+    def aware_price(cls, value):
+        return ScanResponse.supplied_timestamp(value)
+
+    @field_serializer("effective_at", when_used="json")
+    def price_time(self, value):
+        return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    @field_serializer("input_usd_per_million", "output_usd_per_million", when_used="json")
+    def prices(self, value):
+        return format(value, "f")
+
+    @model_validator(mode="after")
+    def pinned(self):
+        if any(rate > Decimal("100000000") or rate.as_tuple().exponent < -12 for rate in (self.input_usd_per_million, self.output_usd_per_million)):
+            raise ValueError("Pricing exceeds the arithmetic budget.")
+        if content_digest(self, exclude={"digest"}) != self.digest:
+            raise ValueError("Pricing content does not match its pinned identity.")
+        return self
+
+
+class CostCalculation(APIModel):
+    availability: Literal["available", "unavailable"]
+    amount_usd: Decimal | None = None
+    reason: Literal["missing_usage", "missing_pricing", "pricing_not_effective"] | None = None
+    pricing_reference: VersionedReference | None = None
+    pricing_digest: Digest | None = None
+
+    @field_validator("amount_usd", mode="before")
+    @classmethod
+    def decimal_amount(cls, value):
+        return None if value is None else _decimal_value(value)
+
+    @field_serializer("amount_usd", when_used="json")
+    def amount(self, value):
+        return None if value is None else format(value, "f")
+
+    @model_validator(mode="after")
+    def honest_cost(self):
+        if self.availability == "available":
+            if self.amount_usd is None or self.reason is not None or self.pricing_reference is None or self.pricing_digest is None:
+                raise ValueError("Calculated cost requires usage and pinned pricing evidence.")
+        elif self.amount_usd is not None or self.reason is None or self.pricing_reference is not None or self.pricing_digest is not None:
+            raise ValueError("Unavailable cost must remain null with a controlled reason.")
+        return self
+
+
+class RecordingEvidence(APIModel):
+    source_id: Identifier
+    captured_at: datetime
+    input_tokens: Count | None = None
+    output_tokens: Count | None = None
+    latency_ms: Annotated[float, Field(ge=0, le=86400000, allow_inf_nan=False)] | None = None
+    streaming: bool = False
+    ttft_ms: Annotated[float, Field(ge=0, le=86400000, allow_inf_nan=False)] | None = None
+    pricing_reference: VersionedReference | None = None
+
+    @field_validator("captured_at", mode="before")
+    @classmethod
+    def capture_time(cls, value):
+        return ScanResponse.supplied_timestamp(value)
+
+    @field_serializer("captured_at", when_used="json")
+    def capture_json(self, value):
+        return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    @model_validator(mode="after")
+    def streaming_evidence(self):
+        if self.ttft_ms is not None and (not self.streaming or (self.latency_ms is not None and self.ttft_ms > self.latency_ms)):
+            raise ValueError("TTFT requires actual, consistent streaming evidence.")
+        return self
+
+
+class OfflineRecordedUnit(APIModel):
+    recording_id: Identifier
+    node_id: NodeId
+    model_id: ModelIdentifier | None
+    case_id: Identifier
+    input_digest: Digest
+    captured_output: Annotated[str, Field(max_length=8192)] | None = Field(default=None, repr=False)
+    output_digest: Digest | None = None
+    evidence: RecordingEvidence
+    digest: Digest
+
+    _model = field_validator("model_id")(LLMNode.safe_model_identifier)
+
+    @model_validator(mode="after")
+    def integrity(self):
+        if self.captured_output is None:
+            if self.output_digest is not None:
+                raise ValueError("Missing output cannot claim an output digest.")
+        else:
+            try:
+                encoded = self.captured_output.encode("utf-8")
+            except UnicodeError:
+                raise ValueError("Output encoding is invalid.") from None
+            if len(encoded) > 16384 or hashlib.sha256(encoded).hexdigest() != self.output_digest:
+                raise ValueError("Output does not match its bounded content digest.")
+        if content_digest(self, exclude={"digest"}) != self.digest:
+            raise ValueError("Recording content changed.")
+        return self
+
+    def unit_key(self):
+        return self.node_id, self.model_id, self.case_id
+
+
+class OfflineRecordedAnalysis(APIModel):
+    analysis_id: AnalysisId
+    analysis_digest: Digest
+    registry_digest: Digest
+    case_set: VersionedReference
+    evaluation_profile: VersionedReference
+    records: tuple[OfflineRecordedUnit, ...] = Field(min_length=1, max_length=1024, repr=False)
+
+    @field_validator("records", mode="before")
+    @classmethod
+    def bounded_records(cls, value):
+        return _sequence(value, 1024)
+
+    @model_validator(mode="after")
+    def unique_units(self):
+        keys = [item.unit_key() for item in self.records]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Recorded unit associations must be unique.")
+        return self
+
+
+class OfflineRecordingDocument(APIModel):
+    schema_version: Literal["cascaderouter.offline-recordings.v1"] = "cascaderouter.offline-recordings.v1"
+    provenance: BenchmarkProvenance
+    source_id: Identifier
+    recorded_at: datetime
+    pricing_records: tuple[PinnedPricing, ...] = Field(default=(), max_length=32)
+    recordings: tuple[OfflineRecordedAnalysis, ...] = Field(min_length=1, max_length=16, repr=False)
+
+    _time = field_validator("recorded_at", mode="before")(ScanResponse.supplied_timestamp)
+
+    @field_serializer("recorded_at", when_used="json")
+    def document_time(self, value):
+        return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    @field_validator("recordings", "pricing_records", mode="before")
+    @classmethod
+    def bounds(cls, value, info):
+        return _sequence(value, 16 if info.field_name == "recordings" else 32)
+
+    @model_validator(mode="after")
+    def references(self):
+        records = [unit for analysis in self.recordings for unit in analysis.records]
+        prices = {(item.identifier, item.version): item for item in self.pricing_records}
+        if (len(records) > 1024 or len({item.recording_id for item in records}) != len(records)
+                or len(prices) != len(self.pricing_records)
+                or len({item.analysis_id for item in self.recordings}) != len(self.recordings)
+                or any(item.provenance != self.provenance for item in self.pricing_records)):
+            raise ValueError("Recording identifiers, versions or provenance are inconsistent.")
+        for record in records:
+            ref = record.evidence.pricing_reference
+            if ref is not None and ((ref.identifier, ref.version) not in prices or prices[ref.identifier, ref.version].model_id != record.model_id):
+                raise ValueError("A pricing reference is unknown or belongs to another model.")
+        return self
+
+
+class AssetApproval(APIModel):
+    asset_id: Identifier
+    root_index: Annotated[int, Field(ge=0, le=15)]
+    relative_path: Annotated[str, Field(min_length=1, max_length=4096)]
+    kind: Literal["registry", "offline_recordings"]
+    provenance: Literal["local", "recorded", "test"]
+    digest: Digest
+
+    _path = field_validator("relative_path")(_relative_path)
+
+
+class BenchmarkApprovalManifest(APIModel):
+    schema_version: Literal["cascaderouter.approvals.v1"] = "cascaderouter.approvals.v1"
+    approved_by: Identifier
+    approved_at: datetime
+    assets: tuple[AssetApproval, ...] = Field(min_length=1, max_length=32)
+
+    _time = field_validator("approved_at", mode="before")(ScanResponse.supplied_timestamp)
+
+    @field_serializer("approved_at", when_used="json")
+    def approval_time(self, value):
+        return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    @field_validator("assets", mode="before")
+    @classmethod
+    def bounded_assets(cls, value):
+        return _sequence(value, 32)
+
+    @model_validator(mode="after")
+    def unique_assets(self):
+        if len({item.asset_id for item in self.assets}) != len(self.assets) or len({(item.root_index, item.relative_path) for item in self.assets}) != len(self.assets):
+            raise ValueError("Approval entries must be unique.")
+        return self
+
+
+class MetricPopulation(APIModel):
+    availability: Literal["available", "unavailable"]
+    unit: Literal["ms", "tokens", "USD"]
+    sample_count: Annotated[int, Field(ge=0, le=1024)]
+    minimum: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None = None
+    maximum: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None = None
+    mean: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None = None
+    total_tokens: Count | None = None
+    total_usd: Decimal | None = None
+    reason: Literal["empty_population", "arithmetic_limit"] | None = None
+
+    @field_validator("total_usd", mode="before")
+    @classmethod
+    def total_money(cls, value):
+        return None if value is None else _decimal_value(value)
+
+    @field_serializer("total_usd", when_used="json")
+    def total_json(self, value):
+        return None if value is None else format(value, "f")
+
+    @model_validator(mode="after")
+    def population(self):
+        values = (self.minimum, self.maximum, self.mean, self.total_tokens, self.total_usd)
+        if self.availability == "unavailable":
+            if any(value is not None for value in values) or self.reason is None:
+                raise ValueError("Unavailable statistics have null values and a reason.")
+            if (self.reason == "empty_population") != (self.sample_count == 0):
+                raise ValueError("An empty population must have no samples.")
+        elif self.sample_count == 0 or self.reason is not None:
+            raise ValueError("Available statistics require actual samples.")
+        elif self.unit == "ms" and (any(value is None for value in values[:3]) or any(value is not None for value in values[3:])):
+            raise ValueError("Latency statistics require a measured population.")
+        elif self.unit == "tokens" and (self.total_tokens is None or any(value is not None for value in (*values[:3], self.total_usd))):
+            raise ValueError("Token totals require actual counts.")
+        elif self.unit == "USD" and (self.total_usd is None or any(value is not None for value in values[:4])):
+            raise ValueError("Cost totals require decimal amounts.")
+        return self
+
+
+class OfflineMetrics(APIModel):
+    provenance: BenchmarkProvenance
+    planned_cases: Count
+    planned_units: Count
+    processed_units: Count
+    valid_recorded_outputs: Count
+    evaluated_units: Count
+    passed: Count
+    failed: Count
+    skipped: Count
+    inconclusive: Count
+    not_run: Count
+    processing_complete: bool
+    evaluation_complete: bool
+    latency_ms: MetricPopulation
+    ttft_ms: MetricPopulation
+    input_tokens: MetricPopulation
+    output_tokens: MetricPopulation
+    cost_usd: MetricPopulation
+
+    @model_validator(mode="after")
+    def counts(self):
+        if (self.processed_units > self.planned_units or self.valid_recorded_outputs > self.processed_units
+                or self.evaluated_units > self.processed_units
+                or self.passed + self.failed + self.skipped + self.inconclusive + self.not_run != self.processed_units
+                or self.processing_complete != (self.processed_units == self.planned_units)
+                or self.evaluation_complete != (self.passed + self.failed == self.planned_units)):
+            raise ValueError("Metric coverage and counts must agree.")
+        for name, unit in (("latency_ms", "ms"), ("ttft_ms", "ms"), ("input_tokens", "tokens"), ("output_tokens", "tokens"), ("cost_usd", "USD")):
+            if getattr(self, name).unit != unit or getattr(self, name).sample_count > self.processed_units:
+                raise ValueError("Metric populations must use the declared units and coverage.")
+        return self
+
+
+class BenchmarkVersionRegistration(APIModel):
+    kind: Literal["case_set", "profile", "pricing", "recording"]
+    identifier: Identifier
+    version: Identifier
+    digest: Digest
+    provenance: Literal["local", "test", "recorded"]
+
+
+BenchmarkMeasurement.model_rebuild()
+BenchmarkSummary.model_rebuild()
+JobResponse.model_rebuild()

@@ -8,20 +8,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import stat
 import threading
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Iterator, Protocol
 
 from pydantic import ValidationError
 
-from backend.compiler.ast_scanner import _is_link
+from backend.compiler.evaluator import validate_profile
 from backend.config import BackendConfig
 from backend.schemas import (
     BenchmarkMeasurement, BenchmarkPlan, BenchmarkRegistryDocument, BenchmarkRequest,
-    RecordingDocument, ScanResponse, VersionedReference,
+    RecordingDocument, ScanResponse, VersionedReference, content_digest,
 )
 from .errors import ServiceError
 
@@ -43,7 +40,7 @@ class BenchmarkExecutor(Protocol):
 
     No work may outlive this call in detached threads/processes. Yield only actual
     finished unit records. Cancellation is cooperative, never thread termination.
-    Production accepts the built-in replay executor only; custom injection is test-only.
+    Production accepts the approved offline executor only; custom injection is test-only.
     """
 
     provenance: str
@@ -62,6 +59,31 @@ class BenchmarkRegistry:
         if len(encoded) > 1024 * 1024:
             raise ServiceError("capacity_exceeded")
         self.identity = digest(encoded)
+        self.approval = None
+
+    @property
+    def production_approved(self):
+        from .benchmark_assets import ApprovedAssetStore
+        return (type(self.approval) is ApprovedAssetStore and self.approval.production_approved
+                and self.document.origin == "local" and self.identity == getattr(self.approval, "registry_identity", None))
+
+    def version_records(self):
+        return tuple((kind, item.identifier, item.version, content_digest(item, exclude={"content_digest"}), self.document.origin)
+                     for kind, items in (("case_set", self.document.case_sets), ("profile", self.document.evaluation_profiles)) for item in items)
+
+    def validate_offline(self):
+        for item in (*self.document.case_sets, *self.document.evaluation_profiles):
+            if item.content_digest is None or item.content_digest != content_digest(item, exclude={"content_digest"}):
+                raise ServiceError("source_conflict")
+        for cases in self.document.case_sets:
+            if cases.provenance != self.document.origin or cases.validation_version != "offline.v1":
+                raise ServiceError("capability_unavailable")
+            for case in cases.cases:
+                for text in (case.input_text, case.expected_output):
+                    if text is not None and len(text.encode("utf-8")) > 16384:
+                        raise ServiceError("capacity_exceeded")
+        for profile in self.document.evaluation_profiles:
+            validate_profile(profile)
 
     def resolve(self, request: BenchmarkRequest, analysis: ScanResponse, settings: BackendConfig,
                 executor: BenchmarkExecutor) -> BenchmarkPlan:
@@ -87,6 +109,8 @@ class BenchmarkRegistry:
             evaluation_profile=VersionedReference(identifier=profile.identifier, version=profile.version),
             registry_digest=self.identity, configuration_digest=configuration_digest(settings),
             execution_digest=executor.identity, provenance=executor.provenance,
+            case_set_digest=content_digest(cases, exclude={"content_digest"}),
+            evaluation_profile_digest=content_digest(profile, exclude={"content_digest"}),
         )
         executor.validate_plan(plan)
         return plan
@@ -129,38 +153,26 @@ class ReplayExecutor:
             yield records[key]
 
 
-def _read_asset(path: Path, maximum: int):
+def load_local_assets(settings: BackendConfig, *, allow_test_assets: bool = False) -> tuple[BenchmarkRegistry | None, BenchmarkExecutor | None]:
+    from .benchmark_assets import ApprovedAssetStore
+    from .offline_benchmark import OfflineBenchmarkExecutor
+    from backend.schemas import OfflineRecordingDocument
+    if settings.benchmark_registry_path is None and settings.benchmark_recordings_path is None:
+        return None, None
     try:
-        before = path.lstat()
-        if _is_link(before) or not stat.S_ISREG(before.st_mode) or before.st_size > maximum:
+        assets = ApprovedAssetStore(settings, allow_test_assets=allow_test_assets)
+        if settings.benchmark_registry_path is None:
             raise ServiceError("capability_unavailable")
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
-        with os.fdopen(os.open(path, flags), "rb") as stream:
-            opened = os.fstat(stream.fileno())
-            if not stat.S_ISREG(opened.st_mode) or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
-                raise ServiceError("capability_unavailable")
-            data = stream.read(maximum + 1)
-            after = os.fstat(stream.fileno())
-        if len(data) > maximum or (opened.st_size, opened.st_mtime_ns, opened.st_ctime_ns) != (
-            after.st_size, after.st_mtime_ns, after.st_ctime_ns,
-        ):
-            raise ServiceError("capability_unavailable")
-        return json.loads(data)
-    except (OSError, ValueError, RuntimeError):
-        raise ServiceError("capability_unavailable") from None
-
-
-def load_local_assets(settings: BackendConfig) -> tuple[BenchmarkRegistry | None, ReplayExecutor | None]:
-    try:
-        registry = None if settings.benchmark_registry_path is None else BenchmarkRegistry(
-            BenchmarkRegistryDocument.model_validate(_read_asset(settings.benchmark_registry_path, 1024 * 1024)),
+        registry = BenchmarkRegistry(BenchmarkRegistryDocument.model_validate(
+            assets.load(settings.benchmark_registry_path, "registry", 1024 * 1024)))
+        registry.validate_offline()
+        registry.approval = assets
+        assets.registry_identity = registry.identity
+        executor = None if settings.benchmark_recordings_path is None else OfflineBenchmarkExecutor(
+            registry, OfflineRecordingDocument.model_validate(assets.load(settings.benchmark_recordings_path, "offline_recordings", 4 * 1024 * 1024)),
+            assets=assets,
         )
-        executor = None if settings.benchmark_recordings_path is None else ReplayExecutor(
-            RecordingDocument.model_validate(_read_asset(settings.benchmark_recordings_path, 4 * 1024 * 1024)),
-        )
-        if ((registry is not None and registry.document.origin != "local")
-                or (executor is not None and executor.provenance != "recorded")):
-            raise ServiceError("capability_unavailable")
+        assets.verify()
         return registry, executor
-    except (ValidationError, TypeError, ValueError):
+    except (ValidationError, TypeError, ValueError, OSError, RuntimeError):
         raise ServiceError("capability_unavailable") from None

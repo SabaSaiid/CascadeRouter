@@ -4,6 +4,8 @@ import pytest
 import threading
 from datetime import datetime, timezone
 from types import SimpleNamespace
+import hashlib
+import json
 
 from backend.config import BackendConfig
 from backend.schemas import (
@@ -107,3 +109,94 @@ def job_environment(api_environment):
                           executor=executor, measurement=test_measurement)
     executor.release.set()
     storage.close()
+
+
+def fixture_digest(data):
+    return hashlib.sha256(json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")).hexdigest()
+
+
+@pytest.fixture
+def offline_environment(job_environment):
+    """All outputs/evidence in this fixture are synthetic and always labelled test."""
+    from backend.schemas import (
+        OfflineRecordedAnalysis, OfflineRecordedUnit, OfflineRecordingDocument, PinnedPricing,
+        RecordingEvidence, VersionedReference, content_digest,
+    )
+    from backend.services.offline_benchmark import OfflineBenchmarkExecutor
+    env = job_environment
+
+    def pin(model):
+        return type(model).model_validate({**model.model_dump(), "content_digest": content_digest(model, exclude={"content_digest"})})
+
+    def price(model="local/baseline", **changes):
+        data = dict(identifier="test-price-" + model.split("/")[-1], version="v1", model_id=model, provenance="test",
+                    source_id="test-pricing-fixture", effective_at="2020-01-01T00:00:00.000000Z", currency="USD",
+                    input_usd_per_million="0.10", output_usd_per_million="0.20")
+        data.update(changes)
+        return PinnedPricing(**data, digest=fixture_digest(data))
+
+    def make(cases=None, profile=None, outputs=None, evidence=None, prices=()):
+        cases = cases or [LocalBenchmarkCase(identifier="case-one", input_text="PRIVATE_LOCAL_INPUT", expected_output="PRIVATE_CAPTURE_ONE"),
+                          LocalBenchmarkCase(identifier="case-two", input_text="PRIVATE_SECOND_INPUT", expected_output="PRIVATE_CAPTURE_TWO")]
+        profile = pin(profile or EvaluationProfile(identifier="profile", version="v1", criteria_id="test-exact", mechanism="exact"))
+        case_set = pin(BenchmarkCaseSet(identifier="cases", version="v1", provenance="test", validation_version="offline.v1", cases=cases))
+        registry = BenchmarkRegistry(BenchmarkRegistryDocument(origin="test", approved=True, case_sets=[case_set],
+                                    evaluation_profiles=[profile], models=env.registry.document.models))
+        records = []
+        for model in registry.document.models:
+            for case in case_set.cases:
+                output = case.expected_output if outputs is None else outputs.get((model.identifier, case.identifier))
+                proof = RecordingEvidence(source_id="test-capture", captured_at="2026-10-28T00:00:00.000000Z")
+                if evidence is not None:
+                    proof = evidence(model.identifier, case.identifier)
+                data = dict(recording_id="test-record-" + str(len(records)), node_id=env.request.node_ids[0],
+                            model_id=model.identifier, case_id=case.identifier,
+                            input_digest=hashlib.sha256(case.input_text.encode("utf-8")).hexdigest(),
+                            captured_output=output, output_digest=None if output is None else hashlib.sha256(output.encode("utf-8")).hexdigest(),
+                            evidence=proof.model_dump(mode="json"))
+                records.append(OfflineRecordedUnit(**data, digest=fixture_digest(data)))
+        group = OfflineRecordedAnalysis(analysis_id=env.analysis.analysis_id,
+            analysis_digest=hashlib.sha256(env.analysis.model_dump_json().encode("utf-8")).hexdigest(),
+            registry_digest=registry.identity, case_set=VersionedReference(identifier=case_set.identifier, version=case_set.version),
+            evaluation_profile=VersionedReference(identifier=profile.identifier, version=profile.version), records=records)
+        document = OfflineRecordingDocument(provenance="test", source_id="test-recording-fixture",
+            recorded_at="2026-10-28T00:00:01.000000Z", pricing_records=prices, recordings=[group])
+        return registry, document, OfflineBenchmarkExecutor(registry, document)
+
+    env.pin = pin
+    env.price = price
+    env.make_offline = make
+    env.registry, env.document, env.executor = make()
+    return env
+
+
+@pytest.fixture
+def asset_environment(offline_environment, tmp_path):
+    from backend.schemas import AssetApproval, BenchmarkApprovalManifest
+    env = offline_environment
+    data_root, operator = tmp_path / "benchmark-data", tmp_path / "operator"
+    data_root.mkdir()
+    operator.mkdir()
+    registry_path, recording_path = data_root / "registry.json", data_root / "recordings.json"
+    registry_path.write_text(env.registry.document.model_dump_json(), encoding="utf-8")
+    recording_path.write_text(env.document.model_dump_json(), encoding="utf-8")
+    manifest = BenchmarkApprovalManifest(approved_by="test-operator", approved_at="2026-10-28T00:01:00.000000Z", assets=[
+        AssetApproval(asset_id="test-registry", root_index=0, relative_path="registry.json", kind="registry", provenance="test",
+                      digest=hashlib.sha256(registry_path.read_bytes()).hexdigest()),
+        AssetApproval(asset_id="test-recordings", root_index=0, relative_path="recordings.json", kind="offline_recordings", provenance="test",
+                      digest=hashlib.sha256(recording_path.read_bytes()).hexdigest()),
+    ])
+    manifest_path = operator / "approvals.json"
+    manifest_path.write_text(manifest.model_dump_json(), encoding="utf-8")
+    env.settings = BackendConfig(**{**env.settings.model_dump(), "permitted_repository_roots": env.settings.permitted_repository_roots,
+        "storage_directory": env.directory, "permitted_benchmark_data_roots": [data_root],
+        "benchmark_registry_path": registry_path, "benchmark_recordings_path": recording_path,
+        "benchmark_approval_manifest_path": manifest_path})
+    def configure(**changes):
+        return BackendConfig(**{**env.settings.model_dump(), "permitted_repository_roots": env.settings.permitted_repository_roots,
+            "storage_directory": env.directory, "permitted_benchmark_data_roots": [data_root],
+            "benchmark_registry_path": registry_path, "benchmark_recordings_path": recording_path,
+            "benchmark_approval_manifest_path": manifest_path, **changes})
+    env.configure = configure
+    env.data_root, env.registry_path, env.recording_path, env.manifest_path = data_root, registry_path, recording_path, manifest_path
+    return env

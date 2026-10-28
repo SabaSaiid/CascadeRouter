@@ -14,10 +14,11 @@ from backend.config import BackendConfig
 from backend.schemas import (
     TERMINAL_JOB_STATES, BenchmarkMeasurement, BenchmarkRequest, BenchmarkSummary, JobAccepted, JobResponse,
 )
-from .benchmark_cases import BenchmarkExecutor, BenchmarkRegistry, ReplayExecutor
+from .benchmark_cases import BenchmarkExecutor, BenchmarkRegistry
 from .errors import ServiceError
 from .repository_access import RepositoryAccess
 from .storage import AnalysisStorage
+from .offline_benchmark import OfflineBenchmarkExecutor
 
 
 class JobService:
@@ -38,11 +39,16 @@ class JobService:
             registry is not None and executor is not None
             and isinstance(executor.identity, str) and re.fullmatch(r"[0-9a-f]{64}", executor.identity)
             and ((allow_test_executor and executor.provenance == "test" and registry.document.origin == "test")
-                 or (type(executor) is ReplayExecutor and executor.provenance == "recorded" and registry.document.origin == "local"))
+                 or (type(executor) is OfflineBenchmarkExecutor and executor.production_approved and registry.production_approved))
         )
         self.lease = storage.job_lease()
         self.lease.__enter__()  # No recovery before exclusive ownership is established.
         try:
+            if registry is not None and (registry.production_approved or (allow_test_executor is True and registry.document.origin == "test")):
+                versions = registry.version_records()
+                if self.enabled and type(executor) is OfflineBenchmarkExecutor:
+                    versions += executor.version_records()
+                storage.register_benchmark_versions(versions)
             self._recover()
             if self.enabled:
                 for index in range(settings.job_workers):
@@ -234,6 +240,11 @@ class JobService:
                 except ServiceError:
                     pass  # Keep the last durable state for fail-closed recovery.
                 self._storage_failure()
+            except Exception:
+                try:
+                    self.storage.transition_job(job.run_id, ("running", "cancelling"), status="error", error_code="invalid_result")
+                except ServiceError:
+                    self._storage_failure()
             finally:
                 self.active.pop(job.run_id, None)
 
@@ -257,8 +268,12 @@ class JobService:
         else:
             statuses = {item.evaluation_status for item in job.measurements}
             quality = "failed" if "failed" in statuses else "passed" if statuses == {"passed"} else "inconclusive"
+            metrics = None
+            if type(self.executor) is OfflineBenchmarkExecutor:
+                from backend.compiler.metrics import aggregate
+                metrics = aggregate(job.plan, job.measurements)
             self.storage.transition_job(run_id, ("running",), status="complete",
-                                        result=BenchmarkSummary(provenance=job.plan.provenance, evaluation_status=quality))
+                                        result=BenchmarkSummary(provenance=job.plan.provenance, evaluation_status=quality, metrics=metrics))
 
     def _deadlines(self):
         while not self.stopping.wait(0.05):

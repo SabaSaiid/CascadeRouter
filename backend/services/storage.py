@@ -21,7 +21,7 @@ from backend.compiler.ast_scanner import _directory_access, _is_link
 from backend.config import BackendConfig
 from backend.schemas import (
     API_SCHEMA_VERSION, JOB_TRANSITIONS, TERMINAL_JOB_STATES, BenchmarkMeasurement,
-    BenchmarkPlan, BenchmarkRequest, JobError, JobProgress, JobResponse, ScanResponse,
+    BenchmarkPlan, BenchmarkRequest, BenchmarkVersionRegistration, JobError, JobProgress, JobResponse, ScanResponse,
 )
 from .errors import ServiceError
 
@@ -34,7 +34,7 @@ _DDL_V1 = (
     "CREATE TRIGGER immutable_delete BEFORE DELETE ON analyses BEGIN "
     "SELECT RAISE(ABORT, 'immutable snapshot'); END",
 )
-_DDL = _DDL_V1 + (
+_DDL_V2 = _DDL_V1 + (
     "CREATE TABLE jobs (run_id TEXT PRIMARY KEY NOT NULL, analysis_id TEXT NOT NULL REFERENCES analyses(analysis_id), "
     "request_key TEXT UNIQUE, request_payload BLOB NOT NULL, plan_payload BLOB NOT NULL, created_at TEXT NOT NULL, "
     "deadline_at TEXT NOT NULL, total_units INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN "
@@ -49,6 +49,14 @@ _DDL = _DDL_V1 + (
     "(OLD.status = 'cancelling' AND NEW.status IN ('cancelled','error','interrupted'))) "
     "BEGIN SELECT RAISE(ABORT, 'invalid job transition'); END",
     "CREATE TRIGGER immutable_job_delete BEFORE DELETE ON jobs BEGIN SELECT RAISE(ABORT, 'retained job'); END",
+)
+_DDL = _DDL_V2 + (
+    "CREATE TABLE benchmark_versions (kind TEXT NOT NULL, identifier TEXT NOT NULL, version TEXT NOT NULL, "
+    "digest TEXT NOT NULL, provenance TEXT NOT NULL, PRIMARY KEY (kind, identifier, version, provenance))",
+    "CREATE TRIGGER immutable_benchmark_version_update BEFORE UPDATE ON benchmark_versions "
+    "BEGIN SELECT RAISE(ABORT, 'immutable benchmark version'); END",
+    "CREATE TRIGGER immutable_benchmark_version_delete BEFORE DELETE ON benchmark_versions "
+    "BEGIN SELECT RAISE(ABORT, 'retained benchmark version'); END",
 )
 
 
@@ -76,12 +84,13 @@ class AnalysisStorage:
                 if version == 0 and not objects:
                     for statement in _DDL:
                         connection.execute(statement)
-                    connection.execute("PRAGMA user_version = 2")
-                elif version == 1:
-                    self._check_schema(connection, version=1)
-                    for statement in _DDL[len(_DDL_V1):]:
+                    connection.execute("PRAGMA user_version = 3")
+                elif version in (1, 2):
+                    self._check_schema(connection, version=version)
+                    previous = _DDL_V1 if version == 1 else _DDL_V2
+                    for statement in _DDL[len(previous):]:
                         connection.execute(statement)
-                    connection.execute("PRAGMA user_version = 2")
+                    connection.execute("PRAGMA user_version = 3")
                 else:
                     self._check_schema(connection)
                 connection.commit()
@@ -91,10 +100,10 @@ class AnalysisStorage:
             self.closed = True
             raise ServiceError("capability_unavailable") from None
 
-    def _check_schema(self, connection: sqlite3.Connection, version: int = 2) -> None:
+    def _check_schema(self, connection: sqlite3.Connection, version: int = 3) -> None:
         actual_version = connection.execute("PRAGMA user_version").fetchone()[0]
         objects = connection.execute("SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'").fetchall()
-        expected = _DDL_V1 if version == 1 else _DDL
+        expected = _DDL_V1 if version == 1 else _DDL_V2 if version == 2 else _DDL
         if actual_version != version or {row[0] for row in objects} != set(expected) or len(objects) != len(expected):
             raise ServiceError("capability_unavailable")
 
@@ -199,7 +208,7 @@ class AnalysisStorage:
         plan_payload, payload = connection.execute("SELECT plan_payload, payload FROM jobs WHERE run_id = ?", (run_id,)).fetchone()
         job = JobResponse.model_validate_json(payload)
         times = job.model_dump(mode="json", include={"created_at", "updated_at", "deadline_at"})
-        if (job.run_id != run_id or job.status != row[0] or job.plan.model_dump_json().encode("utf-8") != plan_payload
+        if (job.run_id != run_id or job.status != row[0] or job.plan != BenchmarkPlan.model_validate_json(plan_payload)
                 or times["created_at"] != row[2] or times["deadline_at"] != row[3]
                 or job.progress.total_units != row[4] or job.idempotency_key != row[5] or times["updated_at"] != row[6]
                 or job.plan.analysis_id != row[8]):
@@ -243,7 +252,7 @@ class AnalysisStorage:
                     if any(type(size) is not int or not 0 < size <= 65536 for size in existing[1:]):
                         raise ServiceError("source_conflict")
                     retained = connection.execute("SELECT request_payload, plan_payload FROM jobs WHERE run_id = ?", (existing[0],)).fetchone()
-                    if retained != (request_payload, plan_payload):
+                    if retained[0] != request_payload or BenchmarkPlan.model_validate_json(retained[1]) != plan:
                         raise ServiceError("source_conflict")
                     return self._job_row(connection, existing[0])
             if connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= self.max_jobs:
@@ -301,6 +310,32 @@ class AnalysisStorage:
             if len(rows) > 2048:
                 raise ServiceError("capacity_exceeded")
             return tuple(rows)
+
+    def register_benchmark_versions(self, records):
+        if type(records) not in (tuple, list) or len(records) > 2048:
+            raise ServiceError("capacity_exceeded")
+        try:
+            entries = tuple(BenchmarkVersionRegistration(kind=row[0], identifier=row[1], version=row[2],
+                                                         digest=row[3], provenance=row[4]) for row in records)
+        except (ValidationError, IndexError, TypeError):
+            raise ServiceError("source_conflict") from None
+        keys = [(item.kind, item.identifier, item.version, item.provenance) for item in entries]
+        if len(keys) != len(set(keys)):
+            raise ServiceError("source_conflict")
+        with self._job_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            count = connection.execute("SELECT COUNT(*) FROM benchmark_versions").fetchone()[0]
+            for item, key in zip(entries, keys):
+                row = connection.execute("SELECT digest FROM benchmark_versions WHERE kind = ? AND identifier = ? AND version = ? AND provenance = ?", key).fetchone()
+                if row is not None:
+                    if row[0] != item.digest:
+                        raise ServiceError("source_conflict")
+                    continue
+                if count >= 16384:
+                    raise ServiceError("capacity_exceeded")
+                connection.execute("INSERT INTO benchmark_versions (kind, identifier, version, provenance, digest) VALUES (?, ?, ?, ?, ?)", (*key, item.digest))
+                count += 1
+            connection.commit()
 
     @contextmanager
     def job_lease(self):

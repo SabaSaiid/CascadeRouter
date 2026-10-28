@@ -44,7 +44,7 @@ def create_app(settings: BackendConfig | None = None, *, benchmark_registry: Ben
             registry, executor = benchmark_registry, benchmark_executor
             if registry is None and executor is None:
                 try:
-                    registry, executor = load_local_assets(settings)
+                    registry, executor = load_local_assets(settings, allow_test_assets=allow_test_benchmarks is True)
                 except ServiceError:
                     logging.getLogger("cascaderouter.api").error("Local benchmark assets unavailable.")
             try:
