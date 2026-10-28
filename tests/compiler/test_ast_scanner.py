@@ -10,8 +10,11 @@ from pathlib import Path
 
 import pytest
 
+from backend.compiler import dag_builder
 from backend.compiler.ast_scanner import ScanDiagnostic, ScannerOptions, scan_repository
-from backend.compiler.dag_builder import GraphOptions, build_workflow_graph
+from backend.compiler.dag_builder import (
+    GraphOptions, ProvisionalAnalysisResult, analyze_repository, build_workflow_graph,
+)
 
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "sample_repo"
@@ -1353,3 +1356,217 @@ def test_graph_node_budget_exact_boundary_and_diagnostic_cap(tmp_path):
     assert not partial.edges and not partial.complete
     assert len(partial.diagnostics) == 1
     assert codes(partial) == {"diagnostic_limit"}
+
+
+# Phase 3 exercises the public orchestrator and real source-only components.
+def test_analysis_end_to_end_preserves_results_ids_and_serialization(tmp_path):
+    source(tmp_path, PREAMBLE + "first = " + flow_call("fixture/a")
+           + "\nsecond = " + flow_call("fixture/b", "first")
+           + "\nthird = " + flow_call("fixture/c", "[first, second]") + "\n")
+    result = analyze_repository(str(tmp_path))
+    assert isinstance(result, ProvisionalAnalysisResult)
+    assert result.complete
+    assert result.scan_result.complete and result.workflow_graph.complete
+    assert len(result.scan_result.nodes) == 3
+    assert result.workflow_graph.node_ids == tuple(node.node_id for node in result.scan_result.nodes)
+    assert edge_models(result.scan_result, result.workflow_graph) == {
+        ("fixture/a", "fixture/b"), ("fixture/a", "fixture/c"), ("fixture/b", "fixture/c"),
+    }
+    assert all(edge.evidence for edge in result.workflow_graph.edges)
+    payload = result.to_dict()
+    assert payload == {
+        "scan_result": result.scan_result.to_dict(),
+        "workflow_graph": result.workflow_graph.to_dict(),
+        "complete": True,
+    }
+    assert json.loads(json.dumps(payload)) == payload
+    assert json.dumps(payload) == json.dumps(analyze_repository(str(tmp_path)).to_dict())
+
+
+def test_analysis_empty_repository_is_complete(tmp_path):
+    result = analyze_repository(str(tmp_path))
+    assert result.complete
+    assert result.scan_result.scanned_files_count == result.scan_result.discovered_files_count == 0
+    assert not result.scan_result.nodes
+    assert not result.workflow_graph.node_ids and not result.workflow_graph.edges
+    assert not result.scan_result.diagnostics and not result.workflow_graph.diagnostics
+
+
+@pytest.mark.parametrize("scanner_complete,graph_complete", [
+    (True, True), (True, False), (False, True), (False, False),
+])
+def test_analysis_completeness_requires_both_components(tmp_path, scanner_complete, graph_complete):
+    baseline = analyze_repository(str(tmp_path))
+    result = ProvisionalAnalysisResult(
+        replace(baseline.scan_result, complete=scanner_complete),
+        replace(baseline.workflow_graph, complete=graph_complete),
+    )
+    expected = (scanner_complete, graph_complete) == (True, True)
+    assert result.complete is expected
+    assert result.to_dict()["complete"] is expected
+
+
+def test_analysis_partial_scan_keeps_valid_edges_and_separate_diagnostics(tmp_path):
+    source(tmp_path, PREAMBLE + "first = " + flow_call("fixture/a")
+           + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    source(tmp_path, "if (\n", "broken.py")
+    result = analyze_repository(str(tmp_path))
+    assert not result.complete and not result.scan_result.complete
+    assert len(result.scan_result.nodes) == 2
+    assert edge_models(result.scan_result, result.workflow_graph) == {("fixture/a", "fixture/b")}
+    assert codes(result.scan_result) == {"syntax_error"}
+    assert codes(result.workflow_graph) == {"input_scan_incomplete", "source_syntax_error"}
+    payload = result.to_dict()
+    assert payload["scan_result"]["diagnostics"] == result.scan_result.to_dict()["diagnostics"]
+    assert payload["workflow_graph"]["diagnostics"] == result.workflow_graph.to_dict()["diagnostics"]
+    assert "diagnostics" not in payload
+
+
+def test_analysis_graph_limit_preserves_scan_and_partial_graph(tmp_path):
+    source(tmp_path, PREAMBLE + "first = " + flow_call("fixture/a")
+           + "\nsecond = " + flow_call("fixture/b", "first")
+           + "\nthird = " + flow_call("fixture/c", "first") + "\n")
+    result = analyze_repository(str(tmp_path), graph_options=GraphOptions(max_edges=1))
+    assert result.scan_result.complete and len(result.scan_result.nodes) == 3
+    assert not result.complete and not result.workflow_graph.complete
+    assert len(result.workflow_graph.edges) == 1
+    assert codes(result.workflow_graph) == {"edge_limit"}
+    assert all(edge.from_node_id in result.workflow_graph.node_ids
+               and edge.to_node_id in result.workflow_graph.node_ids for edge in result.workflow_graph.edges)
+
+
+@pytest.mark.parametrize("limited_component", ["scanner", "graph"])
+def test_analysis_source_options_apply_to_the_correct_component(tmp_path, limited_component):
+    source(tmp_path, PREAMBLE + CALL)
+    scanner_options = ScannerOptions(max_file_bytes=8) if limited_component == "scanner" else None
+    graph_options = GraphOptions(source_options=ScannerOptions(max_file_bytes=8)) if limited_component == "graph" else None
+    result = analyze_repository(str(tmp_path), scanner_options=scanner_options, graph_options=graph_options)
+    assert not result.complete and not result.workflow_graph.edges
+    assert "source_file_size_limit" in codes(result.workflow_graph)
+    if limited_component == "scanner":
+        assert not result.scan_result.nodes and not result.scan_result.complete
+        assert codes(result.scan_result) == {"file_size_limit"}
+        assert result.scan_result.source_options is scanner_options
+    else:
+        assert result.scan_result.complete and len(result.scan_result.nodes) == 1
+        assert not result.workflow_graph.complete
+
+
+@pytest.mark.parametrize("custom_options", [False, True])
+def test_analysis_calls_scanner_once_and_passes_exact_result_and_options(tmp_path, monkeypatch, custom_options):
+    source(tmp_path, PREAMBLE + "first = " + flow_call("fixture/a")
+           + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    scanner_options = ScannerOptions(max_files=3) if custom_options else None
+    graph_options = GraphOptions(max_edges=2) if custom_options else None
+    events, scans, graphs, opened_sources = [], [], [], []
+    original_open = os.open
+
+    def guarded_open(path, flags, *args, **kwargs):
+        if not flags & getattr(os, "O_DIRECTORY", 0):
+            opened_sources.append(Path(path).name)
+        return original_open(path, flags, *args, **kwargs)
+
+    def scan_spy(path, *, options=None):
+        events.append("scan")
+        assert path == str(tmp_path) and options is scanner_options
+        scanned = scan_repository(path, options=options)
+        scans.append(scanned)
+        return scanned
+
+    def graph_spy(path, scan_result, options=None):
+        events.append("graph")
+        assert path == str(tmp_path) and options is graph_options
+        assert scan_result is scans[0]
+        graph = build_workflow_graph(path, scan_result, options)
+        graphs.append(graph)
+        return graph
+
+    monkeypatch.setattr(os, "open", guarded_open)
+    monkeypatch.setattr(dag_builder, "scan_repository", scan_spy)
+    monkeypatch.setattr(dag_builder, "build_workflow_graph", graph_spy)
+    result = analyze_repository(str(tmp_path), scanner_options=scanner_options, graph_options=graph_options)
+    assert events == ["scan", "graph"]
+    assert result.scan_result is scans[0] and result.workflow_graph is graphs[0]
+    assert result.complete and len(result.workflow_graph.edges) == 1
+    # One initial read and the graph builder's mandatory guarded verification.
+    assert opened_sources == ["app.py", "app.py"]
+
+
+@pytest.mark.parametrize("invalid_root,diagnostic", [
+    ("missing", "root_error"), ("file", "invalid_root"), ("nul", "root_error"),
+])
+def test_analysis_invalid_roots_preserve_component_error_semantics(tmp_path, invalid_root, diagnostic):
+    if invalid_root == "file":
+        path = str(source(tmp_path, "pass\n"))
+    else:
+        path = str(tmp_path / "missing") + ("\x00" if invalid_root == "nul" else "")
+    result = analyze_repository(path)
+    assert not result.complete and not result.scan_result.complete and not result.workflow_graph.complete
+    assert not result.scan_result.nodes and not result.workflow_graph.edges
+    assert codes(result.scan_result) == {diagnostic}
+    assert codes(result.workflow_graph) == {"input_scan_incomplete", "source_" + diagnostic}
+
+
+@pytest.mark.parametrize("failing_component", ["scanner", "graph"])
+def test_analysis_unexpected_component_exceptions_propagate(tmp_path, monkeypatch, failing_component):
+    failure = RuntimeError("TRUSTED_ORCHESTRATION_TEST_FAILURE")
+    events = []
+
+    def scanner(path, *, options=None):
+        events.append("scan")
+        if failing_component == "scanner":
+            raise failure
+        return scan_repository(path, options=options)
+
+    def builder(path, scan_result, options=None):
+        events.append("graph")
+        raise failure
+
+    monkeypatch.setattr(dag_builder, "scan_repository", scanner)
+    monkeypatch.setattr(dag_builder, "build_workflow_graph", builder)
+    with pytest.raises(RuntimeError) as raised:
+        analyze_repository(str(tmp_path))
+    assert raised.value is failure
+    assert events == (["scan"] if failing_component == "scanner" else ["scan", "graph"])
+
+
+def test_analysis_retains_source_change_detection_between_components(tmp_path, monkeypatch):
+    body = PREAMBLE + "first = " + flow_call("fixture/a") + "\nsecond = " + flow_call("fixture/b", "first") + "\n"
+    source(tmp_path, body)
+
+    def changed_source_builder(path, scan_result, options=None):
+        source(tmp_path, body.replace("messages=first", "messages=other"))
+        return build_workflow_graph(path, scan_result, options)
+
+    monkeypatch.setattr(dag_builder, "build_workflow_graph", changed_source_builder)
+    result = analyze_repository(str(tmp_path))
+    assert result.scan_result.complete and len(result.scan_result.nodes) == 2
+    assert not result.complete and not result.workflow_graph.complete
+    assert not result.workflow_graph.edges
+    assert codes(result.workflow_graph) == {"source_changed"}
+
+
+def test_analysis_never_executes_target_code_or_exports_private_literals(tmp_path, monkeypatch):
+    marker = tmp_path / "executed.marker"
+    private = "PRIVATE_UNIFIED_PROMPT_AND_EXCEPTION"
+    credential = "sk-FAKE_UNIFIED_CREDENTIAL_DO_NOT_EXPORT"
+    source(tmp_path, f"from pathlib import Path\nPath({str(marker)!r}).write_text({private!r})\n"
+           "import helper\n" + PREAMBLE + "first = " + flow_call("fixture/a", repr(private))
+           + "\nsecond = " + flow_call("fixture/b", "first")
+           + "\nthird = " + flow_call(credential) + f"\nraise RuntimeError({private!r})\n")
+    source(tmp_path, f"from pathlib import Path\nPath({str(marker)!r}).write_text({private!r})\n", "helper.py")
+    source(tmp_path, private, ".env")  # Synthetic test data, never opened by analysis.
+    original_open = os.open
+
+    def source_only_open(path, flags, *args, **kwargs):
+        assert flags & getattr(os, "O_DIRECTORY", 0) or Path(path).suffix == ".py"
+        return original_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", source_only_open)
+    result = analyze_repository(str(tmp_path))
+    assert not marker.exists()
+    assert len(result.scan_result.nodes) == 3
+    assert edge_models(result.scan_result, result.workflow_graph) == {("fixture/a", "fixture/b")}
+    assert not result.complete
+    serialized = json.dumps(result.to_dict())
+    assert private not in serialized and credential not in serialized

@@ -28,7 +28,7 @@ from typing import Iterator, Literal
 from .ast_scanner import (
     ProvisionalLLMNode, ProvisionalScanResult, ScannerOptions, SourceFingerprint,
     _ParsedSource, _definition_expressions, _normal_windows_path,
-    _scan_repository_with_sources,
+    _scan_repository_with_sources, scan_repository,
 )
 
 
@@ -100,6 +100,31 @@ class ProvisionalWorkflowGraph:
             return value
 
         return {key: lists(value) for key, value in asdict(self).items()}
+
+
+@dataclass(frozen=True)
+class ProvisionalAnalysisResult:
+    """Internal compiler result; not the finalized shared API/Pydantic schema.
+
+    Both component results are retained unchanged, including their separate
+    diagnostics and partial results. Completeness covers their supported static
+    subsets, not runtime execution or an atomic repository snapshot.
+    """
+
+    scan_result: ProvisionalScanResult
+    workflow_graph: ProvisionalWorkflowGraph
+
+    @property
+    def complete(self) -> bool:
+        return self.scan_result.complete and self.workflow_graph.complete
+
+    def to_dict(self) -> dict[str, object]:
+        """Delegate serialization without flattening component contracts."""
+        return {
+            "scan_result": self.scan_result.to_dict(),
+            "workflow_graph": self.workflow_graph.to_dict(),
+            "complete": self.complete,
+        }
 
 
 def _valid_path(value: str) -> bool:
@@ -658,3 +683,20 @@ def build_workflow_graph(
         build.edges.clear()
         build.verified.clear()
     return build.finish(fresh.repository_path)
+
+
+def analyze_repository(
+    repository_path: str, *, scanner_options: ScannerOptions | None = None,
+    graph_options: GraphOptions | None = None,
+) -> ProvisionalAnalysisResult:
+    """Scan once and pass that exact result to the existing graph builder.
+
+    The builder retains its required guarded source reread and fingerprint
+    verification. This wrapper adds no source reads, parsing, retries or error
+    conversion: invalid-root diagnostics and unexpected exceptions follow the
+    existing component behavior. Options apply to their respective components;
+    the builder also retains the scanner's recorded source limits.
+    """
+    scan_result = scan_repository(repository_path, options=scanner_options)
+    workflow_graph = build_workflow_graph(repository_path, scan_result, options=graph_options)
+    return ProvisionalAnalysisResult(scan_result, workflow_graph)
