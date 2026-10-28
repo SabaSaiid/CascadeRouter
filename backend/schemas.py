@@ -17,7 +17,7 @@ from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_serializer, field_validator, model_validator
 
 
 API_SCHEMA_VERSION = "cascaderouter.scan.v1"
@@ -1453,4 +1453,142 @@ class OptimizationResponse(APIModel):
         if self.policy.status != "unavailable" and (self.policy.route_count != routes
                 or (self.policy.status == "available") != self.result.decisions_complete):
             raise ValueError("Policy completeness must match the decisions.")
+        return self
+
+
+# Explicit library-only runtime metadata. Callables remain outside serializable
+# schemas and no API accepts registrations or execution authorizations.
+RuntimeProvenance = Literal["local", "test"]
+RuntimeOutputKind = Literal["text", "json_value"]
+RuntimeReason = Literal[
+    "validated", "structure_validated", "started", "unknown_node", "adapter_unavailable",
+    "provenance_forbidden", "policy_invalid", "authorization_missing", "validation_unavailable",
+    "input_invalid", "input_limit", "output_invalid", "output_limit", "validation_failed",
+    "adapter_failed", "capacity_exceeded", "deadline_exceeded", "cancelled", "closed",
+]
+
+
+class RuntimeAdapterSpec(APIModel):
+    adapter_id: Identifier
+    model: ModelVersion
+    capability: Literal["local_in_process"]
+    provenance: RuntimeProvenance
+    max_execution_seconds: Annotated[float, Field(gt=0, le=120, allow_inf_nan=False)]
+    supports_cancellation: bool
+    output_kind: RuntimeOutputKind
+    evaluation_profile: VersionedReference
+    evaluation_profile_digest: Digest
+
+    _safe_id = field_validator("adapter_id")(LLMNode.safe_model_identifier)
+
+
+class RuntimeRouteBinding(APIModel):
+    node_id: NodeId
+    primary_adapter_id: Identifier
+    fallback_adapter_id: Identifier | None = None
+
+    @model_validator(mode="after")
+    def distinct_adapters(self):
+        if self.primary_adapter_id == self.fallback_adapter_id:
+            raise ValueError("Repeated runtime attempts are forbidden.")
+        return self
+
+
+class RuntimeAuthorization(APIModel):
+    """Trusted host permission, independent of merely parsing a policy artifact."""
+
+    schema_version: Literal["cascaderouter.runtime.v1"] = "cascaderouter.runtime.v1"
+    analysis_id: AnalysisId
+    analysis_digest: Digest
+    optimization_digest: Digest
+    policy_digest: Digest
+    bindings: tuple[RuntimeRouteBinding, ...] = Field(min_length=1, max_length=16)
+
+    @field_validator("bindings", mode="before")
+    @classmethod
+    def bounded_bindings(cls, value):
+        return _sequence(value, 16)
+
+    @model_validator(mode="after")
+    def unique_nodes(self):
+        if len({item.node_id for item in self.bindings}) != len(self.bindings):
+            raise ValueError("A runtime node has only one authorized assignment.")
+        return self
+
+
+class RuntimeValidationContract(APIModel):
+    profile: EvaluationProfile
+    output_kind: RuntimeOutputKind
+    mode: Literal["expected_output", "structure"]
+    expected_output: Annotated[str, Field(max_length=8192)] | None = Field(default=None, repr=False)
+
+
+class RuntimeAttempt(APIModel):
+    adapter_id: Identifier
+    model: ModelVersion
+    provenance: RuntimeProvenance
+    execution_status: Literal["running", "succeeded", "failed"]
+    validation_status: Literal["passed", "failed", "inconclusive", "not_run"]
+    reason: RuntimeReason
+    evaluation: CaseEvaluation | None = None
+
+    @model_validator(mode="after")
+    def actual_validation(self):
+        if self.execution_status != "succeeded" and (self.validation_status != "not_run" or self.evaluation is not None):
+            raise ValueError("Unfinished or failed execution has no output validation.")
+        if self.validation_status == "passed" and (self.evaluation is None or not self.evaluation.checks_ran
+                or self.evaluation.validation_status != "passed"):
+            raise ValueError("Validation success requires actual passing checks.")
+        if self.validation_status == "passed":
+            if self.reason == "validated":
+                if self.evaluation.status != "passed":
+                    raise ValueError("Expected-output validation requires an actual evaluator pass.")
+            elif (self.reason != "structure_validated" or self.evaluation.status != "inconclusive"
+                  or self.evaluation.reason != "ground_truth_unavailable"):
+                raise ValueError("Structural validation must retain its distinct quality outcome.")
+        return self
+
+
+class RuntimeResult(APIModel):
+    node_id: NodeId
+    status: Literal["succeeded", "failed", "unavailable", "inconclusive", "cancelled", "timed_out"]
+    validation_status: Literal["passed", "failed", "inconclusive", "not_run"]
+    reason: RuntimeReason
+    selected_adapter_id: Identifier | None = None
+    selected_model: ModelVersion | None = None
+    provenance: RuntimeProvenance | None = None
+    fallback_attempted: bool
+    attempt_count: Annotated[int, Field(ge=0, le=2)]
+    attempts: tuple[RuntimeAttempt, ...] = Field(max_length=2)
+    worker_still_running: bool = False
+    result_data: JsonValue | None = Field(default=None, repr=False)
+
+    @field_validator("attempts", mode="before")
+    @classmethod
+    def bounded_attempts(cls, value):
+        return _sequence(value, 2)
+
+    @model_validator(mode="after")
+    def truthful_result(self):
+        if self.attempt_count != len(self.attempts) or self.fallback_attempted != (self.attempt_count == 2):
+            raise ValueError("Runtime progress requires actual attempts.")
+        if len({item.adapter_id for item in self.attempts}) != len(self.attempts) or len({item.model.identifier for item in self.attempts}) != len(self.attempts):
+            raise ValueError("Repeated adapter/model attempts are forbidden.")
+        if self.attempts:
+            last = self.attempts[-1]
+            if (self.selected_adapter_id != last.adapter_id or self.selected_model != last.model
+                    or self.provenance != last.provenance or any(item.provenance != self.provenance for item in self.attempts)):
+                raise ValueError("Selected metadata must describe actual execution.")
+        elif any(item is not None for item in (self.selected_adapter_id, self.selected_model, self.provenance)):
+            raise ValueError("Unattempted requests cannot claim execution provenance.")
+        if self.status == "succeeded":
+            if (not self.attempts or self.attempts[-1].execution_status != "succeeded"
+                    or self.attempts[-1].validation_status != "passed" or self.validation_status != "passed"
+                    or self.reason != self.attempts[-1].reason
+                    or self.worker_still_running):
+                raise ValueError("Success requires completed validated execution.")
+        elif self.result_data is not None or self.validation_status == "passed":
+            raise ValueError("Unsuccessful requests cannot return output or claim validation success.")
+        if self.worker_still_running and self.status not in ("timed_out", "cancelled", "unavailable"):
+            raise ValueError("Only interrupted waits can report continuing work.")
         return self

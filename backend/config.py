@@ -49,6 +49,8 @@ class BackendConfig(BaseModel):
     permitted_benchmark_data_roots: tuple[Path, ...] = Field(default=(), repr=False, exclude=True)
     benchmark_approval_manifest_path: Path | None = Field(default=None, repr=False, exclude=True)
     optimization_quality_threshold: Decimal | None = None
+    runtime_timeout_seconds: Annotated[float, Field(gt=0, le=120, allow_inf_nan=False)] = 30.0
+    runtime_max_attempts: Annotated[int, Field(ge=1, le=2)] = 2
     max_concurrent_provider_requests: Annotated[int, Field(ge=1, le=16)] = 4
     max_requests_per_job: Annotated[int, Field(ge=1, le=1024)] = 64
     max_output_tokens: Annotated[int, Field(ge=1, le=8192)] = 1024
