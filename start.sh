@@ -26,15 +26,21 @@ echo -e "${NC}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
-# 1. Check Environment File
-if [ ! -f "$ROOT_DIR/.env" ] && [ -f "$ROOT_DIR/.env.example" ]; then
-    echo -e "${YELLOW}[!] No .env found. Creating .env from .env.example...${NC}"
-    cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+# Configuration is explicit; never create or load a dotenv file.
+BACKEND_ARGS=()
+if [ "$#" -gt 0 ]; then
+    if [ "$#" -ne 2 ] || [ "$1" != "--backend-config" ]; then
+        echo 'Usage: bash start.sh [--backend-config ABSOLUTE_NON_SECRET_JSON]'
+        exit 2
+    fi
+    BACKEND_ARGS=(--config "$2")
 fi
 
 # Cleanup on exit
 PIDS=()
 cleanup() {
+    status=$?
+    trap - EXIT INT TERM
     echo -e "\n${YELLOW}[*] Shutting down CascadeRouter services...${NC}"
     for pid in "${PIDS[@]}"; do
         if kill -0 "$pid" 2>/dev/null; then
@@ -43,9 +49,11 @@ cleanup() {
     done
     wait 2>/dev/null || true
     echo -e "${GREEN}[✓] Shutdown complete. Goodbye!${NC}"
-    exit 0
+    exit "$status"
 }
-trap cleanup SIGINT SIGTERM EXIT
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # 2. Check & Start Backend (if available)
 if [ -f "$ROOT_DIR/backend/main.py" ]; then
@@ -55,7 +63,7 @@ if [ -f "$ROOT_DIR/backend/main.py" ]; then
     elif [ -d "$ROOT_DIR/.venv" ]; then
         source "$ROOT_DIR/.venv/bin/activate"
     fi
-    uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload &
+    python -B -m backend.main "${BACKEND_ARGS[@]}" &
     BACKEND_PID=$!
     PIDS+=("$BACKEND_PID")
     echo -e "${GREEN}[✓] Backend service launched (PID: $BACKEND_PID)${NC}"
@@ -70,8 +78,8 @@ if [ -d "$ROOT_DIR/frontend" ]; then
     cd "$ROOT_DIR/frontend"
 
     if [ ! -d "node_modules" ]; then
-        echo -e "${YELLOW}[!] Installing frontend node_modules...${NC}"
-        npm install
+        echo 'Frontend dependencies are absent. Install them explicitly before using start.sh.'
+        exit 1
     fi
 
     echo -e "${CYAN}[*] Starting CascadeRouter Vite Dev Server on http://localhost:5173...${NC}"
@@ -87,7 +95,8 @@ if [ -d "$ROOT_DIR/frontend" ]; then
     PIDS+=("$FRONTEND_PID")
 
     # Wait for child processes
-    wait "$FRONTEND_PID"
+    # Bash 4.3+: propagate either service's failure and stop its sibling.
+    wait -n "${PIDS[@]}"
 else
     echo -e "${YELLOW}[!] Error: frontend directory not found.${NC}"
     exit 1

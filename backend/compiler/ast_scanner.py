@@ -22,6 +22,7 @@ import stat
 import tokenize
 from collections import Counter
 from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Iterator, Literal
@@ -143,6 +144,25 @@ class _ParsedSource:
     calls: tuple[ast.Call, ...]
 
 
+class _RepositoryIdentityChanged(Exception):
+    """The service-authorized root changed; never downgrade to partial coverage."""
+
+
+_expected_repository: ContextVar[tuple[Path, tuple[int, int]] | None] = ContextVar(
+    "expected_repository", default=None,
+)
+
+
+@contextmanager
+def _require_repository_identity(path: Path, identity: tuple[int, int]) -> Iterator[None]:
+    """Private service boundary, shared by the scan and guarded graph reread."""
+    token = _expected_repository.set((path, identity))
+    try:
+        yield
+    finally:
+        _expected_repository.reset(token)
+
+
 def _is_link(info: os.stat_result) -> bool:
     # Windows junctions/reparse points are not necessarily S_ISLNK on Python 3.11.
     return stat.S_ISLNK(info.st_mode) or bool(
@@ -183,7 +203,9 @@ def _pin_windows_directory(path: Path, root: Path, stack: ExitStack) -> None:
     close.restype = wintypes.BOOL
     # No DELETE sharing: pin every ancestor against rename/junction replacement.
     # OPEN_REPARSE_POINT opens a final link itself instead of following it.
-    handle = create(str(path), 0, 1, None, 3, 0x02000000 | 0x00200000, None)
+    # FILE_LIST_DIRECTORY is necessary: metadata-only (zero-access) handles do
+    # not enforce the sharing restriction against directory renames on Windows.
+    handle = create(str(path), 1, 1, None, 3, 0x02000000 | 0x00200000, None)
     if handle == wintypes.HANDLE(-1).value:
         raise OSError("Could not pin a source directory.")
     stack.callback(close, handle)
@@ -257,12 +279,20 @@ class _RepositoryScan:
     def run(self) -> ProvisionalScanResult:
         try:
             root_info = self.root.lstat()
+            expected = _expected_repository.get()
+            if expected is not None and (
+                self.root != expected[0] or _is_link(root_info)
+                or (root_info.st_dev, root_info.st_ino) != expected[1]
+            ):
+                raise _RepositoryIdentityChanged()
             if _is_link(root_info):
                 self.report("link_skipped", "The selected root is a link or reparse point.")
             elif not stat.S_ISDIR(root_info.st_mode):
                 self.report("invalid_root", "Select an existing repository directory.")
             else:
                 self.root = self.root.resolve(strict=True)
+                if expected is not None and self.root != expected[0]:
+                    raise _RepositoryIdentityChanged()
                 self.root_identity = (root_info.st_dev, root_info.st_ino)
                 self.walk()
         except (OSError, ValueError, RuntimeError):

@@ -1,7 +1,7 @@
 """Explicitly injected backend settings; no environment or dotenv loading.
 
-Validation checks directory metadata/usability now. A future repository-access
-service must still enforce authorization, identity and containment at time of use.
+Validation checks directory metadata/usability now. The repository-access
+service enforces authorization, identity and containment again at time of use.
 No provider credentials belong in this phase's configuration.
 """
 
@@ -32,6 +32,9 @@ class BackendConfig(BaseModel):
     bind_host: Annotated[str, Field(min_length=1, max_length=45)] = "127.0.0.1"
     bind_port: Annotated[int, Field(ge=1, le=65535)] = 8000
     permitted_repository_roots: tuple[Path, ...] = Field(default=(), repr=False, exclude=True)
+    storage_directory: Path | None = Field(default=None, repr=False, exclude=True)
+    max_stored_analyses: Annotated[int, Field(ge=1, le=4096)] = 256
+    max_stored_analysis_bytes: Annotated[int, Field(ge=1024, le=64 * 1024 * 1024)] = 16 * 1024 * 1024
     max_request_body_bytes: Annotated[int, Field(ge=1, le=16 * 1024 * 1024)] = 1024 * 1024
     scan_workers: Annotated[int, Field(ge=1, le=4)] = 1
     job_workers: Annotated[int, Field(ge=1, le=8)] = 2
@@ -102,16 +105,27 @@ class BackendConfig(BaseModel):
             roots.append(resolved)
         return tuple(roots)
 
+    @field_validator("storage_directory", mode="before")
+    @classmethod
+    def usable_storage(cls, value: object) -> Path | None:
+        if value is None:
+            return None
+        return cls.usable_roots([value])[0]
+
     @model_validator(mode="after")
     def consistent_limits(self) -> BackendConfig:
         if self.max_queued_jobs > self.max_jobs or self.job_workers > self.max_jobs:
             raise ValueError("Queue and worker limits cannot exceed the total job limit.")
         if self.provider_timeout_seconds > self.job_timeout_seconds:
             raise ValueError("A provider timeout cannot exceed the overall job timeout.")
+        if self.storage_directory is not None and any(
+            self.storage_directory.is_relative_to(root) for root in self.permitted_repository_roots
+        ):
+            raise ValueError("Storage must be outside every permitted repository root.")
         return self
 
     def require_repository_roots(self) -> tuple[Path, ...]:
-        """Future scan-service startup must call this before enabling repository access.
+        """Scan-service startup calls this before enabling repository access.
 
         This is a fail-closed policy precondition, not a path authorizer or an
         implementation of time-of-use containment.

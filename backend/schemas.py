@@ -1,4 +1,4 @@
-"""First-party API contract v1; no routes or compiler adapter are implemented here.
+"""First-party API contract v1, shared by routes, adapter and persistence.
 
 Public messages come from fixed catalogs. Source text, credentials, fingerprints
 and internal graph evidence have no fields in this contract. Validation performs
@@ -251,6 +251,16 @@ class ScanRequest(APIModel):
     _path = field_validator("repository_path")(_text_path)
 
 
+class HealthResponse(APIModel):
+    schema_version: Literal["cascaderouter.scan.v1"] = API_SCHEMA_VERSION
+    status: Literal["ok"] = "ok"
+    scan_available: bool
+    analysis_retrieval_available: bool
+    configuration_required: bool
+    benchmark_available: Literal[False] = False
+    optimization_available: Literal[False] = False
+
+
 class SchemaShapeSummary(APIModel):
     """Limited shape/reference information, never a complete JSON Schema."""
 
@@ -371,7 +381,7 @@ class LLMNode(SourceLocation):
 
 
 class ScanResponse(APIModel):
-    """Flat public scan response; metadata is supplied explicitly by a future service.
+    """Flat public scan response; metadata is supplied explicitly by the scan service.
 
     Ordering is preserved. Complete flags must agree; this model never repairs,
     filters or invents graph edges. Internal evidence and fingerprints stay internal.
