@@ -257,7 +257,12 @@ class HealthResponse(APIModel):
     scan_available: bool
     analysis_retrieval_available: bool
     configuration_required: bool
-    benchmark_available: Literal[False] = False
+    benchmark_available: bool = False
+    benchmark_provenance: Literal["test", "recorded"] | None = None
+    benchmark_unavailable_reason: Literal[
+        "registry_unconfigured", "executor_unconfigured", "execution_not_approved",
+        "lifecycle_unavailable", "storage_unavailable",
+    ] | None = None
     optimization_available: Literal[False] = False
 
 
@@ -460,4 +465,348 @@ class ScanResponse(APIModel):
             raise ValueError("Graph edges require distinct endpoints included in the response.")
         if self.detected_framework is not None and not self.nodes:
             raise ValueError("A detected framework label requires scanner-confirmed nodes.")
+        return self
+
+
+# Local benchmark contract. Scan provenance remains unchanged; test results can
+# never be represented as live or recorded benchmark evidence.
+JOB_SCHEMA_VERSION = "cascaderouter.benchmark.v1"
+RunId = Annotated[str, Field(min_length=36, max_length=36, pattern=r"^run_[0-9a-f]{32}$")]
+Identifier = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")]
+Digest = Annotated[str, Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")]
+ModelIdentifier = Annotated[str, Field(min_length=1, max_length=256, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")]
+BenchmarkProvenance = Literal["test", "recorded"]
+JobState = Literal["queued", "running", "cancelling", "cancelled", "complete", "error", "interrupted"]
+TERMINAL_JOB_STATES = frozenset({"cancelled", "complete", "error", "interrupted"})
+JOB_TRANSITIONS = MappingProxyType({
+    "queued": frozenset({"running", "cancelled", "error", "interrupted"}),
+    "running": frozenset({"cancelling", "complete", "error", "interrupted"}),
+    "cancelling": frozenset({"cancelled", "error", "interrupted"}),
+    **{state: frozenset() for state in TERMINAL_JOB_STATES},
+})
+JOB_ERROR_MESSAGES = MappingProxyType({
+    "executor_failed": "The local executor could not finish the job.",
+    "invalid_result": "The executor returned an incompatible result.",
+    "deadline_exceeded": "The job deadline was reached.",
+    "recovery_unavailable": "The queued plan cannot be safely resumed.",
+    "process_interrupted": "The previous execution was interrupted.",
+    "shutdown": "The service stopped before execution could finish.",
+    "storage_unavailable": "The job result could not be safely persisted.",
+})
+
+
+class BenchmarkRequest(APIModel):
+    analysis_id: AnalysisId
+    node_ids: tuple[NodeId, ...] = Field(min_length=1, max_length=16)
+    baseline_model_id: ModelIdentifier
+    candidate_model_ids: tuple[ModelIdentifier, ...] = Field(min_length=1, max_length=8)
+    benchmark_case_set_id: Identifier
+    evaluation_profile_id: Identifier
+    idempotency_key: Identifier | None = None
+
+    @field_validator("node_ids", "candidate_model_ids", mode="before")
+    @classmethod
+    def bounded_selections(cls, value, info):
+        return _sequence(value, 16 if info.field_name == "node_ids" else 8)
+
+    @model_validator(mode="after")
+    def unique_selections(self):
+        models = (self.baseline_model_id, *self.candidate_model_ids)
+        if len(set(self.node_ids)) != len(self.node_ids) or len(set(models)) != len(models):
+            raise ValueError("Selections must be distinct, including the baseline.")
+        for value in models:
+            LLMNode.safe_model_identifier(value)
+        if self.idempotency_key is not None:
+            LLMNode.safe_model_identifier(self.idempotency_key)
+        return self
+
+
+class VersionedReference(APIModel):
+    identifier: Identifier
+    version: Identifier
+
+
+class ModelVersion(APIModel):
+    identifier: ModelIdentifier
+    version: Identifier
+
+    _safe_id = field_validator("identifier")(LLMNode.safe_model_identifier)
+
+
+class BenchmarkPlan(APIModel):
+    schema_version: Literal["cascaderouter.benchmark.v1"] = JOB_SCHEMA_VERSION
+    analysis_id: AnalysisId
+    analysis_schema_version: Literal["cascaderouter.scan.v1"] = API_SCHEMA_VERSION
+    analysis_digest: Digest
+    node_ids: tuple[NodeId, ...] = Field(min_length=1, max_length=16)
+    models: tuple[ModelVersion, ...] = Field(min_length=2, max_length=9)  # baseline first
+    case_set: VersionedReference
+    case_ids: tuple[Identifier, ...] = Field(min_length=1, max_length=64)
+    evaluation_profile: VersionedReference
+    registry_digest: Digest
+    configuration_version: Literal["zero-cost.jobs.v1"] = "zero-cost.jobs.v1"
+    configuration_digest: Digest
+    execution_digest: Digest
+    provenance: BenchmarkProvenance
+
+    @field_validator("node_ids", "models", "case_ids", mode="before")
+    @classmethod
+    def bounded_inputs(cls, value, info):
+        return _sequence(value, {"node_ids": 16, "models": 9, "case_ids": 64}[info.field_name])
+
+    @model_validator(mode="after")
+    def unique_units(self):
+        for values in (self.node_ids, self.case_ids, tuple(model.identifier for model in self.models)):
+            if len(values) != len(set(values)):
+                raise ValueError("Plan inputs must be unique.")
+        if len(self.node_ids) * len(self.models) * len(self.case_ids) > 1024:
+            raise ValueError("Plan work exceeds the contract budget.")
+        return self
+
+    def unit_keys(self) -> tuple[tuple[str, str, str], ...]:
+        return tuple((node, model.identifier, case) for node in self.node_ids for model in self.models for case in self.case_ids)
+
+
+class NumberMeasurement(APIModel):
+    availability: Literal["available", "unavailable"]
+    value: Annotated[float, Field(ge=0, allow_inf_nan=False)] | None = None
+
+    @model_validator(mode="after")
+    def availability_matches(self):
+        if (self.availability == "available") != (self.value is not None):
+            raise ValueError("Availability must match the supplied measurement.")
+        return self
+
+
+class CountMeasurement(APIModel):
+    availability: Literal["available", "unavailable"]
+    value: Count | None = None
+
+    @model_validator(mode="after")
+    def availability_matches(self):
+        if (self.availability == "available") != (self.value is not None):
+            raise ValueError("Availability must match the supplied measurement.")
+        return self
+
+
+class BenchmarkMeasurement(APIModel):
+    node_id: NodeId
+    model_id: ModelIdentifier
+    case_id: Identifier
+    provenance: BenchmarkProvenance
+    latency_ms: NumberMeasurement
+    input_tokens: CountMeasurement
+    output_tokens: CountMeasurement
+    cost_usd: NumberMeasurement
+    evaluation_status: Literal["passed", "failed", "inconclusive", "unavailable"]
+    quality_score: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] | None = None
+
+    _safe_id = field_validator("model_id")(LLMNode.safe_model_identifier)
+
+    @model_validator(mode="after")
+    def score_availability(self):
+        if self.evaluation_status == "unavailable" and self.quality_score is not None:
+            raise ValueError("Unavailable evaluation has no score.")
+        return self
+
+    def unit_key(self) -> tuple[str, str, str]:
+        return self.node_id, self.model_id, self.case_id
+
+
+class BenchmarkSummary(APIModel):
+    provenance: BenchmarkProvenance
+    evaluation_status: Literal["passed", "failed", "inconclusive"]
+
+
+class JobError(APIModel):
+    code: Annotated[str, Field(json_schema_extra={"enum": sorted(JOB_ERROR_MESSAGES)})]
+    message: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def controlled_default(cls, data):
+        if isinstance(data, dict) and type(data.get("code")) is str and data["code"] in JOB_ERROR_MESSAGES:
+            data = {"message": JOB_ERROR_MESSAGES[data["code"]], **data}
+        return data
+
+    @model_validator(mode="after")
+    def controlled_message(self):
+        if self.code not in JOB_ERROR_MESSAGES or self.message != JOB_ERROR_MESSAGES[self.code]:
+            raise ValueError("Job errors require a controlled code and message.")
+        return self
+
+
+class JobProgress(APIModel):
+    completed_units: Annotated[int, Field(ge=0, le=1024)]
+    total_units: Annotated[int, Field(ge=1, le=1024)]
+
+
+class JobResponse(APIModel):
+    schema_version: Literal["cascaderouter.benchmark.v1"] = JOB_SCHEMA_VERSION
+    run_id: RunId
+    status: JobState
+    plan: BenchmarkPlan
+    created_at: datetime
+    updated_at: datetime
+    deadline_at: datetime
+    finished_at: datetime | None = None
+    idempotency_key: Identifier | None = None
+    progress: JobProgress
+    measurements: tuple[BenchmarkMeasurement, ...] = Field(max_length=1024)
+    result: BenchmarkSummary | None = None
+    error: JobError | None = None
+    cancellation_reason: Literal["requested", "deadline", "shutdown"] | None = None
+
+    @field_validator("measurements", mode="before")
+    @classmethod
+    def bounded_results(cls, value):
+        return _sequence(value, 1024)
+
+    @field_validator("created_at", "updated_at", "deadline_at", "finished_at", mode="before")
+    @classmethod
+    def aware_times(cls, value):
+        return None if value is None else ScanResponse.supplied_timestamp(value)
+
+    @field_serializer("created_at", "updated_at", "deadline_at", "finished_at", when_used="json")
+    def utc_times(self, value):
+        return None if value is None else value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    @model_validator(mode="after")
+    def truthful_state(self):
+        keys = [item.unit_key() for item in self.measurements]
+        if (len(keys) != len(set(keys)) or not set(keys) <= set(self.plan.unit_keys())
+                or any(item.provenance != self.plan.provenance for item in self.measurements)
+                or self.progress.completed_units != len(keys) or self.progress.total_units != len(self.plan.unit_keys())):
+            raise ValueError("Progress and measurements must match the immutable plan.")
+        terminal = self.status in TERMINAL_JOB_STATES
+        if terminal != (self.finished_at is not None) or self.updated_at < self.created_at or self.deadline_at <= self.created_at:
+            raise ValueError("Job timestamps and state are inconsistent.")
+        if (self.status == "complete") != (self.result is not None):
+            raise ValueError("Only persisted complete jobs have a terminal summary.")
+        if self.status == "complete" and (len(keys) != self.progress.total_units or self.result.provenance != self.plan.provenance):
+            raise ValueError("Completion requires all planned work.")
+        if self.result is not None:
+            statuses = {item.evaluation_status for item in self.measurements}
+            expected = "failed" if "failed" in statuses else "passed" if statuses == {"passed"} else "inconclusive"
+            if self.result.evaluation_status != expected:
+                raise ValueError("Summary quality must reflect the supplied evaluations.")
+        if self.status in ("queued", "running", "cancelling", "complete", "cancelled") and self.error is not None:
+            raise ValueError("This state cannot carry a terminal failure.")
+        if self.status in ("error", "interrupted") and self.error is None:
+            raise ValueError("Failed execution requires controlled error information.")
+        if self.status == "queued" and keys:
+            raise ValueError("Queued jobs cannot claim completed work.")
+        return self
+
+
+class JobAccepted(APIModel):
+    schema_version: Literal["cascaderouter.benchmark.v1"] = JOB_SCHEMA_VERSION
+    run_id: RunId
+    status: JobState
+    provenance: BenchmarkProvenance
+    status_url: Annotated[str, Field(pattern=r"^/api/runs/run_[0-9a-f]{32}$")]
+
+
+class LocalBenchmarkCase(APIModel):
+    identifier: Identifier
+    input_text: Annotated[str, Field(min_length=1, max_length=8192, repr=False)]
+    expected_output: Annotated[str, Field(max_length=8192)] | None = Field(default=None, repr=False)
+
+
+class BenchmarkCaseSet(APIModel):
+    identifier: Identifier
+    version: Identifier
+    cases: tuple[LocalBenchmarkCase, ...] = Field(min_length=1, max_length=64)
+
+    @field_validator("cases", mode="before")
+    @classmethod
+    def bounded_cases(cls, value):
+        return _sequence(value, 64)
+
+
+class EvaluationProfile(APIModel):
+    identifier: Identifier
+    version: Identifier
+    criteria_id: Identifier
+
+
+class BenchmarkRegistryDocument(APIModel):
+    schema_version: Literal["cascaderouter.registry.v1"] = "cascaderouter.registry.v1"
+    origin: Literal["local", "test"]
+    approved: Literal[True]
+    case_sets: tuple[BenchmarkCaseSet, ...] = Field(min_length=1, max_length=16, repr=False)
+    evaluation_profiles: tuple[EvaluationProfile, ...] = Field(min_length=1, max_length=16)
+    models: tuple[ModelVersion, ...] = Field(min_length=2, max_length=32)
+
+    @field_validator("approved", mode="before")
+    @classmethod
+    def explicit_approval(cls, value):
+        if type(value) is not bool or value is not True:
+            raise ValueError("Approval must be explicitly true.")
+        return value
+
+    @field_validator("case_sets", "evaluation_profiles", "models", mode="before")
+    @classmethod
+    def bounded_registry(cls, value, info):
+        return _sequence(value, 32 if info.field_name == "models" else 16)
+
+    @model_validator(mode="after")
+    def unique_identifiers(self):
+        collections = (self.case_sets, self.evaluation_profiles, self.models, *(item.cases for item in self.case_sets))
+        if any(len({item.identifier for item in items}) != len(items) for items in collections):
+            raise ValueError("Registry identifiers must be unique.")
+        return self
+
+
+class RecordedAnalysisResults(APIModel):
+    analysis_id: AnalysisId
+    analysis_digest: Digest
+    registry_digest: Digest
+    case_set: VersionedReference
+    evaluation_profile: VersionedReference
+    measurements: tuple[BenchmarkMeasurement, ...] = Field(min_length=1, max_length=1024)
+
+    @field_validator("measurements", mode="before")
+    @classmethod
+    def bounded_measurements(cls, value):
+        return _sequence(value, 1024)
+
+    @model_validator(mode="after")
+    def unique_measurements(self):
+        keys = [item.unit_key() for item in self.measurements]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Recorded unit identities must be unique.")
+        return self
+
+
+class RecordingDocument(APIModel):
+    schema_version: Literal["cascaderouter.recordings.v1"] = "cascaderouter.recordings.v1"
+    provenance: BenchmarkProvenance
+    approved: Literal[True]
+    source_id: Identifier
+    recorded_at: datetime
+    recordings: tuple[RecordedAnalysisResults, ...] = Field(min_length=1, max_length=16)
+
+    _approval = field_validator("approved", mode="before")(BenchmarkRegistryDocument.explicit_approval)
+
+    @field_validator("recorded_at", mode="before")
+    @classmethod
+    def aware_recording(cls, value):
+        return ScanResponse.supplied_timestamp(value)
+
+    @field_serializer("recorded_at", when_used="json")
+    def recording_time(self, value):
+        return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    @field_validator("recordings", mode="before")
+    @classmethod
+    def bounded_recordings(cls, value):
+        return _sequence(value, 16)
+
+    @model_validator(mode="after")
+    def recording_provenance(self):
+        if len({item.analysis_id for item in self.recordings}) != len(self.recordings):
+            raise ValueError("Recording analyses must be distinct.")
+        if any(item.provenance != self.provenance for record in self.recordings for item in record.measurements):
+            raise ValueError("Record provenance cannot be relabelled.")
         return self

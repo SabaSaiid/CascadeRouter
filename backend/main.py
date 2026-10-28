@@ -18,33 +18,55 @@ from starlette.middleware.cors import CORSMiddleware
 
 from backend.api.boundaries import LOCAL_ORIGINS, RequestBoundary, error_response
 from backend.api.scan import router
+from backend.api.jobs import router as jobs_router
 from backend.compiler.ast_scanner import _is_link
 from backend.config import BackendConfig, ConfigurationError
 from backend.services.errors import ServiceError
 from backend.services.scan_service import ScanService
+from backend.services.benchmark_cases import BenchmarkExecutor, BenchmarkRegistry, load_local_assets
+from backend.services.jobs import JobService
 
 
-def create_app(settings: BackendConfig | None = None) -> FastAPI:
+def create_app(settings: BackendConfig | None = None, *, benchmark_registry: BenchmarkRegistry | None = None,
+               benchmark_executor: BenchmarkExecutor | None = None, allow_test_benchmarks: bool = False) -> FastAPI:
     settings = BackendConfig() if settings is None else BackendConfig.model_validate(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         service = None
+        jobs = None
         if settings.permitted_repository_roots and settings.storage_directory is not None:
             try:
                 service = ScanService(settings)
             except (ServiceError, ConfigurationError, OSError):
                 logging.getLogger("cascaderouter.api").error("Scan services unavailable; check approved configuration and storage.")
+        if service is not None:
+            registry, executor = benchmark_registry, benchmark_executor
+            if registry is None and executor is None:
+                try:
+                    registry, executor = load_local_assets(settings)
+                except ServiceError:
+                    logging.getLogger("cascaderouter.api").error("Local benchmark assets unavailable.")
+            try:
+                jobs = JobService(settings, service.storage, service.access, registry=registry, executor=executor,
+                                  allow_test_executor=allow_test_benchmarks is True)
+            except (ServiceError, OSError):
+                logging.getLogger("cascaderouter.api").error("Job lifecycle services unavailable.")
         app.state.scan_service = service
+        app.state.job_service = jobs
         try:
             yield
         finally:
+            if jobs is not None:
+                jobs.close()
             if service is not None:
                 service.close()
             app.state.scan_service = None
+            app.state.job_service = None
 
     app = FastAPI(title="CascadeRouter local scan API", version="1", lifespan=lifespan)
     app.state.scan_service = None
+    app.state.job_service = None
 
     @app.exception_handler(RequestValidationError)
     async def invalid_request(request: Request, _error):
@@ -56,6 +78,7 @@ def create_app(settings: BackendConfig | None = None) -> FastAPI:
                               request.state.request_id, 422 if error.status_code == 400 else error.status_code)
 
     app.include_router(router)
+    app.include_router(jobs_router)
     app.add_middleware(CORSMiddleware, allow_origins=list(LOCAL_ORIGINS), allow_methods=["GET", "POST"],
                        allow_headers=["Content-Type"], allow_credentials=False)
     app.add_middleware(RequestBoundary, settings=settings)

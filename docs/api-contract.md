@@ -6,7 +6,15 @@
 `cascaderouter.scan.v1`. This is the Phase 4.1 contract for team review. The models,
 configuration and unit tests remain authoritative. Phase 4.2 adds the local
 FastAPI factory, repository authorizer, compiler adapter and immutable SQLite
-snapshots. Provider execution, job engines, optimization and patching are absent.
+snapshots. Phase 4.3 adds persistent local benchmark jobs and approved recorded-run
+replay, documented in [benchmark-jobs.md](benchmark-jobs.md). Optimization and
+patching remain absent.
+
+**Mandatory zero-cost policy:** this and all subsequent backend phases must remain
+local and independent of paid inference/search providers. No provider credentials,
+billing setup, outbound provider calls or new paid dependencies are authorized.
+Missing approved inputs/recordings return controlled unavailable/inconclusive
+results. Test data must never be relabelled as recorded or real measurements.
 
 The earlier conceptual examples in `docs/architecture.md` and the existing
 `frontend/src/types.ts` are not exact definitions of this contract. Frontend
@@ -248,12 +256,13 @@ or the storage directory.
 Numeric limits are strict positive integers. Queue/worker limits cannot exceed the
 total job limit; provider timeout cannot exceed job timeout. Configuration validates
 these values. Scan workers, body size and scan deadlines are enforced by the
-HTTP/services layer; provider/job limits remain reserved and inactive.
+HTTP/services layer. Job workers, queue/admission, deadlines and result limits are
+now enforced; inherited provider-specific settings remain inactive legacy fields.
 
 The authorizer enforces root containment and identity at time of use, including
 ancestor substitutions. It reuses the scanner's directory guards and retains the
-graph builder's guarded reread/fingerprint verification. Provider secrets belong
-only in a future server-side provider phase.
+graph builder's guarded reread/fingerprint verification. Provider secrets and
+paid provider execution are outside the mandatory zero-cost policy.
 
 ## Local application, storage and HTTP boundaries (Phase 4.2)
 
@@ -270,7 +279,9 @@ Missing root policy, missing storage or incompatible storage never broaden acces
 | `GET /openapi.json` | Generated request, response and controlled error schemas |
 
 Health reports initialization readiness, not a fresh database probe or available
-worker capacity. Benchmark and optimization capabilities are always false.
+worker capacity. Benchmark capability is false unless approved local registry and
+recorded replay are configured (or explicit test injection is enabled). Health
+reports benchmark provenance separately. Optimization remains unavailable.
 Retrieval preserves the original timestamp, analysis ID and `data_source: live`:
 it is the retained result of actual static analysis, not a new scan or mock. It
 does not re-open old source files. A newly configured policy must still contain
@@ -323,7 +334,8 @@ Aggregate body admission is `min(8, floor(64 MiB / body_limit))`, at least one;
 excess requests return `429`. Body receipt and worker wait share the configured
 scan deadline. Actual compiler work runs off the event loop with at most
 `scan_workers` admitted operations and no scan backlog. Retrieval uses the same
-bounded pool. Provider/job settings do not activate unimplemented services.
+bounded pool. Job API database work shares this bounded pool; fixed job execution
+threads and their finite queue are separate. Provider-specific settings stay inactive.
 
 An HTTP timeout returns `503`; coroutine cancellation and client disconnect are
 not represented as thread termination. Running compiler work retains its slot
@@ -336,7 +348,8 @@ not create replacement threads. Admission limits are per application process;
 run one process through the supported entry point.
 
 Storage requires an existing absolute local directory outside **every** permitted
-repository root. It uses `analyses.sqlite3`, schema `PRAGMA user_version = 1`,
+repository root. It uses `analyses.sqlite3`, now schema `PRAGMA user_version = 2`
+after the transactional Phase 4.3 migration preserving version-1 snapshots,
 parameterized values, transactions, a primary key and update/delete rejection
 triggers. Unknown/corrupt schemas are unavailable and are never dropped or
 migrated implicitly. Payloads are validated public `ScanResponse` JSON plus
@@ -416,7 +429,8 @@ Python 3.14 execution does not validate that runtime.
 The project retains pip and `requirements.txt`. Pydantic v2 plus the standard
 library implements this foundation; no settings library or new lint stack was
 added. Existing runtime/test dependency inputs are retained with upper bounds.
-Provider prerequisites remain listed; provider execution is not implemented.
+The unused OpenAI SDK requirement was removed for the zero-cost policy. Static
+OpenAI-call discovery needs no SDK import. No provider execution is implemented.
 
 These ranges are **not a lock and do not establish reproducible installation**.
 The available local interpreter is Python 3.14.3; no runnable Python 3.11 resolver
@@ -435,10 +449,9 @@ There is no successful hosted-CI result implied by these configuration changes.
 
 ## Later endpoints (proposed, not implemented)
 
-- `POST /api/benchmark`: explicit cases/models and bounded job creation.
-- `GET /api/runs/{run_id}`: actual job status and available results.
-- `POST /api/runs/{run_id}/cancel`: controlled cancellation.
 - `POST /api/optimize`: recommendations from actual eligible measurements.
 
-Provider execution, job states, evaluation, runtime routing, patching
-and regression execution require separate implementations and acceptance gates.
+New local evaluation, runtime routing, patching and regression execution require
+separate implementations and acceptance gates under the zero-cost policy. Paid
+provider dependencies/calls require explicit new authorization; they are not an
+implicit later phase.

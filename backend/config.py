@@ -40,6 +40,10 @@ class BackendConfig(BaseModel):
     job_workers: Annotated[int, Field(ge=1, le=8)] = 2
     max_queued_jobs: Annotated[int, Field(ge=1, le=256)] = 32
     max_jobs: Annotated[int, Field(ge=1, le=2048)] = 128
+    max_benchmark_units: Annotated[int, Field(ge=1, le=1024)] = 256
+    max_job_result_bytes: Annotated[int, Field(ge=1024, le=8 * 1024 * 1024)] = 1024 * 1024
+    benchmark_registry_path: Path | None = Field(default=None, repr=False, exclude=True)
+    benchmark_recordings_path: Path | None = Field(default=None, repr=False, exclude=True)
     max_concurrent_provider_requests: Annotated[int, Field(ge=1, le=16)] = 4
     max_requests_per_job: Annotated[int, Field(ge=1, le=1024)] = 64
     max_output_tokens: Annotated[int, Field(ge=1, le=8192)] = 1024
@@ -112,6 +116,28 @@ class BackendConfig(BaseModel):
             return None
         return cls.usable_roots([value])[0]
 
+    @field_validator("benchmark_registry_path", "benchmark_recordings_path", mode="before")
+    @classmethod
+    def explicit_local_asset(cls, value: object) -> Path | None:
+        if value is None:
+            return None
+        try:
+            if not isinstance(value, (str, Path)):
+                raise ValueError()
+            path = Path(value)
+            if not path.is_absolute() or str(path).startswith(("\\\\", "//")) or path.suffix.lower() != ".json":
+                raise ValueError()
+            before = path.lstat()
+            if stat.S_ISLNK(before.st_mode) or getattr(before, "st_file_attributes", 0) & 0x400 or not stat.S_ISREG(before.st_mode):
+                raise ValueError()
+            resolved = path.resolve(strict=True)
+            after = resolved.lstat()
+            if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+                raise ValueError()
+            return resolved
+        except (OSError, ValueError, RuntimeError):
+            raise ValueError("A benchmark asset must be an explicit regular local JSON file.") from None
+
     @model_validator(mode="after")
     def consistent_limits(self) -> BackendConfig:
         if self.max_queued_jobs > self.max_jobs or self.job_workers > self.max_jobs:
@@ -122,6 +148,9 @@ class BackendConfig(BaseModel):
             self.storage_directory.is_relative_to(root) for root in self.permitted_repository_roots
         ):
             raise ValueError("Storage must be outside every permitted repository root.")
+        if any(path.is_relative_to(root) for path in (self.benchmark_registry_path, self.benchmark_recordings_path)
+               if path is not None for root in self.permitted_repository_roots):
+            raise ValueError("Trusted benchmark assets must be outside permitted scan roots.")
         return self
 
     def require_repository_roots(self) -> tuple[Path, ...]:

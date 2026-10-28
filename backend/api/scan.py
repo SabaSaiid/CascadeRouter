@@ -20,8 +20,12 @@ def _service(request: Request):
 @router.get("/health", response_model=HealthResponse, responses=ERRORS)
 async def health(request: Request) -> HealthResponse:
     available = request.app.state.scan_service is not None
+    jobs = request.app.state.job_service
+    benchmarks = jobs is not None and jobs.available
     return HealthResponse(scan_available=available, analysis_retrieval_available=available,
-                          configuration_required=not available)
+                          configuration_required=not available, benchmark_available=benchmarks,
+                          benchmark_provenance=jobs.executor.provenance if benchmarks else None,
+                          benchmark_unavailable_reason="lifecycle_unavailable" if jobs is None else jobs.unavailable_reason)
 
 
 @router.post("/scan", response_model=ScanResponse, responses=ERRORS)

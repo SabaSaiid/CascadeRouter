@@ -7,26 +7,48 @@ It must not be writable by an untrusted local principal. This is not an OS sandb
 from __future__ import annotations
 
 import sqlite3
+import os
 import stat
 import threading
 from contextlib import contextmanager
-from typing import Iterator
+from datetime import datetime, timedelta, timezone
+from typing import Callable, Iterator
+from uuid import uuid4
 
 from pydantic import ValidationError
 
 from backend.compiler.ast_scanner import _directory_access, _is_link
 from backend.config import BackendConfig
-from backend.schemas import API_SCHEMA_VERSION, ScanResponse
+from backend.schemas import (
+    API_SCHEMA_VERSION, JOB_TRANSITIONS, TERMINAL_JOB_STATES, BenchmarkMeasurement,
+    BenchmarkPlan, BenchmarkRequest, JobError, JobProgress, JobResponse, ScanResponse,
+)
 from .errors import ServiceError
 
 
-_DDL = (
+_DDL_V1 = (
     "CREATE TABLE analyses (analysis_id TEXT PRIMARY KEY NOT NULL, created_at TEXT NOT NULL, "
     "schema_version TEXT NOT NULL, completion_status TEXT NOT NULL, payload BLOB NOT NULL)",
     "CREATE TRIGGER immutable_update BEFORE UPDATE ON analyses BEGIN "
     "SELECT RAISE(ABORT, 'immutable snapshot'); END",
     "CREATE TRIGGER immutable_delete BEFORE DELETE ON analyses BEGIN "
     "SELECT RAISE(ABORT, 'immutable snapshot'); END",
+)
+_DDL = _DDL_V1 + (
+    "CREATE TABLE jobs (run_id TEXT PRIMARY KEY NOT NULL, analysis_id TEXT NOT NULL REFERENCES analyses(analysis_id), "
+    "request_key TEXT UNIQUE, request_payload BLOB NOT NULL, plan_payload BLOB NOT NULL, created_at TEXT NOT NULL, "
+    "deadline_at TEXT NOT NULL, total_units INTEGER NOT NULL, status TEXT NOT NULL CHECK(status IN "
+    "('queued','running','cancelling','cancelled','complete','error','interrupted')), updated_at TEXT NOT NULL, payload BLOB NOT NULL)",
+    "CREATE TRIGGER immutable_job_plan BEFORE UPDATE OF run_id, analysis_id, request_key, request_payload, plan_payload, "
+    "created_at, deadline_at, total_units ON jobs BEGIN SELECT RAISE(ABORT, 'immutable job plan'); END",
+    "CREATE TRIGGER immutable_job_terminal BEFORE UPDATE ON jobs WHEN OLD.status IN "
+    "('cancelled','complete','error','interrupted') BEGIN SELECT RAISE(ABORT, 'terminal job'); END",
+    "CREATE TRIGGER job_transitions BEFORE UPDATE OF status ON jobs WHEN NEW.status != OLD.status AND NOT ("
+    "(OLD.status = 'queued' AND NEW.status IN ('running','cancelled','error','interrupted')) OR "
+    "(OLD.status = 'running' AND NEW.status IN ('cancelling','complete','error','interrupted')) OR "
+    "(OLD.status = 'cancelling' AND NEW.status IN ('cancelled','error','interrupted'))) "
+    "BEGIN SELECT RAISE(ABORT, 'invalid job transition'); END",
+    "CREATE TRIGGER immutable_job_delete BEFORE DELETE ON jobs BEGIN SELECT RAISE(ABORT, 'retained job'); END",
 )
 
 
@@ -40,6 +62,9 @@ class AnalysisStorage:
         self.path = self.directory / "analyses.sqlite3"
         self.max_records = settings.max_stored_analyses
         self.max_bytes = settings.max_stored_analysis_bytes
+        self.max_jobs = settings.max_jobs
+        self.max_result_bytes = settings.max_job_result_bytes
+        self.job_timeout_seconds = settings.job_timeout_seconds
         self.lock = threading.RLock()
         self.closed = False
         self.database_identity: tuple[int, int] | None = None
@@ -51,7 +76,12 @@ class AnalysisStorage:
                 if version == 0 and not objects:
                     for statement in _DDL:
                         connection.execute(statement)
-                    connection.execute("PRAGMA user_version = 1")
+                    connection.execute("PRAGMA user_version = 2")
+                elif version == 1:
+                    self._check_schema(connection, version=1)
+                    for statement in _DDL[len(_DDL_V1):]:
+                        connection.execute(statement)
+                    connection.execute("PRAGMA user_version = 2")
                 else:
                     self._check_schema(connection)
                 connection.commit()
@@ -61,10 +91,11 @@ class AnalysisStorage:
             self.closed = True
             raise ServiceError("capability_unavailable") from None
 
-    def _check_schema(self, connection: sqlite3.Connection) -> None:
-        version = connection.execute("PRAGMA user_version").fetchone()[0]
+    def _check_schema(self, connection: sqlite3.Connection, version: int = 2) -> None:
+        actual_version = connection.execute("PRAGMA user_version").fetchone()[0]
         objects = connection.execute("SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'").fetchall()
-        if version != 1 or {row[0] for row in objects} != set(_DDL) or len(objects) != len(_DDL):
+        expected = _DDL_V1 if version == 1 else _DDL
+        if actual_version != version or {row[0] for row in objects} != set(expected) or len(objects) != len(expected):
             raise ServiceError("capability_unavailable")
 
     @contextmanager
@@ -89,6 +120,7 @@ class AnalysisStorage:
                 connection = sqlite3.connect(self.path, timeout=0.5)
                 try:
                     connection.execute("PRAGMA trusted_schema = OFF")
+                    connection.execute("PRAGMA foreign_keys = ON")
                     yield connection
                 finally:
                     connection.close()  # Rolls back any uncommitted transaction.
@@ -145,3 +177,171 @@ class AnalysisStorage:
     def close(self) -> None:
         with self.lock:
             self.closed = True
+
+    def _job_payload(self, job: JobResponse) -> bytes:
+        job = JobResponse.model_validate(job)
+        measurements = job.model_dump_json(include={"measurements"}).encode("utf-8")
+        payload = job.model_dump_json().encode("utf-8")
+        if len(measurements) > self.max_result_bytes or len(payload) > self.max_result_bytes + 65536:
+            raise ServiceError("capacity_exceeded")
+        return payload
+
+    def _job_row(self, connection: sqlite3.Connection, run_id: str) -> JobResponse:
+        row = connection.execute(
+            "SELECT status, length(plan_payload), created_at, deadline_at, total_units, request_key, updated_at, length(payload), analysis_id "
+            "FROM jobs WHERE run_id = ?", (run_id,),
+        ).fetchone()
+        if row is None:
+            raise ServiceError("not_found")
+        if (type(row[7]) is not int or not 0 < row[7] <= self.max_result_bytes + 65536
+                or type(row[1]) is not int or not 0 < row[1] <= 65536):
+            raise ServiceError("source_conflict")
+        plan_payload, payload = connection.execute("SELECT plan_payload, payload FROM jobs WHERE run_id = ?", (run_id,)).fetchone()
+        job = JobResponse.model_validate_json(payload)
+        times = job.model_dump(mode="json", include={"created_at", "updated_at", "deadline_at"})
+        if (job.run_id != run_id or job.status != row[0] or job.plan.model_dump_json().encode("utf-8") != plan_payload
+                or times["created_at"] != row[2] or times["deadline_at"] != row[3]
+                or job.progress.total_units != row[4] or job.idempotency_key != row[5] or times["updated_at"] != row[6]
+                or job.plan.analysis_id != row[8]):
+            raise ServiceError("source_conflict")
+        return job
+
+    @contextmanager
+    def _job_connection(self):
+        try:
+            with self._connection() as connection:
+                self._check_schema(connection)
+                yield connection
+        except (ValidationError, TypeError, ValueError):
+            raise ServiceError("source_conflict") from None
+        except sqlite3.IntegrityError:
+            raise ServiceError("source_conflict") from None
+        except (sqlite3.Error, OSError):
+            raise ServiceError("capability_unavailable") from None
+
+    def create_job(self, request: BenchmarkRequest, plan: BenchmarkPlan, enqueue: Callable[[str], None]) -> JobResponse:
+        request = BenchmarkRequest.model_validate(request)
+        plan = BenchmarkPlan.model_validate(plan)
+        if (request.analysis_id != plan.analysis_id or request.node_ids != plan.node_ids
+                or (request.baseline_model_id, *request.candidate_model_ids) != tuple(model.identifier for model in plan.models)
+                or request.benchmark_case_set_id != plan.case_set.identifier
+                or request.evaluation_profile_id != plan.evaluation_profile.identifier):
+            raise ServiceError("source_conflict")
+        now = datetime.now(timezone.utc)
+        job = JobResponse(run_id="run_" + uuid4().hex, status="queued", plan=plan, created_at=now, updated_at=now,
+                          deadline_at=now + timedelta(seconds=self.job_timeout_seconds), idempotency_key=request.idempotency_key,
+                          progress=JobProgress(completed_units=0, total_units=len(plan.unit_keys())), measurements=())
+        payload = self._job_payload(job)
+        request_payload = request.model_dump_json().encode("utf-8")
+        plan_payload = plan.model_dump_json().encode("utf-8")
+        with self._job_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if request.idempotency_key is not None:
+                existing = connection.execute("SELECT run_id, length(request_payload), length(plan_payload) FROM jobs WHERE request_key = ?",
+                                              (request.idempotency_key,)).fetchone()
+                if existing is not None:
+                    if any(type(size) is not int or not 0 < size <= 65536 for size in existing[1:]):
+                        raise ServiceError("source_conflict")
+                    retained = connection.execute("SELECT request_payload, plan_payload FROM jobs WHERE run_id = ?", (existing[0],)).fetchone()
+                    if retained != (request_payload, plan_payload):
+                        raise ServiceError("source_conflict")
+                    return self._job_row(connection, existing[0])
+            if connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= self.max_jobs:
+                raise ServiceError("capacity_exceeded")
+            times = job.model_dump(mode="json", include={"created_at", "updated_at", "deadline_at"})
+            connection.execute("INSERT INTO jobs (run_id, analysis_id, request_key, request_payload, plan_payload, "
+                               "created_at, deadline_at, total_units, status, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                               (job.run_id, plan.analysis_id, request.idempotency_key, request_payload, plan_payload,
+                                times["created_at"], times["deadline_at"], job.progress.total_units, "queued", times["updated_at"], payload))
+            enqueue(job.run_id)  # Caller holds its queue lock through COMMIT.
+            connection.commit()
+        return job
+
+    def get_job(self, run_id: str) -> JobResponse:
+        with self._job_connection() as connection:
+            return self._job_row(connection, run_id)
+
+    def transition_job(self, run_id: str, expected: tuple[str, ...], *, status: str | None = None,
+                       measurement: BenchmarkMeasurement | None = None, cancellation_reason: str | None = None,
+                       error_code: str | None = None, result=None) -> JobResponse:
+        with self._job_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            old = self._job_row(connection, run_id)
+            if old.status not in expected or old.status in TERMINAL_JOB_STATES:
+                raise ServiceError("source_conflict")
+            new_status = old.status if status is None else status
+            if status is not None and status not in JOB_TRANSITIONS[old.status]:
+                raise ServiceError("source_conflict")
+            if measurement is not None and old.status not in ("running", "cancelling"):
+                raise ServiceError("source_conflict")
+            data = old.model_dump()
+            now = datetime.now(timezone.utc)
+            data.update(status=new_status, updated_at=now, result=result)
+            if measurement is not None:
+                data["measurements"] = (*old.measurements, measurement)
+                data["progress"] = JobProgress(completed_units=len(old.measurements) + 1, total_units=old.progress.total_units)
+            if cancellation_reason is not None:
+                data["cancellation_reason"] = cancellation_reason
+            if error_code is not None:
+                data["error"] = JobError(code=error_code)
+            if new_status in TERMINAL_JOB_STATES:
+                data["finished_at"] = now
+            updated = JobResponse.model_validate(data)
+            payload = self._job_payload(updated)
+            connection.execute("UPDATE jobs SET status = ?, updated_at = ?, payload = ? WHERE run_id = ? AND status = ?",
+                               (updated.status, updated.model_dump(mode="json", include={"updated_at"})["updated_at"],
+                                payload, run_id, old.status))
+            connection.commit()
+            return updated
+
+    def nonterminal_jobs(self) -> tuple[tuple[str, str, str], ...]:
+        with self._job_connection() as connection:
+            rows = connection.execute("SELECT run_id, status, deadline_at FROM jobs WHERE status IN ('queued','running','cancelling') "
+                                      "ORDER BY created_at, run_id LIMIT 2049").fetchall()
+            if len(rows) > 2048:
+                raise ServiceError("capacity_exceeded")
+            return tuple(rows)
+
+    @contextmanager
+    def job_lease(self):
+        """One lifecycle owner per database, including across local processes."""
+        descriptor = None
+        locked = False
+        with _directory_access(self.directory, self.directory, self.identity):
+            try:
+                path = self.directory / "jobs.lock"
+                try:
+                    before = path.lstat()
+                except FileNotFoundError:
+                    before = None
+                if before is not None and (_is_link(before) or not stat.S_ISREG(before.st_mode)):
+                    raise ServiceError("capability_unavailable")
+                descriptor = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+                                     | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0), 0o600)
+                opened, after = os.fstat(descriptor), path.lstat()
+                if (not stat.S_ISREG(opened.st_mode) or _is_link(after) or opened.st_size > 1
+                        or (opened.st_dev, opened.st_ino) != (after.st_dev, after.st_ino)
+                        or (before is not None and (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino))):
+                    raise ServiceError("capability_unavailable")
+                if os.fstat(descriptor).st_size == 0:
+                    os.write(descriptor, b"0")
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                yield
+            except OSError:
+                raise ServiceError("capability_unavailable") from None
+            finally:
+                if descriptor is not None:
+                    if locked:
+                        if os.name == "nt":
+                            os.lseek(descriptor, 0, os.SEEK_SET)
+                            msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+                        else:
+                            fcntl.flock(descriptor, fcntl.LOCK_UN)
+                    os.close(descriptor)
