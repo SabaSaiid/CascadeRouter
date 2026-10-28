@@ -22,9 +22,9 @@ import stat
 import tokenize
 from collections import Counter
 from contextlib import ExitStack, contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Callable, Iterator, Literal
 
 if os.name == "nt":
     import ctypes
@@ -102,6 +102,14 @@ class ScanDiagnostic:
 
 
 @dataclass(frozen=True)
+class SourceFingerprint:
+    """Provisional source-version evidence; contains no source text."""
+
+    file_path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
 class ProvisionalScanResult:
     repository_path: str
     nodes: tuple[ProvisionalLLMNode, ...]
@@ -110,6 +118,8 @@ class ProvisionalScanResult:
     total_source_bytes_read: int
     diagnostics: tuple[ScanDiagnostic, ...]
     complete: bool  # Coverage within the documented supported analysis subset.
+    source_fingerprints: tuple[SourceFingerprint, ...] = ()
+    source_options: ScannerOptions = field(default_factory=ScannerOptions)
 
     def to_dict(self) -> dict[str, object]:
         """Return a deterministic, JSON-compatible copy, without a timestamp."""
@@ -121,6 +131,16 @@ class ProvisionalScanResult:
             return value
 
         return {key: lists(value) for key, value in asdict(self).items()}
+
+
+@dataclass(frozen=True)
+class _ParsedSource:
+    """Ephemeral compiler hook data. ASTs never enter serialized scan results."""
+
+    fingerprint: SourceFingerprint
+    tree: ast.Module
+    nodes: tuple[ProvisionalLLMNode, ...]
+    calls: tuple[ast.Call, ...]
 
 
 def _is_link(info: os.stat_result) -> bool:
@@ -211,8 +231,13 @@ def _directory_access(
 
 
 class _RepositoryScan:
-    def __init__(self, repository_path: str, options: ScannerOptions) -> None:
+    def __init__(
+        self, repository_path: str, options: ScannerOptions,
+        on_source: Callable[[_ParsedSource], None] | None = None,
+    ) -> None:
         self.options = options
+        self.on_source = on_source
+        self.fingerprints: list[SourceFingerprint] = []
         self.root = Path(repository_path).absolute()
         self.nodes: list[ProvisionalLLMNode] = []
         self.diagnostics: list[ScanDiagnostic] = []
@@ -253,6 +278,8 @@ class _RepositoryScan:
             ))),
             self.discovered, self.scanned, self.bytes_read, diagnostics,
             not diagnostics,
+            tuple(sorted(self.fingerprints, key=lambda item: item.file_path)),
+            self.options,
         )
 
     def inspect(self, path: Path, directory_fd: int | None = None) -> tuple[Path, os.stat_result] | None:
@@ -400,6 +427,7 @@ class _RepositoryScan:
                     path,
                 )
                 self.scanned += 1
+                self.record_source(path, raw, tree, ())
                 return
             visitor = _CallVisitor(path.relative_to(self.root).as_posix(), tree, self.options)
             visitor.visit(tree)
@@ -417,6 +445,19 @@ class _RepositoryScan:
         self.nodes.extend(visitor.nodes)
         self.diagnostics.extend(visitor.diagnostics)
         self.scanned += 1
+        self.record_source(path, raw, tree, tuple(visitor.nodes), tuple(visitor.call_nodes))
+
+    def record_source(
+        self, path: Path, raw: bytes, tree: ast.Module,
+        nodes: tuple[ProvisionalLLMNode, ...],
+        calls: tuple[ast.Call, ...] = (),
+    ) -> None:
+        fingerprint = SourceFingerprint(
+            path.relative_to(self.root).as_posix(), hashlib.sha256(raw).hexdigest(),
+        )
+        self.fingerprints.append(fingerprint)
+        if self.on_source is not None:
+            self.on_source(_ParsedSource(fingerprint, tree, nodes, calls))
 
     def local_sdk_shadow(self, path: Path) -> bool:
         # An absolute import is not sufficient SDK evidence if a local module or
@@ -597,6 +638,7 @@ class _CallVisitor(ast.NodeVisitor):
         self.nodes: list[ProvisionalLLMNode] = []
         self.diagnostics: list[ScanDiagnostic] = []
         self.functions: list[str] = []
+        self.call_nodes: list[ast.Call] = []
         self.limited_metadata: set[ast.AST] = set()
         self.uncertain = 0
         # Refuse even apparently simple provenance involving global/nonlocal
@@ -815,6 +857,7 @@ class _CallVisitor(ast.NodeVisitor):
         response_format = self.response_metadata(keywords.get("response_format"), unpacked)
         signature = f"openai.{binding.constructor}.chat.completions.create(...)"
         identity = f"{self.path}\0{node.lineno}\0{node.col_offset}\0{signature}"
+        self.call_nodes.append(node)
         self.nodes.append(ProvisionalLLMNode(
             "llm_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24],
             self.path, node.lineno, node.col_offset, signature, current_model,
@@ -933,4 +976,16 @@ def scan_repository(
     Source grammar is explicitly limited to Python 3.11 across host versions.
     This provisional result has no graph edges, snippets, or prompt literals.
     """
-    return _RepositoryScan(repository_path, options or ScannerOptions()).run()
+    return _scan_repository_with_sources(repository_path, options or ScannerOptions())
+
+
+def _scan_repository_with_sources(
+    repository_path: str, options: ScannerOptions,
+    on_source: Callable[[_ParsedSource], None] | None = None,
+) -> ProvisionalScanResult:
+    """Internal compiler hook sharing every scanner I/O/parse safety check.
+
+    Callbacks receive only successfully analyzed snapshots while directory pins
+    remain held. They are trusted compiler code, never functions from the target.
+    """
+    return _RepositoryScan(repository_path, options, on_source).run()

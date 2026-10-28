@@ -5,11 +5,13 @@ from __future__ import annotations
 import ast
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
-from backend.compiler.ast_scanner import ScannerOptions, scan_repository
+from backend.compiler.ast_scanner import ScanDiagnostic, ScannerOptions, scan_repository
+from backend.compiler.dag_builder import GraphOptions, build_workflow_graph
 
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "sample_repo"
@@ -802,3 +804,552 @@ def test_directory_depth_limit_bounds_ancestor_work_and_reports_skips(tmp_path):
     assert codes(result) == {"directory_depth_limit"}
     assert result.diagnostics[0].file_path == "one/two/three"
     assert not result.complete
+
+
+# Phase 2 graph tests stay in this explicitly owned compiler test file.
+def flow_call(model: str, messages: str = "[]") -> str:
+    return f"client.chat.completions.create(model={model!r}, messages={messages})"
+
+
+def scan_graph(tmp_path: Path, body: str, *, options: GraphOptions | None = None):
+    source(tmp_path, PREAMBLE + body)
+    scan = scan_repository(str(tmp_path))
+    return scan, build_workflow_graph(str(tmp_path), scan, options)
+
+
+def edge_models(scan, graph):
+    models = {node.node_id: node.current_model for node in scan.nodes}
+    return {(models[edge.from_node_id], models[edge.to_node_id]) for edge in graph.edges}
+
+
+def test_graph_scanner_fingerprints_preserve_ids_and_serialization(tmp_path):
+    path = source(tmp_path, PREAMBLE + CALL)
+    first = scan_repository(str(tmp_path))
+    second = scan_repository(str(tmp_path))
+    assert first.to_dict() == second.to_dict()
+    assert len(first.source_fingerprints) == 1
+    assert first.source_fingerprints[0].file_path == "app.py"
+    assert len(first.source_fingerprints[0].sha256) == 64
+    assert first.source_options == ScannerOptions()
+    path.write_text(PREAMBLE + CALL.replace("fixture/model", "fixture/other"), encoding="utf-8")
+    changed = scan_repository(str(tmp_path))
+    assert first.nodes[0].node_id == changed.nodes[0].node_id
+    assert first.source_fingerprints != changed.source_fingerprints
+
+
+def test_graph_direct_dependency_has_traceable_evidence(tmp_path):
+    scan, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\nsecond = "
+        + flow_call("fixture/b", '[{"role": "user", "content": first.choices[0].message.content}]') + "\n")
+    assert graph.complete
+    assert edge_models(scan, graph) == {("fixture/a", "fixture/b")}
+    assert graph.node_ids == tuple(node.node_id for node in scan.nodes)
+    edge = graph.edges[0]
+    assert edge.kind == "data_dependency"
+    evidence = edge.evidence[0]
+    assert evidence.file_path == "app.py"
+    assert evidence.argument == "messages"
+    assert evidence.reference == "first.choices[].message.content"
+    assert evidence.aliases == ("first",)
+    assert evidence.line_number == scan.nodes[1].line_number
+    assert evidence.column_number > scan.nodes[1].column_number
+    payload = graph.to_dict()
+    assert json.loads(json.dumps(payload)) == payload
+    assert "graph_edges" not in payload
+
+
+def test_graph_aliases_and_container_assignments(tmp_path):
+    scan, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\nalias = first\n"
+        "messages = [{\"role\": \"user\", \"content\": alias}]\n"
+        "second = " + flow_call("fixture/b", "messages") + "\n")
+    assert graph.complete
+    assert edge_models(scan, graph) == {("fixture/a", "fixture/b")}
+    assert graph.edges[0].evidence[0].aliases == ("first", "alias", "messages")
+
+
+def test_graph_fan_in_fan_out_and_disconnected_calls(tmp_path):
+    scan, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\n"
+        "other = " + flow_call("fixture/c") + "\n"
+        "combined = " + flow_call("fixture/b", "[first, other]") + "\n"
+        "branch = " + flow_call("fixture/d", "first") + "\n"
+        "independent = " + flow_call("fixture/e") + "\n")
+    assert graph.complete
+    assert edge_models(scan, graph) == {
+        ("fixture/a", "fixture/b"), ("fixture/c", "fixture/b"), ("fixture/a", "fixture/d"),
+    }
+
+
+def test_graph_does_not_infer_line_order_shared_models_or_shared_prompts(tmp_path):
+    scan, graph = scan_graph(tmp_path,
+        "PROMPT = 'PRIVATE_SHARED_PROMPT'\nfirst = " + flow_call("fixture/model", "PROMPT")
+        + "\nsecond = " + flow_call("fixture/model", "PROMPT") + "\n")
+    assert len(scan.nodes) == 2
+    assert graph.complete
+    assert not graph.edges
+    assert "PRIVATE_SHARED_PROMPT" not in json.dumps(graph.to_dict())
+
+
+@pytest.mark.parametrize("overwrite", [
+    "first = unrelated", "first = None", "del first", "*first, = [unrelated]",
+    "items[(first := unrelated)] = 0",
+])
+def test_graph_reassignment_invalidates_stale_provenance(tmp_path, overwrite):
+    _, graph = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+                          + "\n" + overwrite + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    assert not graph.edges
+
+
+def test_graph_rebinding_one_alias_does_not_rebind_another(tmp_path):
+    scan, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\nalias = first\nfirst = unrelated\nsecond = "
+        + flow_call("fixture/b", "alias") + "\n")
+    assert edge_models(scan, graph) == {("fixture/a", "fixture/b")}
+
+
+def test_graph_same_name_in_separate_and_nested_functions_is_isolated(tmp_path):
+    body = (
+        "def producer():\n    first = " + flow_call("fixture/a") + "\n"
+        "def consumer(first):\n    second = " + flow_call("fixture/b", "first") + "\n"
+        "def outer():\n    first = " + flow_call("fixture/c") + "\n"
+        "    def inner():\n        second = " + flow_call("fixture/d", "first") + "\n"
+        "    third = " + flow_call("fixture/e", "first") + "\n"
+    )
+    scan, graph = scan_graph(tmp_path, body)
+    assert edge_models(scan, graph) == {("fixture/c", "fixture/e")}
+    assert "cross_scope_dependency" in codes(graph)
+
+
+def test_graph_direct_and_awaited_assignments_within_functions(tmp_path):
+    content = '''from openai import AsyncOpenAI
+client = AsyncOpenAI()
+async def workflow():
+    first = await client.chat.completions.create(model="fixture/a", messages=[])
+    alias = first
+    second = await client.chat.completions.create(model="fixture/b", messages=[alias])
+'''
+    source(tmp_path, content)
+    scan = scan_repository(str(tmp_path))
+    graph = build_workflow_graph(str(tmp_path), scan)
+    assert graph.complete
+    assert edge_models(scan, graph) == {("fixture/a", "fixture/b")}
+
+
+@pytest.mark.parametrize("boundary", [
+    "if flag:\n    first = other\n",
+    "for item in items:\n    pass\n",
+    "while flag:\n    pass\n",
+    "try:\n    pass\nexcept Exception:\n    first = other\n",
+    "with context:\n    pass\n",
+])
+def test_graph_control_boundaries_do_not_manufacture_edges(tmp_path, boundary):
+    _, graph = scan_graph(tmp_path, "first = " + flow_call("fixture/a") + "\n"
+                          + boundary + "second = " + flow_call("fixture/b", "first") + "\n")
+    assert not graph.edges
+    assert not graph.complete
+    assert "control_flow_boundary" in codes(graph)
+
+
+def test_graph_calls_inside_branches_remain_vertices_without_edges(tmp_path):
+    scan, graph = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+        + "\nif flag:\n    second = " + flow_call("fixture/b", "first") + "\n")
+    assert len(scan.nodes) == len(graph.node_ids) == 2
+    assert not graph.edges
+    assert "control_flow_boundary" in codes(graph)
+
+
+@pytest.mark.parametrize("operation", [
+    "alias, = [first]", "alias = wrapper(first)", "alias = f'{first}'",
+    "alias = first + other", "alias = [value for value in first]",
+])
+def test_graph_complex_or_dynamic_value_flow_stays_unresolved(tmp_path, operation):
+    _, graph = scan_graph(tmp_path, "first = " + flow_call("fixture/a") + "\n"
+                          + operation + "\nsecond = " + flow_call("fixture/b", "alias") + "\n")
+    assert not graph.edges
+    assert graph.diagnostics
+
+
+def test_graph_opaque_call_and_mutations_invalidate_aliases(tmp_path):
+    _, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\nalias = first\n"
+        "opaque()\nsecond = " + flow_call("fixture/b", "alias") + "\n")
+    assert not graph.edges
+    assert "opaque_call_boundary" in codes(graph)
+
+
+def test_graph_duplicate_edges_retain_distinct_evidence(tmp_path):
+    scan, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\nalias = first\nsecond = "
+        + flow_call("fixture/b", "[first, alias, first]") + "\n")
+    assert edge_models(scan, graph) == {("fixture/a", "fixture/b")}
+    assert len(graph.edges) == 1
+    assert len(graph.edges[0].evidence) == 3
+    assert {item.reference for item in graph.edges[0].evidence} == {"first", "alias"}
+
+
+def test_graph_deterministic_ids_edges_and_serialization(tmp_path):
+    scan, first = scan_graph(tmp_path,
+        "a = " + flow_call("fixture/a") + "\nb = " + flow_call("fixture/b", "a")
+        + "\nc = " + flow_call("fixture/c", "[a, b]") + "\n")
+    second = build_workflow_graph(str(tmp_path), scan)
+    assert first.to_dict() == second.to_dict()
+    assert set(first.node_ids) == {node.node_id for node in scan.nodes}
+    assert all(edge.from_node_id in first.node_ids and edge.to_node_id in first.node_ids for edge in first.edges)
+
+
+@pytest.mark.parametrize("change", ["location", "id", "missing", "duplicate", "path"])
+def test_graph_rejects_missing_mismatched_or_duplicate_scan_nodes(tmp_path, change):
+    scan, _ = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+                         + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    nodes = list(scan.nodes)
+    if change == "location":
+        nodes[0] = replace(nodes[0], line_number=nodes[0].line_number + 30)
+    elif change == "id":
+        nodes[0] = replace(nodes[0], node_id="llm_" + "0" * 24)
+    elif change == "missing":
+        nodes.pop(0)
+    elif change == "duplicate":
+        nodes.append(nodes[0])
+    else:
+        nodes[0] = replace(nodes[0], file_path="../PRIVATE_OUTSIDE.py")
+    graph = build_workflow_graph(str(tmp_path), replace(scan, nodes=tuple(nodes)))
+    assert not graph.edges
+    assert not graph.complete
+    assert "PRIVATE_OUTSIDE" not in json.dumps(graph.to_dict())
+
+
+def test_graph_legacy_scan_without_fingerprints_requires_rescan(tmp_path):
+    scan, _ = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+                         + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    graph = build_workflow_graph(str(tmp_path), replace(scan, source_fingerprints=()))
+    assert not graph.edges
+    assert codes(graph) == {"missing_source_fingerprint"}
+
+
+def test_graph_detects_source_changes_even_when_call_ids_stay_the_same(tmp_path):
+    body = "first = " + flow_call("fixture/a") + "\nsecond = " + flow_call("fixture/b", "first") + "\n"
+    scan, graph = scan_graph(tmp_path, body)
+    assert graph.edges
+    source(tmp_path, PREAMBLE + body.replace("messages=first", "messages=other"))
+    assert [node.node_id for node in scan.nodes] == [node.node_id for node in scan_repository(str(tmp_path)).nodes]
+    stale = build_workflow_graph(str(tmp_path), scan)
+    assert not stale.edges
+    assert "source_changed" in codes(stale)
+
+
+@pytest.mark.parametrize("raw", [b"if (\n", b"# coding: utf-8\nx='\xff'\n", b"\x00binary"])
+def test_graph_malformed_or_changed_sources_are_controlled(tmp_path, raw):
+    scan, _ = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+                         + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    (tmp_path / "app.py").write_bytes(raw)
+    graph = build_workflow_graph(str(tmp_path), scan)
+    assert not graph.edges
+    assert "source_unavailable" in codes(graph)
+    assert not graph.complete
+
+
+def test_graph_preserves_stricter_source_budgets_and_reports_skipped_work(tmp_path):
+    scan, _ = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+                         + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    limited = build_workflow_graph(str(tmp_path), scan, GraphOptions(source_options=ScannerOptions(max_file_bytes=8)))
+    assert not limited.edges
+    assert "source_file_size_limit" in codes(limited)
+    source(tmp_path, PREAMBLE + CALL, "z.py")
+    narrow = scan_repository(str(tmp_path), options=ScannerOptions(max_files=1))
+    inherited = build_workflow_graph(str(tmp_path), narrow)
+    assert not inherited.complete
+    assert "source_file_count_limit" in codes(inherited)
+
+
+@pytest.mark.parametrize("option,value,diagnostic", [
+    ("max_analysis_steps", 1, "flow_analysis_limit"),
+    ("max_expression_nodes", 2, "expression_limit"),
+    ("max_alias_depth", 1, "alias_limit"),
+    ("max_value_provenances", 1, "value_provenance_limit"),
+])
+def test_graph_analysis_limits_are_explicit_and_controlled(tmp_path, option, value, diagnostic):
+    scan, _ = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\nalias = first\n"
+        "other = " + flow_call("fixture/c") + "\nsecond = " + flow_call("fixture/b", "[alias, other]") + "\n")
+    graph = build_workflow_graph(str(tmp_path), scan, GraphOptions(**{option: value}))
+    assert not graph.complete
+    assert diagnostic in codes(graph)
+    if option == "max_analysis_steps":
+        assert not graph.edges
+
+
+def test_graph_edge_and_evidence_limits_report_partial_coverage(tmp_path):
+    scan, _ = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\nsecond = " + flow_call("fixture/b", "[first, first]")
+        + "\nthird = " + flow_call("fixture/c", "first") + "\n")
+    graph = build_workflow_graph(str(tmp_path), scan, GraphOptions(max_edges=1, max_evidence_per_edge=1))
+    assert len(graph.edges) == 1
+    assert len(graph.edges[0].evidence) == 1
+    assert {"edge_limit", "edge_evidence_limit"} <= codes(graph)
+
+
+def test_graph_does_not_execute_side_effects_or_leak_source(tmp_path):
+    marker = tmp_path / "executed.marker"
+    private = "PRIVATE_GRAPH_PROMPT_AND_EXCEPTION_TEXT"
+    body = (
+        f"from pathlib import Path\nPath({str(marker)!r}).write_text({private!r})\n"
+        f"raise RuntimeError({private!r})\n"
+        "first = " + flow_call("fixture/a", repr(private)) + "\n"
+        "second = " + flow_call("fixture/b", "first") + "\n"
+    )
+    scan, graph = scan_graph(tmp_path, body)
+    assert len(scan.nodes) == 2
+    assert not marker.exists()
+    assert private not in json.dumps(graph.to_dict())
+    assert not graph.edges  # Statements following an unconditional raise are omitted.
+
+
+def test_graph_repository_mismatch_rejects_edges(tmp_path):
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    body = PREAMBLE + "first = " + flow_call("fixture/a") + "\nsecond = " + flow_call("fixture/b", "first") + "\n"
+    source(first_root, body)
+    source(second_root, body)
+    scan = scan_repository(str(first_root))
+    graph = build_workflow_graph(str(second_root), scan)
+    assert not graph.edges
+    assert "repository_mismatch" in codes(graph)
+
+
+@pytest.mark.parametrize("failure", [PermissionError, FileNotFoundError])
+def test_graph_unreadable_file_is_diagnostic_not_a_fabricated_edge(tmp_path, monkeypatch, failure):
+    scan, _ = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+                         + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    original = os.open
+
+    def unreadable(path, flags, *args, **kwargs):
+        if Path(path).name == "app.py" and not flags & getattr(os, "O_DIRECTORY", 0):
+            raise failure("PRIVATE_GRAPH_IO_EXCEPTION")
+        return original(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", unreadable)
+    graph = build_workflow_graph(str(tmp_path), scan)
+    assert not graph.edges
+    assert "source_read_error" in codes(graph)
+    assert "PRIVATE_GRAPH_IO_EXCEPTION" not in json.dumps(graph.to_dict())
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction regression.")
+def test_graph_reuses_scanner_junction_boundary(tmp_path):
+    import _winapi
+
+    root = tmp_path / "repo"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    source(outside, PREAMBLE + "first = " + flow_call("fixture/a") + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    initial = scan_repository(str(root))
+    junction = root / "junction"
+    try:
+        _winapi.CreateJunction(str(outside), str(junction))
+    except OSError as error:
+        pytest.skip(f"Junction creation unavailable (errno {error.errno}).")
+    try:
+        graph = build_workflow_graph(str(root), initial)
+        assert not graph.edges
+        assert not graph.node_ids
+        assert "source_link_skipped" in codes(graph)
+    finally:
+        junction.rmdir()
+
+
+@pytest.mark.parametrize("messages", [
+    '{"content": first, "content": unrelated}',
+    '{True: first, 1: unrelated}',
+    '{"content": first, dynamic_key: unrelated}',
+])
+def test_graph_review_ambiguous_dictionary_values_are_not_dependencies(tmp_path, messages):
+    _, graph = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+                          + "\nsecond = " + flow_call("fixture/b", messages) + "\n")
+    assert not graph.edges
+    assert not graph.complete
+
+
+@pytest.mark.parametrize("suffix", [".model_dump()", ".chat.completions.create(messages=[])"])
+def test_graph_review_nested_calls_sharing_a_start_are_not_the_same_call(tmp_path, suffix):
+    scan, graph = scan_graph(tmp_path, "first = " + flow_call("fixture/a") + suffix
+                              + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    assert len(scan.nodes) == 2
+    assert not graph.edges
+    assert "opaque_call_boundary" in codes(graph)
+
+
+def test_graph_review_constructor_arguments_are_not_create_arguments(tmp_path):
+    _, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\n"
+        "second = OpenAI(api_key=first).chat.completions.create(model='fixture/b', messages=[])\n")
+    assert not graph.edges
+
+
+@pytest.mark.parametrize("boundary", [
+    "import helper\n",
+    "class Mutation:\n    global first\n    first = unrelated\n",
+    "@run_now\ndef mutation():\n    global first\n    first = unrelated\n",
+])
+def test_graph_review_implicit_side_effect_boundaries_invalidate_producers(tmp_path, boundary):
+    source(tmp_path, "raise RuntimeError('HELPER MUST NEVER BE IMPORTED')\n", "helper.py")
+    _, graph = scan_graph(tmp_path, "first = " + flow_call("fixture/a") + "\n"
+                          + boundary + "second = " + flow_call("fixture/b", "first") + "\n")
+    assert not graph.edges
+    assert graph.diagnostics
+
+
+@pytest.mark.parametrize("selector", ["settings.prompt", "settings['prompt']"])
+def test_graph_review_unknown_selectors_do_not_hide_possible_mutation(tmp_path, selector):
+    _, graph = scan_graph(tmp_path, "first = " + flow_call("fixture/a") + "\n"
+                          + "other = " + selector + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    assert not graph.edges
+
+
+def test_graph_review_keyword_unpacking_is_a_barrier(tmp_path):
+    _, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a")
+        + "\nsecond = client.chat.completions.create(model='fixture/b', **{'messages': first})\n")
+    assert not graph.edges
+    assert "unpacking_boundary" in codes(graph)
+
+
+def test_graph_rebinding_a_producer_name_preserves_evaluation_order(tmp_path):
+    scan, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\n"
+        "first = " + flow_call("fixture/b", "first") + "\n"
+        "third = " + flow_call("fixture/c", "first") + "\n")
+    assert graph.complete
+    assert edge_models(scan, graph) == {("fixture/a", "fixture/b"), ("fixture/b", "fixture/c")}
+
+
+def test_graph_source_files_have_independent_flow_state(tmp_path):
+    source(tmp_path, PREAMBLE + "first = " + flow_call("fixture/a") + "\n", "a.py")
+    source(tmp_path, PREAMBLE + "first = " + flow_call("fixture/c")
+           + "\nsecond = " + flow_call("fixture/b", "first") + "\n", "b.py")
+    scan = scan_repository(str(tmp_path))
+    graph = build_workflow_graph(str(tmp_path), scan)
+    assert graph.complete
+    assert edge_models(scan, graph) == {("fixture/c", "fixture/b")}
+
+
+def test_graph_nested_direct_results_require_named_evidence(tmp_path):
+    _, graph = scan_graph(tmp_path, "second = " + flow_call("fixture/b", flow_call("fixture/a")) + "\n")
+    assert len(graph.node_ids) == 2
+    assert not graph.edges
+    assert "unbound_producer" in codes(graph)
+
+
+def test_graph_duplicate_fingerprints_and_untrusted_diagnostics_are_sanitized(tmp_path):
+    scan, _ = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+                         + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    duplicate = replace(scan, source_fingerprints=scan.source_fingerprints * 2)
+    rejected = build_workflow_graph(str(tmp_path), duplicate)
+    assert not rejected.edges
+    assert "invalid_source_fingerprint" in codes(rejected)
+    private = "PRIVATE_UNTRUSTED_DIAGNOSTIC_MESSAGE"
+    input_with_diagnostic = replace(scan, complete=False, diagnostics=(ScanDiagnostic("unknown", private),))
+    partial = build_workflow_graph(str(tmp_path), input_with_diagnostic)
+    assert "input_scan_incomplete" in codes(partial)
+    assert private not in json.dumps(partial.to_dict())
+
+
+def test_graph_literal_keys_and_prompts_do_not_leak_into_evidence(tmp_path):
+    private = "PRIVATE_GRAPH_PROPERTY_AND_PROMPT"
+    scan, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a", repr(private)) + "\n"
+        f"alias = first[{private!r}]\nsecond = " + flow_call("fixture/b", "alias") + "\n")
+    assert edge_models(scan, graph) == {("fixture/a", "fixture/b")}
+    assert private not in json.dumps(graph.to_dict())
+
+
+def test_graph_preserves_syntax_diagnostic_line_numbers(tmp_path):
+    source(tmp_path, "pass\nif (\n")
+    scan = scan_repository(str(tmp_path))
+    graph = build_workflow_graph(str(tmp_path), scan)
+    diagnostic = next(item for item in graph.diagnostics if item.code == "source_syntax_error")
+    assert diagnostic.file_path == "app.py"
+    assert diagnostic.line_number == 2
+
+
+@pytest.mark.parametrize("selection", [
+    "[first, unrelated][1]",
+    "{'keep': first, 'discard': unrelated}['discard']",
+    "values[1]",
+])
+def test_graph_review_container_selection_does_not_propagate_every_element(tmp_path, selection):
+    _, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\nvalues = [first, unrelated]\n"
+        "second = " + flow_call("fixture/b", selection) + "\n")
+    assert not graph.edges
+    assert "container_selection" in codes(graph)
+
+
+def test_graph_review_unknown_unpacking_can_invalidate_prior_bindings(tmp_path):
+    _, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\nalias, = iterable\nsecond = "
+        + flow_call("fixture/b", "first") + "\n")
+    assert not graph.edges
+    assert "complex_assignment" in codes(graph)
+
+
+@pytest.mark.parametrize("suspension", ["suspension", "(pending := suspension)"])
+def test_graph_unknown_await_invalidates_producer_bindings(tmp_path, suspension):
+    # An arbitrary __await__ implementation can rebind this global. Parse only.
+    source(tmp_path, '''from openai import AsyncOpenAI
+client = AsyncOpenAI()
+async def workflow(suspension):
+    global first
+    first = await client.chat.completions.create(model="fixture/a", messages=[])
+    await ''' + suspension + '''
+    second = await client.chat.completions.create(model="fixture/b", messages=first)
+''')
+    scan = scan_repository(str(tmp_path))
+    graph = build_workflow_graph(str(tmp_path), scan)
+    assert len(scan.nodes) == 2
+    assert not graph.edges
+    assert not graph.complete
+    assert "opaque_await_boundary" in codes(graph)
+
+
+@pytest.mark.parametrize("parameter", ["value=first", "*, value=first"])
+def test_graph_producer_defaults_report_omitted_cross_scope_flow(tmp_path, parameter):
+    _, graph = scan_graph(tmp_path,
+        "first = " + flow_call("fixture/a") + "\ndef consumer(" + parameter + "):\n"
+        "    second = " + flow_call("fixture/b", "value") + "\n")
+    assert not graph.edges
+    assert not graph.complete
+    assert "default_value_boundary" in codes(graph)
+
+
+def test_graph_late_expression_failure_rolls_back_only_affected_file(tmp_path):
+    body = PREAMBLE + "first = " + flow_call("fixture/a") + "\nsecond = " + flow_call("fixture/b", "first") + "\n"
+    source(tmp_path, body + "oversized = [" + ",".join("0" for _ in range(80)) + "]\n", "a.py")
+    source(tmp_path, body, "b.py")
+    scan = scan_repository(str(tmp_path))
+    assert scan.complete
+    initial = build_workflow_graph(str(tmp_path), scan)
+    assert len(initial.edges) == 2  # An edge exists before the late failure.
+    limited = build_workflow_graph(str(tmp_path), scan, GraphOptions(max_expression_nodes=64))
+    paths = {node.node_id: node.file_path for node in scan.nodes}
+    assert len(limited.edges) == 1
+    assert all(paths[edge.from_node_id] == paths[edge.to_node_id] == "b.py" for edge in limited.edges)
+    assert not limited.complete
+    diagnostic = next(item for item in limited.diagnostics if item.code == "expression_limit")
+    assert diagnostic.file_path == "a.py"
+
+
+def test_graph_node_budget_exact_boundary_and_diagnostic_cap(tmp_path):
+    scan, _ = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+                         + "\nsecond = " + flow_call("fixture/b", "first") + "\n")
+    exact = build_workflow_graph(str(tmp_path), scan, GraphOptions(max_nodes=2))
+    assert exact.complete and len(exact.edges) == 1
+    rejected = build_workflow_graph(str(tmp_path), scan, GraphOptions(max_nodes=1))
+    assert not rejected.edges and not rejected.complete
+    assert codes(rejected) == {"node_limit"}
+    _, partial = scan_graph(tmp_path, "first = " + flow_call("fixture/a")
+        + "\nopaque()\nsecond = " + flow_call("fixture/b", "first") + "\n",
+        options=GraphOptions(max_diagnostics=1))
+    assert not partial.edges and not partial.complete
+    assert len(partial.diagnostics) == 1
+    assert codes(partial) == {"diagnostic_limit"}
