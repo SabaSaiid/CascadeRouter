@@ -30,7 +30,7 @@ jobs:
         env:
           NEBIUS_API_KEY: ""
         run: |
-          python -m pytest tests/ -v --ignore=tests/fixtures/
+          python -m pytest tests/ -q --ignore=tests/fixtures/ --cov=backend --cov-report=term-missing --cov-fail-under=95
 
   frontend-check:
     name: Frontend Typecheck & Build
