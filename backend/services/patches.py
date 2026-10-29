@@ -120,7 +120,8 @@ class PatchService:
         return PatchValidationResult(patch_id=header.patch_id, proposal_digest=proposal.digest, analysis_id=header.analysis_id,
             source_manifest_digest=header.source_manifest_digest, provenance=header.provenance, status=status, reason=reason,
             structure=structure, source_evidence=evidence, source_identity=identity, complete=complete,
-            omitted_nodes=len(header.omissions), files=tuple(sorted(files, key=lambda file: file.file_path)))
+            omitted_nodes=len(header.omissions), omissions=header.omissions,
+            files=tuple(sorted(files, key=lambda file: file.file_path)))
 
     def _validate(self, proposal, analysis, manifest, record, check=lambda: None):
         """Internal static engine; production authority is required by validate()."""

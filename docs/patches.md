@@ -112,8 +112,9 @@ All use existing fixed errors and request IDs. Diffs and raw exceptions are neve
 logged. Existing loopback Host/Origin checks, body limits, worker admission and
 deadlines apply; this is local service access control, not multi-user authentication.
 
-SQLite schema version 4 transactionally extends versions 1–3 with source manifests,
-optimizations and patches. Separate tables have foreign keys, immutable update/
+SQLite schema version 5 transactionally extends versions 1–4. Version 4 introduced
+source manifests, optimizations and patches; version 5 adds static validation
+observations. Separate tables have foreign keys, immutable update/
 delete triggers and parameterized inserts. Patch ID collisions conflict; identical
 optimization content may reuse its ID. Hashes cover canonical records and exact
 UTF-8 review bytes; retrieval validates both payload and stored identity columns.
@@ -122,7 +123,8 @@ independent approval validation, never a digest supplied by an HTTP client.
 
 Private manifests are capped at 4 MiB. Review text is capped at 512 KiB and the
 configured `max_job_result_bytes`; the entire persisted response must also fit
-that configured limit. Optimization and patch counts each use `max_jobs`.
+that configured limit. Optimization, patch and validation-report counts each
+independently use `max_jobs`.
 Artifacts stay in the existing trusted database outside every permitted source
 root. There is no new storage path, retention deletion, dependency, provider,
 credential or frontend change.
@@ -136,3 +138,6 @@ Focused tests are `tests/unit/test_patch_generator.py`,
 Windows junction tests run locally; unavailable symlink privileges are reported
 as explicit skips. Python 3.11 grammar parsing under Python 3.14 does not establish
 Python 3.11 runtime success. No production recordings were supplied or manufactured.
+
+Phase 4.8's stage/result semantics, immutable report contract, additional focused
+test command and interpreter limitations are in [patch-validation.md](patch-validation.md).

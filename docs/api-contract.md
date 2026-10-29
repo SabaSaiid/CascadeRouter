@@ -17,6 +17,9 @@ approval gates, request/response contracts and current consumer limitations.
 Phase 4.6 adds local runtime routing; see [runtime-routing.md](runtime-routing.md).
 Phase 4.7 adds source-verified patch proposals, private scan-version evidence and
 immutable optimization identities; see [patches.md](patches.md). No patch is applied.
+Phase 4.8 adds offline static validation of existing proposals and immutable
+validation history; see [patch-validation.md](patch-validation.md). It adds no
+target execution, patch application, dependencies or provider calls.
 
 **Mandatory zero-cost policy:** this and all subsequent backend phases must remain
 local and independent of paid inference/search providers. No provider credentials,

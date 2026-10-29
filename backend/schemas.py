@@ -1854,8 +1854,9 @@ class PatchValidationResult(APIModel):
     complete: bool
     omitted_nodes: Annotated[int, Field(ge=0, le=16)]
     files: tuple[PatchFileValidation, ...] = Field(default=(), max_length=16)
+    omissions: tuple[PatchOmission, ...] = Field(default=(), max_length=16)
 
-    @field_validator("files", mode="before")
+    @field_validator("files", "omissions", mode="before")
     @classmethod
     def bounds(cls, value):
         return _sequence(value, 16)
@@ -1878,6 +1879,8 @@ class PatchValidationResult(APIModel):
         paths = tuple(file.file_path for file in self.files)
         if paths != tuple(sorted(set(paths))):
             raise ValueError("Validated file identities must be distinct and ordered.")
+        if self.omitted_nodes != len(self.omissions) or len({item.node_id for item in self.omissions}) != len(self.omissions):
+            raise ValueError("Omitted checks must retain their precise proposal reasons.")
         if self.reason in ("statically_validated", "partial_proposal"):
             if not self.files or any(file.reason != "checked" for file in self.files):
                 raise ValueError("Static success requires every included candidate to be checked.")

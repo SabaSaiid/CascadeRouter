@@ -47,7 +47,7 @@ def test_file_checks_are_consistent_and_paths_cannot_escape(change):
 
 def test_partial_and_unavailable_states_do_not_claim_full_validation():
     partial = PatchValidationResult.model_validate({**result_data(), "status": "partial", "reason": "partial_proposal",
-                                                  "omitted_nodes": 1, "complete": False})
+        "omitted_nodes": 1, "omissions": [{"node_id": "llm_" + "b" * 24, "reason": "unsupported_encoding"}], "complete": False})
     assert partial.files[0].syntax == "passed" and not partial.complete
     missing = PatchValidationResult.model_validate({**result_data(), "status": "unavailable", "reason": "source_evidence_unavailable",
         "source_evidence": "unavailable", "source_identity": "not_verified", "complete": False, "files": []})

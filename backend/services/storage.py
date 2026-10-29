@@ -419,7 +419,7 @@ class AnalysisStorage:
         header = proposal.manifest
         if (result.proposal_digest != proposal.digest or result.analysis_id != header.analysis_id
                 or result.source_manifest_digest != header.source_manifest_digest or result.provenance != header.provenance
-                or result.omitted_nodes != len(header.omissions)):
+                or result.omissions != header.omissions or result.omitted_nodes != len(header.omissions)):
             raise ServiceError("source_conflict")
         files = {file.file_path: file for file in header.files}
         for file in result.files:
