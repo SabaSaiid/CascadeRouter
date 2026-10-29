@@ -438,14 +438,20 @@ def detect_frameworks(trees: dict[str, ast.Module]) -> str:
 
 
 def _dedupe_ids(calls: list[DiscoveredCall]) -> None:
+    # Reserve every natural id first so a suffix never steals another function's id
+    # (e.g. the 2nd call in `f` must not become `node_f_2` when `f_2` exists).
+    reserved = {call.node_id for call in calls}
     taken: set[str] = set()
     for call in calls:
-        candidate, n = call.node_id, 1
-        while candidate in taken:
+        base = call.node_id
+        if base not in taken:
+            taken.add(base)
+            continue
+        n = 2
+        while f"{base}__{n}" in taken or f"{base}__{n}" in reserved:
             n += 1
-            candidate = f"{call.node_id}_{n}"
-        call.node_id = candidate
-        taken.add(candidate)
+        call.node_id = f"{base}__{n}"
+        taken.add(call.node_id)
 
 
 def scan_repository(root: Path) -> RepoScan:

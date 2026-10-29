@@ -113,7 +113,7 @@ def test_duplicate_node_ids_are_suffixed(tmp_path):
             c.chat.completions.create(model="w", messages=[])
     ''')
     ids = [c.node_id for c in scan_repository(tmp_path).calls]
-    assert ids == ["node_f", "node_f_2", "node_f_3", "node_f_2_2"]
+    assert ids == ["node_f", "node_f__2", "node_f__3", "node_f_2"]
     assert len(set(ids)) == len(ids)
 
 
