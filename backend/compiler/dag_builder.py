@@ -241,13 +241,21 @@ class _FunctionWalker:
 
     def _branches(self, alternatives: list[list[ast.stmt]], state: _PathState, exhaustive: bool = True) -> None:
         start = state.previous
+        before = {k: set(v) for k, v in self.var_source.items()}
+        merged: dict[str, set[str]] = {} if exhaustive else {k: set(v) for k, v in before.items()}
         ends: list[Optional[NodeFunction]] = []
         for body in alternatives:
+            # Each alternative sees the variables as they were before the branch.
+            self.var_source = {k: set(v) for k, v in before.items()}
             branch = _PathState(start)
             if self.walk(body, branch):
                 ends.append(branch.previous)
+                for name, sources in self.var_source.items():
+                    merged.setdefault(name, set()).update(sources)
         if not exhaustive:
             ends.append(start)
+        # After the branch a variable may hold a value from any live alternative.
+        self.var_source = merged if ends else before
         distinct = {e.first_node if e else None for e in ends}
         # After a branch the "previous" node is only known if all live paths agree.
         state.previous = ends[0] if ends and len(distinct) == 1 else None
