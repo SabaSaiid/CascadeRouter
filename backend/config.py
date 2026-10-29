@@ -96,7 +96,7 @@ class ModelSpec:
 
 @dataclass(frozen=True)
 class Settings:
-    nebius_api_key: str
+    nebius_api_key: str = field(repr=False)
     nebius_base_url: str
     models: tuple[ModelSpec, ...]
     quality_threshold: float
@@ -112,8 +112,12 @@ class Settings:
     enable_rate_limiting: bool
     rate_limit_per_minute: int
     daily_spend_cap_usd: float
-    tavily_api_key: str
+    tavily_api_key: str = field(repr=False)
     allowed_scan_roots: list[Path] = field(default_factory=list)
+    allowed_hosts: list[str] = field(default_factory=lambda: ["localhost", "127.0.0.1"])
+    max_concurrent_runs: int = 2
+    record_runs: bool = False
+    recordings_dir: Path = REPO_ROOT / "recordings"
 
     @property
     def nebius_configured(self) -> bool:
@@ -183,6 +187,11 @@ def _build_catalog(env: Env) -> tuple[ModelSpec, ...]:
     return catalog
 
 
+def _resolve_dir(raw: str) -> Path:
+    path = Path(raw).expanduser()
+    return (path if path.is_absolute() else REPO_ROOT / path).resolve()
+
+
 def load_settings(env: Env | None = None) -> Settings:
     """Build a Settings object from `env` (defaults to the process environment)."""
     env = os.environ if env is None else env
@@ -214,7 +223,7 @@ def load_settings(env: Env | None = None) -> Settings:
         benchmark_concurrency=_get_int(env, "BENCHMARK_CONCURRENCY", 4, minimum=1),
         benchmark_timeout_seconds=_get_float(env, "BENCHMARK_TIMEOUT_SECONDS", 45, minimum=1),
         regression_timeout_seconds=_get_float(env, "REGRESSION_TIMEOUT_SECONDS", 30, minimum=1),
-        host=_get_str(env, "HOST", "0.0.0.0"),
+        host=_get_str(env, "HOST", "127.0.0.1"),
         port=_get_int(env, "PORT", 8000, minimum=1),
         environment=_get_str(env, "ENVIRONMENT", "development"),
         log_level=log_level,
@@ -229,6 +238,10 @@ def load_settings(env: Env | None = None) -> Settings:
         daily_spend_cap_usd=_get_float(env, "DAILY_SPEND_CAP_USD", 10.0, minimum=0),
         tavily_api_key=_get_str(env, "TAVILY_API_KEY", ""),
         allowed_scan_roots=allowed_roots,
+        allowed_hosts=_get_list(env, "ALLOWED_HOSTS", ["localhost", "127.0.0.1"]),
+        max_concurrent_runs=_get_int(env, "MAX_CONCURRENT_RUNS", 2, minimum=1),
+        record_runs=_get_bool(env, "RECORD_RUNS", False),
+        recordings_dir=_resolve_dir(_get_str(env, "RECORDINGS_DIR", "recordings")),
     )
 
 

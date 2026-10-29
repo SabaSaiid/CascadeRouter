@@ -1,114 +1,264 @@
 """Reconstruct the workflow graph between discovered LLM nodes.
 
-An edge A -> B is added when, inside one calling function:
-  * data flow: B's function is called with a variable holding A's result, or
-  * sequence: B's function is the next node function called after A's.
+Within each calling function, statements are walked in evaluation order along
+control-flow paths:
+  * data flow: B is called with a variable (or a nested call) produced by A,
+  * sequence:  B is the next node function called after A on the same path.
+Alternative branches (if/else, match cases, except handlers) each start from
+the state before the branch, so mutually exclusive calls are never chained.
 Edges that would close a cycle are dropped, so the result is always a DAG.
 """
 
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from typing import Iterable, Optional
 
-from backend.compiler.ast_scanner import DiscoveredCall, attribute_chain
+from backend.compiler.ast_scanner import DiscoveredCall
 
 
-def _called_name(call: ast.Call) -> Optional[str]:
-    chain = attribute_chain(call.func)
-    return chain[-1] if chain and chain[-1] != "?" else None
+@dataclass(frozen=True)
+class NodeFunction:
+    file_path: str
+    qualname: str
+    name: str
+    first_node: str
+    last_node: str
 
 
-def _function_to_node(calls: Iterable[DiscoveredCall]) -> dict[str, str]:
-    """Map function name -> node id, only for names that are unambiguous."""
-    mapping: dict[str, str] = {}
-    ambiguous: set[str] = set()
-    owners: dict[str, str] = {}
+def _module_stem(rel_path: str) -> str:
+    path = PurePosixPath(rel_path)
+    return path.parent.name if path.stem == "__init__" else path.stem
+
+
+def _node_functions(calls: Iterable[DiscoveredCall]) -> tuple[list[NodeFunction], list[tuple[str, str]]]:
+    """Group call sites by enclosing function; emit edges between sites of one function."""
+    grouped: dict[tuple[str, str], list[DiscoveredCall]] = {}
     for c in calls:
-        if not c.function_name:
-            continue
-        key = c.function_name
-        if key in owners and owners[key] != c.file_path:
-            ambiguous.add(key)
-        owners.setdefault(key, c.file_path)
-        mapping.setdefault(key, c.node_id)  # first call site represents the function
-    return {k: v for k, v in mapping.items() if k not in ambiguous}
+        if c.function_name and c.qualname:
+            grouped.setdefault((c.file_path, c.qualname), []).append(c)
+    functions, internal = [], []
+    for (file_path, qualname), sites in grouped.items():
+        sites.sort(key=lambda c: (c.line_number, c.call_col))
+        internal.extend((a.node_id, b.node_id) for a, b in zip(sites, sites[1:]))
+        functions.append(
+            NodeFunction(file_path, qualname, sites[0].function_name or "", sites[0].node_id, sites[-1].node_id)
+        )
+    return functions, internal
 
 
-def _assigned_names(target: ast.expr) -> list[str]:
-    return [n.id for n in ast.walk(target) if isinstance(n, ast.Name)]
+@dataclass
+class _Resolver:
+    """Resolves a call expression in one module to a NodeFunction, or None."""
+
+    file_path: str
+    functions: list[NodeFunction]
+    imported_names: dict[str, tuple[str, str]] = field(default_factory=dict)  # alias -> (module stem, name)
+    imported_modules: dict[str, str] = field(default_factory=dict)  # alias -> module stem
+    class_stack: list[str] = field(default_factory=list)
+
+    @classmethod
+    def for_module(cls, file_path: str, tree: ast.Module, functions: list[NodeFunction]) -> "_Resolver":
+        r = cls(file_path, functions)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    r.imported_modules[alias.asname or alias.name.split(".")[0]] = alias.name.split(".")[-1]
+            elif isinstance(node, ast.ImportFrom):
+                module_stem = (node.module or "").split(".")[-1]
+                for alias in node.names:
+                    local = alias.asname or alias.name
+                    # `from pkg import module` and `from module import func` are both possible.
+                    r.imported_modules.setdefault(local, alias.name)
+                    r.imported_names[local] = (module_stem, alias.name)
+        return r
+
+    def _unique(self, matches: list[NodeFunction]) -> Optional[NodeFunction]:
+        return matches[0] if len(matches) == 1 else None
+
+    def resolve(self, call: ast.Call) -> Optional[NodeFunction]:
+        func = call.func
+        if isinstance(func, ast.Name):
+            local = [f for f in self.functions if f.file_path == self.file_path and f.qualname == func.id]
+            if local:
+                return self._unique(local)
+            imported = self.imported_names.get(func.id)
+            if imported:
+                stem, name = imported
+                return self._unique(
+                    [f for f in self.functions if f.qualname == name and _module_stem(f.file_path) == stem]
+                )
+            return None
+        if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+            receiver, attr = func.value.id, func.attr
+            if receiver in ("self", "cls") and self.class_stack:
+                qual = f"{self.class_stack[-1]}.{attr}"
+                return self._unique([f for f in self.functions if f.file_path == self.file_path and f.qualname == qual])
+            stem = self.imported_modules.get(receiver)
+            if stem:
+                return self._unique(
+                    [f for f in self.functions if f.qualname == attr and _module_stem(f.file_path) == stem]
+                )
+        return None
 
 
-def _edges_in_function(func: ast.AST, fn_to_node: dict[str, str]) -> list[tuple[str, str]]:
-    edges: list[tuple[str, str]] = []
-    var_source: dict[str, str] = {}
-    previous: Optional[str] = None
+def _calls_in_eval_order(expr: ast.AST) -> list[tuple[ast.Call, list[ast.Call]]]:
+    """Calls in post-order (arguments before the call), each with its directly nested calls."""
+    ordered: list[tuple[ast.Call, list[ast.Call]]] = []
 
-    for stmt in _ordered_statements(func):
-        node_calls = [
-            (c, fn_to_node[name])
-            for c in ast.walk(stmt)
-            if isinstance(c, ast.Call) and (name := _called_name(c)) in fn_to_node
-        ]
-        node_calls.sort(key=lambda item: (item[0].lineno, item[0].col_offset))
-        for call, target_node in node_calls:
-            args = list(call.args) + [kw.value for kw in call.keywords]
-            for arg in args:
+    def visit(node: ast.AST) -> list[ast.Call]:
+        if isinstance(node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return []  # deferred execution: not part of this path
+        produced: list[ast.Call] = []
+        for child in ast.iter_child_nodes(node):
+            produced.extend(visit(child))
+        if isinstance(node, ast.Call):
+            ordered.append((node, produced))
+            return [node]
+        return produced
+
+    visit(expr)
+    return ordered
+
+
+@dataclass
+class _PathState:
+    previous: Optional[NodeFunction] = None
+
+
+class _FunctionWalker:
+    def __init__(self, resolver: _Resolver):
+        self.resolver = resolver
+        self.edges: list[tuple[str, str]] = []
+        self.var_source: dict[str, set[str]] = {}
+
+    def _handle_expr(self, expr: ast.AST, state: _PathState) -> list[NodeFunction]:
+        """Process calls in `expr`; return node functions whose results the expression yields."""
+        resolved: dict[int, NodeFunction] = {}
+        for call, nested in _calls_in_eval_order(expr):
+            target = self.resolver.resolve(call)
+            if target is None:
+                # Non-node calls pass node results through (e.g. json.dumps(a(...))).
+                for inner in nested:
+                    if id(inner) in resolved:
+                        resolved[id(call)] = resolved[id(inner)]
+                continue
+            resolved[id(call)] = target
+            sources: set[str] = set()
+            for inner in nested:
+                if id(inner) in resolved:
+                    sources.add(resolved[id(inner)].last_node)
+            for arg in [*call.args, *(kw.value for kw in call.keywords)]:
                 for name in (n.id for n in ast.walk(arg) if isinstance(n, ast.Name)):
-                    source = var_source.get(name)
-                    if source and source != target_node:
-                        edges.append((source, target_node))
-            if previous and previous != target_node:
-                edges.append((previous, target_node))
-            previous = target_node
+                    sources |= self.var_source.get(name, set())
+            for source in sorted(sources):
+                self.edges.append((source, target.first_node))
+            if state.previous is not None:
+                self.edges.append((state.previous.last_node, target.first_node))
+            state.previous = target
+        top = [resolved[id(c)] for c in ast.iter_child_nodes(expr) if isinstance(c, ast.Call) and id(c) in resolved]
+        if isinstance(expr, ast.Call) and id(expr) in resolved:
+            top = [resolved[id(expr)]]
+        return top
 
-        if node_calls and isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target]
-            produced = node_calls[-1][1]
-            for target in targets:
-                for name in _assigned_names(target):
-                    var_source[name] = produced
-    return edges
+    def _assign(self, targets: list[ast.expr], value: ast.expr, state: _PathState) -> None:
+        if (
+            len(targets) == 1
+            and isinstance(targets[0], (ast.Tuple, ast.List))
+            and isinstance(value, (ast.Tuple, ast.List))
+            and len(targets[0].elts) == len(value.elts)
+        ):
+            for t, v in zip(targets[0].elts, value.elts):
+                self._assign([t], v, state)
+            return
+        produced = self._handle_expr(value, state)
+        if not produced:
+            produced = [
+                r for c, _ in _calls_in_eval_order(value) if (r := self.resolver.resolve(c)) is not None
+            ]
+        nodes = {p.last_node for p in produced}
+        for target in targets:
+            for name in (n.id for n in ast.walk(target) if isinstance(n, ast.Name)):
+                if nodes:
+                    self.var_source[name] = set(nodes)
+                else:
+                    self.var_source.pop(name, None)
 
-
-_BODY_FIELDS = ("body", "orelse", "finalbody")
-
-
-def _ordered_statements(func: ast.AST) -> list[ast.AST]:
-    """Units to inspect, in source order.
-
-    Simple statements are returned as-is. For compound statements (if/for/while/
-    with/try/match) only the header expressions are returned, followed by the
-    statements of their bodies, so no call is counted twice.
-    """
-    result: list[ast.AST] = []
-
-    def walk(body: list[ast.stmt]) -> None:
+    def walk(self, body: list[ast.stmt], state: _PathState) -> bool:
+        """Walk statements; returns False when the path terminates (return/raise)."""
         for stmt in body:
             if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                continue  # nested scopes are handled on their own
-            has_body = any(isinstance(getattr(stmt, f, None), list) for f in _BODY_FIELDS) or isinstance(
-                stmt, ast.Match
-            )
-            if not has_body:
-                result.append(stmt)
                 continue
-            for name, value in ast.iter_fields(stmt):
-                if name in _BODY_FIELDS or name in ("handlers", "cases"):
-                    continue
-                values = value if isinstance(value, list) else [value]
-                result.extend(v for v in values if isinstance(v, ast.AST))
-            for f in _BODY_FIELDS:
-                inner = getattr(stmt, f, None)
-                if isinstance(inner, list):
-                    walk(inner)
-            for handler in getattr(stmt, "handlers", None) or []:
-                walk(handler.body)
-            for case in getattr(stmt, "cases", None) or []:
-                walk(case.body)
+            if isinstance(stmt, ast.Assign):
+                self._assign(stmt.targets, stmt.value, state)
+            elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
+                self._assign([stmt.target], stmt.value, state)
+            elif isinstance(stmt, (ast.Return, ast.Raise)):
+                if getattr(stmt, "value", None) is not None or getattr(stmt, "exc", None) is not None:
+                    self._handle_expr(stmt, state)
+                return False
+            elif isinstance(stmt, ast.If):
+                self._handle_expr(stmt.test, state)
+                self._branches([stmt.body, stmt.orelse], state)
+            elif isinstance(stmt, ast.Match):
+                self._handle_expr(stmt.subject, state)
+                alternatives = []
+                for case in stmt.cases:
+                    guard = [ast.Expr(case.guard)] if case.guard is not None else []
+                    alternatives.append([*guard, *case.body])
+                self._branches(alternatives, state, exhaustive=False)
+            elif isinstance(stmt, (ast.For, ast.AsyncFor)):
+                self._handle_expr(stmt.iter, state)
+                self.walk(stmt.body, state)
+                self.walk(stmt.orelse, state)
+            elif isinstance(stmt, ast.While):
+                self._handle_expr(stmt.test, state)
+                self.walk(stmt.body, state)
+                self.walk(stmt.orelse, state)
+            elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+                for item in stmt.items:
+                    self._handle_expr(item.context_expr, state)
+                if not self.walk(stmt.body, state):
+                    return False
+            elif isinstance(stmt, (ast.Try, getattr(ast, "TryStar", ast.Try))):
+                before = _PathState(state.previous)
+                alive = self.walk(stmt.body, state)
+                for handler in stmt.handlers:
+                    h_state = _PathState(before.previous)
+                    if handler.type is not None:
+                        self._handle_expr(handler.type, h_state)
+                    self.walk(handler.body, h_state)
+                if alive:
+                    self.walk(stmt.orelse, state)
+                self.walk(stmt.finalbody, state)
+                if not alive:
+                    return False
+            else:
+                self._handle_expr(stmt, state)
+        return True
 
-    walk(getattr(func, "body", []))
-    return result
+    def _branches(self, alternatives: list[list[ast.stmt]], state: _PathState, exhaustive: bool = True) -> None:
+        start = state.previous
+        before = {k: set(v) for k, v in self.var_source.items()}
+        merged: dict[str, set[str]] = {} if exhaustive else {k: set(v) for k, v in before.items()}
+        ends: list[Optional[NodeFunction]] = []
+        for body in alternatives:
+            # Each alternative sees the variables as they were before the branch.
+            self.var_source = {k: set(v) for k, v in before.items()}
+            branch = _PathState(start)
+            if self.walk(body, branch):
+                ends.append(branch.previous)
+                for name, sources in self.var_source.items():
+                    merged.setdefault(name, set()).update(sources)
+        if not exhaustive:
+            ends.append(start)
+        # After the branch a variable may hold a value from any live alternative.
+        self.var_source = merged if ends else before
+        distinct = {e.first_node if e else None for e in ends}
+        # After a branch the "previous" node is only known if all live paths agree.
+        state.previous = ends[0] if ends and len(distinct) == 1 else None
 
 
 def _drop_cycles(edges: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -135,15 +285,33 @@ def _drop_cycles(edges: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return kept
 
 
-def build_dag(
-    trees: dict[str, ast.Module], calls: list[DiscoveredCall]
-) -> list[tuple[str, str]]:
-    fn_to_node = _function_to_node(calls)
-    if len(fn_to_node) < 2:
+def _functions_with_classes(tree: ast.Module) -> list[tuple[ast.AST, list[str]]]:
+    found: list[tuple[ast.AST, list[str]]] = []
+
+    def visit(body: list[ast.stmt], classes: list[str]) -> None:
+        for stmt in body:
+            if isinstance(stmt, ast.ClassDef):
+                visit(stmt.body, [*classes, stmt.name])
+            elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                found.append((stmt, classes))
+                visit(stmt.body, classes)
+
+    visit(tree.body, [])
+    return found
+
+
+def build_dag(trees: dict[str, ast.Module], calls: list[DiscoveredCall]) -> list[tuple[str, str]]:
+    functions, edges = _node_functions(calls)
+    if not functions:
         return []
-    edges: list[tuple[str, str]] = []
     for rel in sorted(trees):
-        for node in ast.walk(trees[rel]):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                edges.extend(_edges_in_function(node, fn_to_node))
+        resolver = _Resolver.for_module(rel, trees[rel], functions)
+        for func, classes in _functions_with_classes(trees[rel]):
+            resolver.class_stack = classes
+            walker = _FunctionWalker(resolver)
+            try:
+                walker.walk(func.body, _PathState())
+            except RecursionError:
+                continue
+            edges.extend(walker.edges)
     return _drop_cycles(edges)

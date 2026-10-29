@@ -55,7 +55,7 @@ if [ -f "$ROOT_DIR/backend/main.py" ]; then
     elif [ -d "$ROOT_DIR/.venv" ]; then
         source "$ROOT_DIR/.venv/bin/activate"
     fi
-    uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload &
+    uvicorn backend.main:app --host "${HOST:-127.0.0.1}" --port "${PORT:-8000}" --reload &
     BACKEND_PID=$!
     PIDS+=("$BACKEND_PID")
     echo -e "${GREEN}[✓] Backend service launched (PID: $BACKEND_PID)${NC}"

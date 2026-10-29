@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import logging
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -25,6 +26,10 @@ SKIP_DIRS = frozenset(
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_FILES = 500
+MAX_PATH_CHARS = 1024
+# Total source bytes and AST size per scan, so one request cannot exhaust memory.
+MAX_TOTAL_BYTES = 20 * 1024 * 1024
+MAX_AST_NODES_PER_FILE = 200_000
 
 # Attribute chains (suffixes) that denote an LLM invocation.
 LLM_CALL_SUFFIXES = (
@@ -40,6 +45,9 @@ FRAMEWORK_IMPORTS = {
     "litellm": "LiteLLM",
     "anthropic": "Anthropic SDK",
 }
+
+# Packages whose clients expose the OpenAI `chat.completions.create` surface.
+OPENAI_COMPATIBLE = frozenset({"openai", "langchain_openai", "litellm", "together", "groq"})
 
 DYNAMIC_MODEL = "<dynamic>"
 UNSPECIFIED_MODEL = "<unspecified>"
@@ -72,6 +80,7 @@ class DiscoveredCall:
     max_tokens: Optional[int]
     snippet: str
     kwargs: list[str] = field(default_factory=list)
+    qualname: Optional[str] = None  # e.g. "Agent.classify" (internal, for the DAG)
 
     def to_llm_node(self) -> LLMNode:
         return LLMNode(
@@ -97,6 +106,7 @@ class RepoScan:
     scanned_files_count: int
     detected_framework: str
     warnings: list[str] = field(default_factory=list)
+    bom_files: set[str] = field(default_factory=set)  # sources that start with a UTF-8 BOM on disk
 
 
 # --------------------------------------------------------------------------- #
@@ -106,23 +116,27 @@ class RepoScan:
 
 def resolve_scan_path(raw: str, allowed_roots: list[Path], base: Path) -> Path:
     """Resolve a user-supplied path and ensure it is a directory under an allowed root."""
-    if not raw or "\x00" in raw:
-        raise ScanPathError("repository_path is empty or invalid")
-    candidate = Path(raw).expanduser()
-    if not candidate.is_absolute():
-        candidate = base / candidate
-    if candidate.is_symlink():
-        raise ScanPathError("repository_path must not be a symlink")
-    resolved = candidate.resolve()
-    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
-        raise ScanPathError("repository_path is outside the allowed scan roots")
-    if not resolved.is_dir():
-        raise ScanPathError(f"repository_path does not exist or is not a directory: {raw}")
+    if not raw or "\x00" in raw or len(raw) > MAX_PATH_CHARS:
+        raise ScanPathError("repository_path is empty, too long or invalid")
+    try:
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = base / candidate
+        if candidate.is_symlink():
+            raise ScanPathError("repository_path must not be a symlink")
+        resolved = candidate.resolve()
+        if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+            raise ScanPathError("repository_path is outside the allowed scan roots")
+        if not resolved.is_dir():
+            raise ScanPathError("repository_path does not exist or is not a directory")
+    except (OSError, RuntimeError) as exc:  # ENAMETOOLONG, ELOOP, permission errors
+        raise ScanPathError("repository_path cannot be accessed") from exc
     return resolved
 
 
 def iter_python_files(root: Path, warnings: list[str]) -> list[Path]:
     files: list[Path] = []
+    total_bytes = 0
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         dirnames[:] = sorted(
             d for d in dirnames
@@ -132,11 +146,21 @@ def iter_python_files(root: Path, warnings: list[str]) -> list[Path]:
             if not name.endswith(".py") or name.startswith("test_") or name.endswith("_test.py"):
                 continue
             path = Path(dirpath) / name
-            if path.is_symlink():
+            rel = path.relative_to(root).as_posix()
+            try:
+                info = path.lstat()
+            except OSError:
+                warnings.append(f"Skipped {rel}: cannot stat")
                 continue
-            if path.stat().st_size > MAX_FILE_BYTES:
-                warnings.append(f"Skipped {path.relative_to(root).as_posix()}: larger than 2 MB")
+            if not stat.S_ISREG(info.st_mode):
+                continue  # symlinks, FIFOs, sockets, devices
+            if info.st_size > MAX_FILE_BYTES:
+                warnings.append(f"Skipped {rel}: larger than 2 MB")
                 continue
+            total_bytes += info.st_size
+            if total_bytes > MAX_TOTAL_BYTES:
+                warnings.append("Stopped: repository exceeds 20 MB of Python source")
+                return files
             files.append(path)
             if len(files) >= MAX_FILES:
                 warnings.append(f"Stopped after {MAX_FILES} files")
@@ -248,6 +272,10 @@ def _tokens(name: Optional[str]) -> set[str]:
     return {t for t in name.lower().split("_") if t and t not in {"schema", "prompt", "system", "template"}}
 
 
+def _requests_json(response_format: Any) -> bool:
+    return isinstance(response_format, dict) and response_format.get("type") in ("json_object", "json_schema")
+
+
 def find_expected_schema(
     func: Optional[ast.AST],
     response_format: Any,
@@ -271,7 +299,10 @@ def find_expected_schema(
             if name in candidates:
                 return candidates[name]
 
-    # 3. Best token overlap with the prompt constant / function name.
+    # 3. Best token overlap with the prompt constant / function name — only for
+    #    calls that explicitly request JSON, so free-text calls never get a schema.
+    if not _requests_json(response_format):
+        return None
     wanted = _tokens(prompt_reference) | _tokens(function_name)
     best_name, best_score = None, 0
     for name in sorted(candidates):
@@ -287,21 +318,48 @@ def find_expected_schema(
 
 
 class _CallVisitor(ast.NodeVisitor):
+    """Collects (call, enclosing function, enclosing statement, qualname) tuples.
+
+    Decorators, default values and annotations are evaluated in the *outer*
+    scope, so calls there are not credited to the function being defined.
+    """
+
     def __init__(self) -> None:
         self.func_stack: list[ast.AST] = []
+        self.qual_stack: list[str] = []
         self.stmt_stack: list[ast.stmt] = []
-        self.found: list[tuple[ast.Call, Optional[ast.AST], ast.stmt]] = []
+        self.found: list[tuple[ast.Call, Optional[ast.AST], ast.stmt, Optional[str]]] = []
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._visit_scope(node)
+        self._visit_function(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._visit_scope(node)
+        self._visit_function(node)
 
-    def _visit_scope(self, node: ast.AST) -> None:
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.stmt_stack.append(node)
+        for expr in node.decorator_list:
+            self.visit(expr)
+        self.visit(node.args)
+        if node.returns is not None:
+            self.visit(node.returns)
+        self.stmt_stack.pop()
         self.func_stack.append(node)
-        self.generic_visit(node)
+        self.qual_stack.append(node.name)
+        for stmt in node.body:
+            self.visit(stmt)
+        self.qual_stack.pop()
         self.func_stack.pop()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.stmt_stack.append(node)
+        for expr in [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]:
+            self.visit(expr)
+        self.stmt_stack.pop()
+        self.qual_stack.append(node.name)
+        for stmt in node.body:
+            self.visit(stmt)
+        self.qual_stack.pop()
 
     def generic_visit(self, node: ast.AST) -> None:
         is_stmt = isinstance(node, ast.stmt)
@@ -309,10 +367,37 @@ class _CallVisitor(ast.NodeVisitor):
             self.stmt_stack.append(node)
         if isinstance(node, ast.Call) and is_llm_call(node):
             func = self.func_stack[-1] if self.func_stack else None
-            self.found.append((node, func, self.stmt_stack[-1]))
+            qualname = ".".join(self.qual_stack) if func is not None else None
+            self.found.append((node, func, self.stmt_stack[-1], qualname))
         super().generic_visit(node)
         if is_stmt:
             self.stmt_stack.pop()
+
+
+def _local_binding(func: Optional[ast.AST], name: str) -> Optional[str]:
+    """Value of `name` if the enclosing function binds it locally.
+
+    Returns the string when it is a single literal assignment, DYNAMIC_MODEL for
+    parameters or any other local binding, and None when `name` is not local.
+    """
+    if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    args = func.args
+    params = [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]
+    if any(p is not None and p.arg == name for p in params):
+        return DYNAMIC_MODEL
+    for node in ast.walk(func):
+        if isinstance(node, ast.Global) and name in node.names:
+            return None
+    values = _local_assignments(func).get(name)
+    if values is None:
+        bound = any(
+            isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Store) for n in ast.walk(func)
+        )
+        return DYNAMIC_MODEL if bound else None
+    if len(values) == 1 and isinstance(values[0], ast.Constant) and isinstance(values[0].value, str):
+        return values[0].value
+    return DYNAMIC_MODEL
 
 
 def _kwarg(call: ast.Call, name: str) -> Optional[ast.expr]:
@@ -352,10 +437,13 @@ def scan_module(
     visitor.visit(tree)
 
     calls: list[DiscoveredCall] = []
-    for call, func, stmt in visitor.found:
+    for call, func, stmt, qualname in visitor.found:
         model_expr = _kwarg(call, "model")
+        local_model = _local_binding(func, model_expr.id) if isinstance(model_expr, ast.Name) else None
         if isinstance(model_expr, ast.Constant) and isinstance(model_expr.value, str):
             model, literal = model_expr.value, True
+        elif local_model is not None:
+            model, literal = local_model, False
         elif isinstance(model_expr, ast.Name) and model_expr.id in string_constants:
             model, literal = string_constants[model_expr.id], False
         elif model_expr is None:
@@ -370,10 +458,7 @@ def scan_module(
         )
         response_format = _literal(_kwarg(call, "response_format"))
         schema = find_expected_schema(func, response_format, literal_constants, prompt_ref, function_name)
-        json_required = schema is not None or (
-            isinstance(response_format, dict)
-            and response_format.get("type") in ("json_object", "json_schema")
-        )
+        json_required = schema is not None or _requests_json(response_format)
         max_tokens = _literal(_kwarg(call, "max_tokens"))
         if not isinstance(max_tokens, int) or isinstance(max_tokens, bool):
             max_tokens = None
@@ -401,6 +486,7 @@ def scan_module(
                 max_tokens=max_tokens,
                 snippet=snippet,
                 kwargs=[kw.arg for kw in call.keywords if kw.arg],
+                qualname=qualname,
             )
         )
     return calls
@@ -422,15 +508,36 @@ def detect_frameworks(trees: dict[str, ast.Module]) -> str:
     return " / ".join(found) if found else "Unknown"
 
 
+def _repo_uses_openai_sdk(trees: dict[str, ast.Module]) -> bool:
+    """True if any module imports the OpenAI SDK (or an OpenAI-compatible wrapper).
+
+    Without it, `x.chat.completions.create(...)` is most likely an unrelated API.
+    """
+    for tree in trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(a.name.split(".")[0] in OPENAI_COMPATIBLE for a in node.names):
+                return True
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                if node.module.split(".")[0] in OPENAI_COMPATIBLE:
+                    return True
+    return False
+
+
 def _dedupe_ids(calls: list[DiscoveredCall]) -> None:
+    # Reserve every natural id first so a suffix never steals another function's id
+    # (e.g. the 2nd call in `f` must not become `node_f_2` when `f_2` exists).
+    reserved = {call.node_id for call in calls}
     taken: set[str] = set()
     for call in calls:
-        candidate, n = call.node_id, 1
-        while candidate in taken:
+        base = call.node_id
+        if base not in taken:
+            taken.add(base)
+            continue
+        n = 2
+        while f"{base}__{n}" in taken or f"{base}__{n}" in reserved:
             n += 1
-            candidate = f"{call.node_id}_{n}"
-        call.node_id = candidate
-        taken.add(candidate)
+        call.node_id = f"{base}__{n}"
+        taken.add(call.node_id)
 
 
 def scan_repository(root: Path) -> RepoScan:
@@ -439,20 +546,36 @@ def scan_repository(root: Path) -> RepoScan:
     files = iter_python_files(root, warnings)
     trees: dict[str, ast.Module] = {}
     sources: dict[str, str] = {}
+    bom_files: set[str] = set()
     calls: list[DiscoveredCall] = []
 
     for path in files:
         rel = path.relative_to(root).as_posix()
         try:
-            source = path.read_text(encoding="utf-8")
+            # Raw bytes: keep CRLF exactly (diffs must apply to the real file); a BOM is
+            # stripped for parsing and remembered so patches can restore it.
+            source = path.read_bytes().decode("utf-8")
+            if source.startswith("\ufeff"):
+                source = source[1:]
+                bom_files.add(rel)
             tree = ast.parse(source, filename=rel)
-        except (SyntaxError, UnicodeDecodeError, ValueError) as exc:
+            if sum(1 for _ in ast.walk(tree)) > MAX_AST_NODES_PER_FILE:
+                warnings.append(f"Skipped {rel}: syntax tree too large")
+                continue
+            module_calls = scan_module(tree, source, rel)
+        except (SyntaxError, UnicodeDecodeError, ValueError, OSError) as exc:
             warnings.append(f"Skipped {rel}: {exc.__class__.__name__}")
+            continue
+        except (RecursionError, MemoryError):
+            warnings.append(f"Skipped {rel}: too deeply nested to analyse")
             continue
         trees[rel] = tree
         sources[rel] = source
-        calls.extend(scan_module(tree, source, rel))
+        calls.extend(module_calls)
 
+    if calls and not _repo_uses_openai_sdk(trees):
+        warnings.append("No `openai` import found; ignoring look-alike .create() calls")
+        calls = []
     _dedupe_ids(calls)
     for w in warnings:
         logger.warning("scan %s: %s", root, w)
@@ -464,4 +587,5 @@ def scan_repository(root: Path) -> RepoScan:
         scanned_files_count=len(trees),
         detected_framework=detect_frameworks(trees),
         warnings=warnings,
+        bom_files=bom_files & set(sources),
     )

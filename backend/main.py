@@ -6,10 +6,12 @@ import logging
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from backend import __version__
 from backend.api.routes import router
 from backend.config import Settings, get_settings
+from backend.guardrails import GuardrailMiddleware, RateLimiter
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -23,6 +25,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         description="Autonomous FinOps & latency compiler for LLM architectures",
     )
+    # Middleware runs outermost-last: host check -> CORS -> size/rate guardrails.
+    limiter = RateLimiter(settings.rate_limit_per_minute) if settings.enable_rate_limiting else None
+    app.add_middleware(GuardrailMiddleware, limiter=limiter)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -30,6 +35,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_methods=["GET", "POST"],
         allow_headers=["Content-Type"],
     )
+    if "*" not in settings.allowed_hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
     app.include_router(router)
     if explicit:
         app.dependency_overrides[get_settings] = lambda: settings

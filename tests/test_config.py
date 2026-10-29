@@ -121,3 +121,24 @@ def test_get_settings_uses_dotenv_without_mutating_environ(monkeypatch, tmp_path
     assert s.nebius_api_key == "sk-file"
     assert "ENVIRONMENT" not in os.environ and "NEBIUS_API_KEY" not in os.environ
     assert config.get_settings() is s  # cached
+
+
+def test_new_operational_settings(monkeypatch, tmp_path):
+    s = load_settings()
+    assert s.host == "127.0.0.1"
+    assert s.allowed_hosts == ["localhost", "127.0.0.1"]
+    assert s.max_concurrent_runs == 2 and s.record_runs is False
+    assert s.recordings_dir == REPO_ROOT / "recordings"
+    monkeypatch.setenv("ALLOWED_HOSTS", "demo.example.com,localhost")
+    monkeypatch.setenv("MAX_CONCURRENT_RUNS", "5")
+    monkeypatch.setenv("RECORD_RUNS", "true")
+    monkeypatch.setenv("RECORDINGS_DIR", str(tmp_path))
+    s = load_settings()
+    assert s.allowed_hosts == ["demo.example.com", "localhost"]
+    assert (s.max_concurrent_runs, s.record_runs, s.recordings_dir) == (5, True, tmp_path.resolve())
+
+
+def test_settings_repr_never_contains_keys():
+    s = load_settings({"NEBIUS_API_KEY": "sk-REAL-123", "TAVILY_API_KEY": "tvly-456"})
+    assert "sk-REAL-123" not in repr(s) and "tvly-456" not in repr(s)
+    assert s.nebius_api_key == "sk-REAL-123"

@@ -127,11 +127,16 @@ CascadeRouter/
 │   └── workflows/
 │       └── tests.yml                 # CI workflow: Unit tests, typechecks & lint
 ├── backend/
-│   ├── api/                          # FastAPI route handlers (/scan, /benchmark, /optimize)
+│   ├── api/
+│   │   ├── routes.py                 # /api/health, /models, /scan, /benchmark, /runs/{id}, /optimize
+│   │   └── deps.py                   # stores, spend tracker, data-source aware LLM client
 │   ├── compiler/
-│   │   ├── ast_scanner.py            # Static AST parser and LLM call discoverer
-│   │   ├── dag_builder.py            # Workflow DAG reconstruction
-│   │   ├── shadow_runner.py          # Bounded concurrent benchmark runner
+│   │   ├── ast_scanner.py            # Static AST parser and LLM call discoverer (never executes code)
+│   │   ├── dag_builder.py            # Path- and import-aware workflow DAG reconstruction
+│   │   ├── cases.py                  # cascade_cases.yaml benchmark cases
+│   │   ├── sandbox.py                # Credential-free subprocess sandbox
+│   │   ├── prompt_capture.py         # Captures each node's exact request in the sandbox
+│   │   ├── shadow_runner.py          # Bounded-concurrency benchmark runner
 │   │   ├── metrics.py                # FinOps cost & latency calculations
 │   │   ├── evaluator.py              # Deterministic schema & task validation
 │   │   ├── router_optimizer.py       # Lowest-cost model selection engine
@@ -139,13 +144,16 @@ CascadeRouter/
 │   │   ├── patch_generator.py        # Unified diff & code patch synthesizer
 │   │   └── regression_runner.py      # Isolated sandbox regression tester
 │   ├── runtime/
-│   │   └── cascade_router.py         # Zero-overhead runtime fallback wrapper
+│   │   └── cascade_router.py         # Runtime router with validation-triggered fallback
 │   ├── services/
-│   │   ├── nebius_client.py          # Nebius Token Factory async client
-│   │   └── tavily_client.py          # Optional Tavily research grounding
+│   │   ├── nebius_client.py          # Streaming Nebius Token Factory client (TTFT + usage)
+│   │   ├── recordings.py             # Record/replay of real responses ("recorded" mode)
+│   │   └── optimization.py           # Decisions + policy + patch + regression → OptimizeResult
+│   ├── guardrails.py                 # Rate limit, daily spend cap, request size limits
+│   ├── store.py                      # In-memory scan and run stores
 │   ├── config.py                     # Central configuration & verified model rates
 │   ├── main.py                       # FastAPI application entrypoint
-│   └── schemas.py                    # Shared Pydantic data contract models
+│   └── schemas.py                    # Pydantic contracts mirroring frontend/src/types.ts
 ├── frontend/
 │   ├── src/
 │   │   ├── components/               # Workbench panes, matrix, diff viewer, DAG
@@ -159,10 +167,12 @@ CascadeRouter/
 │   ├── tsconfig.json
 │   └── vite.config.ts
 ├── tests/
-│   ├── compiler/                     # Unit tests for scanner, metrics, evaluator
-│   ├── fixtures/
-│   │   └── sample_repo/              # Bundled sample AI app with over-provisioned calls
-│   └── integration/                  # End-to-end integration test suite
+│   ├── api/                          # Endpoint, contract and flow tests
+│   ├── compiler/                     # Unit tests for every compiler module
+│   ├── services/ runtime/            # Client, recording, optimization and runtime tests
+│   ├── integration/                  # End-to-end pipeline (+ opt-in live Nebius smoke test)
+│   └── fixtures/
+│       └── sample_repo/              # Bundled sample AI app with over-provisioned calls
 ├── docs/
 │   ├── architecture.md               # Technical specification & system blueprint
 │   ├── demo-scenarios.md             # 3-minute hackathon demo script & walkthrough
@@ -217,7 +227,7 @@ cp .env.example .env
 
 Start the FastAPI development server:
 ```bash
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 Verify the health check at `http://localhost:8000/api/health`.
 
@@ -255,14 +265,19 @@ Open `http://localhost:5173` in your browser to access the CascadeRouter Workben
 
 ## 🧪 Testing
 
-Run all unit, compiler, and regression tests:
+Run all unit, compiler, API and integration tests (offline: the LLM is a test double, nothing is billed):
 ```bash
-# Activate virtual environment
-source venv/bin/activate
-
-# Run pytest
-pytest tests/ -v
+source .venv/bin/activate
+pytest -q                       # full suite
+pytest -q --cov=backend         # with coverage
 ```
+
+The optional live smoke test runs only when you set a dedicated key:
+```bash
+NEBIUS_LIVE_TEST_KEY=sk-... pytest -m live tests/integration/test_live_nebius.py
+```
+
+See [`docs/test-report.md`](docs/test-report.md) for the latest results.
 
 ---
 

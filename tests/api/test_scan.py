@@ -51,6 +51,16 @@ def test_scan_respects_allowed_roots(monkeypatch, store):
     monkeypatch.setenv("ALLOWED_SCAN_ROOTS", "tests/fixtures")
     app = create_app()
     app.dependency_overrides[get_scan_store] = lambda: store
-    c = TestClient(app)
+    c = TestClient(app, base_url="http://localhost")
     assert c.post("/api/scan", json={"repository_path": "tests/fixtures/sample_repo"}).status_code == 200
     assert c.post("/api/scan", json={"repository_path": "backend"}).status_code == 400
+
+
+def test_scan_rejects_overlong_path_with_422(client):
+    assert client.post("/api/scan", json={"repository_path": "a/" * 600}).status_code == 422
+
+
+def test_scan_drops_asts_but_keeps_sources(client, store):
+    client.post("/api/scan", json={"repository_path": "tests/fixtures/sample_repo"})
+    stored = store.latest()
+    assert stored.repo.trees == {} and "agent/workflow.py" in stored.repo.sources

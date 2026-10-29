@@ -6,7 +6,7 @@ from backend.main import create_app
 
 
 def _client() -> TestClient:
-    return TestClient(create_app())
+    return TestClient(create_app(), base_url="http://localhost")
 
 
 def test_health_never_leaks_key(monkeypatch):
@@ -63,7 +63,7 @@ def test_explicit_settings_override_routes():
     from backend.config import load_settings
 
     s = dataclasses.replace(load_settings(), environment="production", data_source_mode="recorded")
-    body = TestClient(create_app(s)).get("/api/health").json()
+    body = TestClient(create_app(s), base_url="http://localhost").get("/api/health").json()
     assert (body["environment"], body["data_source"]) == ("production", "recorded")
 
 
@@ -79,3 +79,34 @@ def test_importing_main_does_not_build_app(monkeypatch):
     assert main.app is main.app  # built lazily, once
     with pytest.raises(AttributeError):
         main.not_there
+
+
+def test_untrusted_host_header_rejected():
+    c = TestClient(create_app(), base_url="http://evil.example")
+    assert c.get("/api/health").status_code == 400
+
+
+def test_wildcard_allowed_hosts_disables_check(monkeypatch):
+    monkeypatch.setenv("ALLOWED_HOSTS", "*")
+    assert TestClient(create_app(), base_url="http://anything.example").get("/api/health").status_code == 200
+
+
+def test_rate_limit_applies_to_api_but_not_health(monkeypatch):
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "2")
+    c = TestClient(create_app(), base_url="http://localhost")
+    codes = [c.get("/api/models").status_code for _ in range(4)]
+    assert codes[:2] == [200, 200] and codes[-1] == 429
+    assert c.get("/api/health").status_code == 200
+
+
+def test_rate_limit_can_be_disabled(monkeypatch):
+    monkeypatch.setenv("RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("ENABLE_RATE_LIMITING", "false")
+    c = TestClient(create_app(), base_url="http://localhost")
+    assert all(c.get("/api/models").status_code == 200 for _ in range(5))
+
+
+def test_oversized_body_rejected():
+    c = TestClient(create_app(), base_url="http://localhost")
+    r = c.post("/api/scan", json={"repository_path": "x" * 70_000})
+    assert r.status_code == 413
