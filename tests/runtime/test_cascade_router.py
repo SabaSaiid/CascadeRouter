@@ -192,3 +192,68 @@ def test_async_escalation_on_error_and_degradation(router):
 def test_fenced_json_without_object():
     rule = NodeRule("p", None, enforce_json=True)
     assert check_response(rule, resp("```\nno json here\n```")) == "response is not a JSON object"
+
+
+# ------------------------------------------------------------- P3-P6 review regressions
+
+
+def test_stream_is_routed_without_validation(router):
+    c = Client({"small": ""})
+    router.dispatch("node_json", c, stream=True)
+    assert c.models == ["small"]
+    c2 = Client({"small": ""}, is_async=True)
+    asyncio.run(router.dispatch_async("node_json", c2, stream=True))
+    assert c2.models == ["small"]
+
+
+def test_tool_call_reply_is_not_treated_as_empty(router):
+    tool_reply = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=None, tool_calls=[{"id": "1"}]))])
+
+    class ToolClient:
+        def __init__(self):
+            self.models = []
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+        def create(self, **kwargs):
+            self.models.append(kwargs["model"])
+            return tool_reply
+
+    c = ToolClient()
+    assert router.dispatch("node_text", c) is tool_reply and c.models == ["small"]
+
+
+def test_async_client_through_sync_dispatch_returns_awaitable(router):
+    c = Client({"small": '{"category": "a"}'}, is_async=True)
+    result = router.dispatch("node_json", c)
+    assert asyncio.run(result).choices[0].message.content == '{"category": "a"}'
+    assert c.models == ["small"]
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        "nodes:\n  n:\n    primary_model: p\n    routing_conditions: [1, 2]\n",
+        "nodes:\n  n:\n    primary_model: p\n    routing_conditions: {required_fields: 5}\n",
+        "nodes: [1, 2]\n",
+        "version: 1\n",
+    ],
+)
+def test_wrong_shape_policies_never_raise(tmp_path, monkeypatch, policy):
+    monkeypatch.delenv(ENV_POLICY_PATH, raising=False)
+    (tmp_path / POLICY_FILENAME).write_text(policy)
+    router = CascadeRouter.load(tmp_path)
+    if "primary_model: p" in policy:
+        assert router.rules["n"].primary_model == "p" and router.rules["n"].required_fields == ()
+    else:
+        assert router.rules == {}
+
+
+def test_load_survives_unexpected_from_dict_errors(tmp_path, monkeypatch):
+    monkeypatch.delenv(ENV_POLICY_PATH, raising=False)
+    (tmp_path / POLICY_FILENAME).write_text("nodes: {}\n")
+
+    def boom(*a, **k):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(CascadeRouter, "from_dict", classmethod(lambda cls, *a, **k: boom()))
+    assert CascadeRouter.load(tmp_path).rules == {}

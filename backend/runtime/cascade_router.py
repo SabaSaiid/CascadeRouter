@@ -18,6 +18,7 @@ Behaviour per call:
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import os
@@ -77,9 +78,19 @@ def _parse_json_object(text: str) -> Optional[dict[str, Any]]:
     return None
 
 
+def _has_tool_call(response: Any) -> bool:
+    try:
+        message = response.choices[0].message
+    except (AttributeError, IndexError, KeyError, TypeError):
+        return False
+    return bool(getattr(message, "tool_calls", None) or getattr(message, "function_call", None))
+
+
 def check_response(rule: NodeRule, response: Any) -> Optional[str]:
     """None if the response satisfies the rule's structural checks, else the reason."""
     text = _response_text(response)
+    if (text is None or not text.strip()) and _has_tool_call(response) and not rule.enforce_json:
+        return None  # a tool call is a real answer, not an empty one
     if text is None or not text.strip():
         return "empty response"
     if not rule.enforce_json and not rule.required_fields:
@@ -103,18 +114,27 @@ class CascadeRouter:
 
     @classmethod
     def from_dict(cls, policy: dict[str, Any], source: Optional[str] = None) -> "CascadeRouter":
+        """Build rules; malformed entries are skipped, never raised (the app must keep working)."""
         rules: dict[str, NodeRule] = {}
-        for node_id, raw in (policy.get("nodes") or {}).items():
+        nodes = policy.get("nodes") if isinstance(policy, dict) else None
+        if not isinstance(nodes, dict):
+            return cls(rules, source)
+        for node_id, raw in nodes.items():
             if not isinstance(raw, dict) or not isinstance(raw.get("primary_model"), str):
                 continue
-            cond = raw.get("routing_conditions") or {}
+            cond = raw.get("routing_conditions")
+            if not isinstance(cond, dict):
+                cond = {}
+            fields = cond.get("required_fields")
+            if not isinstance(fields, (list, tuple)):
+                fields = ()
             fallback = raw.get("fallback_model")
             retries = cond.get("max_retries", 1)
             rules[str(node_id)] = NodeRule(
                 primary_model=raw["primary_model"],
                 fallback_model=fallback if isinstance(fallback, str) and fallback else None,
                 enforce_json=bool(cond.get("enforce_json", False)),
-                required_fields=tuple(str(f) for f in cond.get("required_fields") or ()),
+                required_fields=tuple(str(f) for f in fields),
                 max_retries=retries if isinstance(retries, int) and retries >= 0 else 1,
             )
         return cls(rules, source)
@@ -143,7 +163,11 @@ class CascadeRouter:
         if not isinstance(data, dict):
             logger.error("cascaderouter: %s is not a mapping; passthrough", path)
             return cls({}, str(path))
-        return cls.from_dict(data, str(path))
+        try:
+            return cls.from_dict(data, str(path))
+        except Exception as exc:  # never break the host application at import time
+            logger.error("cascaderouter: invalid policy %s (%s); passthrough", path, exc)
+            return cls({}, str(path))
 
     @staticmethod
     def _find_policy(start: str | os.PathLike[str] | None) -> Optional[Path]:
@@ -182,6 +206,10 @@ class CascadeRouter:
         if rule is None:
             self.stats.passthrough += 1
             return create(**kwargs)
+        if kwargs.get("stream"):
+            # Streams cannot be validated before they are consumed: route, don't check.
+            self._record(node_id, models[0], "stream")
+            return create(**{**kwargs, "model": models[0]})
 
         first_response: Any = None
         last_error: Optional[BaseException] = None
@@ -192,6 +220,10 @@ class CascadeRouter:
                 last_error = exc
                 self._record(node_id, model, f"error: {type(exc).__name__}")
                 continue
+            if inspect.isawaitable(response):
+                # An async client reached the sync API: hand the awaitable back unchanged.
+                self._record(node_id, model, "awaitable")
+                return response
             problem = check_response(rule, response)
             if problem is None and validator is not None and not validator(response):
                 problem = "custom validator rejected response"
@@ -219,6 +251,9 @@ class CascadeRouter:
         if rule is None:
             self.stats.passthrough += 1
             return await create(**kwargs)
+        if kwargs.get("stream"):
+            self._record(node_id, models[0], "stream")
+            return await create(**{**kwargs, "model": models[0]})
 
         first_response: Any = None
         last_error: Optional[BaseException] = None
