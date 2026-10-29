@@ -110,7 +110,7 @@ def test_unpatchable_node_is_reported_not_verified(monkeypatch):
     import backend.services.optimization as opt
     from backend.compiler.patch_generator import PatchSet
 
-    def failing_patches(sources, calls):
+    def failing_patches(sources, calls, bom_files=()):
         return PatchSet(errors={c.node_id: "only <client>.chat.completions.create(...) calls can be patched" for c in calls})
 
     monkeypatch.setattr(opt, "build_patches", failing_patches)

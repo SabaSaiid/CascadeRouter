@@ -106,6 +106,7 @@ class RepoScan:
     scanned_files_count: int
     detected_framework: str
     warnings: list[str] = field(default_factory=list)
+    bom_files: set[str] = field(default_factory=set)  # sources that start with a UTF-8 BOM on disk
 
 
 # --------------------------------------------------------------------------- #
@@ -545,13 +546,18 @@ def scan_repository(root: Path) -> RepoScan:
     files = iter_python_files(root, warnings)
     trees: dict[str, ast.Module] = {}
     sources: dict[str, str] = {}
+    bom_files: set[str] = set()
     calls: list[DiscoveredCall] = []
 
     for path in files:
         rel = path.relative_to(root).as_posix()
         try:
-            # utf-8-sig: files saved with a BOM must still parse.
-            source = path.read_text(encoding="utf-8-sig")
+            # Raw bytes: keep CRLF exactly (diffs must apply to the real file); a BOM is
+            # stripped for parsing and remembered so patches can restore it.
+            source = path.read_bytes().decode("utf-8")
+            if source.startswith("\ufeff"):
+                source = source[1:]
+                bom_files.add(rel)
             tree = ast.parse(source, filename=rel)
             if sum(1 for _ in ast.walk(tree)) > MAX_AST_NODES_PER_FILE:
                 warnings.append(f"Skipped {rel}: syntax tree too large")
@@ -581,4 +587,5 @@ def scan_repository(root: Path) -> RepoScan:
         scanned_files_count=len(trees),
         detected_framework=detect_frameworks(trees),
         warnings=warnings,
+        bom_files=bom_files & set(sources),
     )

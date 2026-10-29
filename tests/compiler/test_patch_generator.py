@@ -177,3 +177,18 @@ def test_crlf_line_endings_preserved():
     out = patch_source(src, calls_for(src))
     assert "\n" not in out.replace("\r\n", "")  # no bare LF introduced
     ast.parse(out)
+
+
+def test_crlf_and_bom_repo_diff_applies_with_git(tmp_path):
+    import subprocess
+
+    raw = '﻿import openai\r\ndef f(c):\r\n    return c.chat.completions.create(model="m", messages=[])\r\n'
+    (tmp_path / "app.py").write_bytes(raw.encode("utf-8"))
+    scan = scan_repository(tmp_path)
+    assert scan.bom_files == {"app.py"} and "\r\n" in scan.sources["app.py"]
+    ps = build_patches(scan.sources, scan.calls, scan.bom_files)
+    assert ps.files["app.py"].patched_on_disk.startswith("﻿import openai\r\n")
+    (tmp_path / "patch.diff").write_bytes(ps.combined_diff().encode("utf-8"))
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    r = subprocess.run(["git", "apply", "--check", "patch.diff"], cwd=tmp_path, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr

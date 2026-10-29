@@ -78,7 +78,8 @@ def optimize_run(
 
     optimized = [c.call for c in contexts if c.decision.status == "optimized"]
     sources = stored.scan.repo.sources
-    patches = build_patches(sources, optimized)
+    bom_files = stored.scan.repo.bom_files
+    patches = build_patches(sources, optimized, bom_files)
 
     regression_result: Optional[RegressionResult] = None
     if patches.files:
@@ -95,7 +96,7 @@ def optimize_run(
         elif patch_error:
             diff, passed, log = "", False, f"Patch could not be generated: {patch_error}"
         else:
-            diff = node_diff(sources, ctx.call) or ""
+            diff = node_diff(sources, ctx.call, bom_files) or ""
             assert regression_result is not None
             passed = regression_result.passed
             log = regression_result.log_for(ctx.call.function_name)

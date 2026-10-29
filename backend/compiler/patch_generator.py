@@ -38,12 +38,19 @@ class FilePatch:
     path: str
     original: str
     patched: str
+    bom: bool = False  # the file on disk starts with a UTF-8 BOM
+
+    @property
+    def patched_on_disk(self) -> str:
+        """Exact file content to write (BOM restored, newlines untouched)."""
+        return ("\ufeff" if self.bom else "") + self.patched
 
     def diff(self) -> str:
+        prefix = "\ufeff" if self.bom else ""
         return "".join(
             difflib.unified_diff(
-                self.original.splitlines(keepends=True),
-                self.patched.splitlines(keepends=True),
+                (prefix + self.original).splitlines(keepends=True),
+                (prefix + self.patched).splitlines(keepends=True),
                 fromfile=f"a/{self.path}",
                 tofile=f"b/{self.path}",
             )
@@ -233,7 +240,9 @@ def patch_source(source: str, calls: list[DiscoveredCall]) -> str:
     return patched
 
 
-def build_patches(sources: dict[str, str], calls: Iterable[DiscoveredCall]) -> PatchSet:
+def build_patches(
+    sources: dict[str, str], calls: Iterable[DiscoveredCall], bom_files: Iterable[str] = ()
+) -> PatchSet:
     """Patch every file; a node that cannot be patched is reported, not fatal."""
     by_file: dict[str, list[DiscoveredCall]] = {}
     for call in calls:
@@ -254,16 +263,16 @@ def build_patches(sources: dict[str, str], calls: Iterable[DiscoveredCall]) -> P
             else:
                 good.append(c)
         if good:
-            result.files[path] = FilePatch(path, source, patch_source(source, good))
+            result.files[path] = FilePatch(path, source, patch_source(source, good), bom=path in set(bom_files))
     return result
 
 
-def node_diff(sources: dict[str, str], call: DiscoveredCall) -> Optional[str]:
+def node_diff(sources: dict[str, str], call: DiscoveredCall, bom_files: Iterable[str] = ()) -> Optional[str]:
     """Diff for a single node in isolation (for the per-decision view)."""
     source = sources.get(call.file_path)
     if source is None:
         return None
     try:
-        return FilePatch(call.file_path, source, patch_source(source, [call])).diff()
+        return FilePatch(call.file_path, source, patch_source(source, [call]), bom=call.file_path in set(bom_files)).diff()
     except (PatchError, SyntaxError):
         return None

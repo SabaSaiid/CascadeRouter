@@ -67,7 +67,7 @@ def run_regression(
             target = (work / path).resolve()
             if work.resolve() not in target.parents:
                 return RegressionResult(False, "refused to write outside the sandbox", f"bad path {path}")
-            target.write_text(file_patch.patched, encoding="utf-8")
+            target.write_bytes(file_patch.patched_on_disk.encode("utf-8"))
         (work / POLICY_FILENAME).write_text(policy_text, encoding="utf-8")
         (work / f"{RUNTIME_MODULE}.py").write_text(RUNTIME_SOURCE.read_text(encoding="utf-8"), encoding="utf-8")
         proc = run_python(
