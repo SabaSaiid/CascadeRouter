@@ -35,7 +35,7 @@ Expected: 3 nodes, all on `nvidia/Nemotron-3-Ultra-550b-a55b`.
 - `node_extract_ticket_metadata`: `response_format=json_object`
 - `node_generate_support_resolution`: free text, `max_tokens=1024`
 
-The DAG shows classify → extract → generate.
+The DAG shows edges classify → extract → generate, plus classify → generate (its output feeds the resolution prompt).
 
 Talking point: the scan is pure `ast` analysis. The target code is never imported or run.
 
@@ -48,7 +48,10 @@ What happens:
 2. **Benchmark.** 6 cases × 4 Nemotron tiers = 24 calls, run concurrently with a cap. Each call records real input/output tokens, total latency and time to first token.
 3. **Evaluation.** Fixed rules, no LLM judge: JSON parse, required fields, schema types and enums, agreement with the labelled answers, and required phrases for free text.
 
-Talking point: the matrix shows Nano and Lightning passing classification and extraction at about 1/16 of Ultra's cost, but failing the free-text resolution. Super-VL is the cheapest tier that passes there.
+Talking points:
+- Point at the cheapest **passing** tier for each node, and at its cost against Ultra. Use whatever the run actually measured; don't quote numbers in advance.
+- Per-token list prices for context: Nano and Lightning cost $0.06 in / $0.24 out per 1M tokens, Super-VL $0.30 / $0.90, Ultra $1.00 / $3.00. The efficient tiers are about 12–17× cheaper per token.
+- If a small tier fails a node, show its `validation_errors`. That is the quality gate doing its job.
 
 ## 3. Optimize & patch (~45 s)
 
@@ -60,7 +63,7 @@ Click **Generate Patch & Policy** (`POST /api/optimize {run_id, quality_threshol
 
 ## 4. Regression (~20 s)
 
-The patched copy of the repo runs its own `pytest` suite in a sandbox: no credentials, 30 s timeout, runtime bundled in as `cascaderouter.py`. All 6 tests pass. A patch only counts as verified when the suite actually ran and passed.
+The patched copy of the repo runs its own `pytest` suite in a sandbox: no credentials, 30 s timeout, runtime bundled in as `cascaderouter.py`. On the sample repo all 6 tests pass (this is verified in CI by `tests/integration/test_pipeline.py`). A patch only counts as verified when the suite actually ran and passed.
 
 ## 5. Runtime fallback (~15 s)
 
