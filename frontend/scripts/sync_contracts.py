@@ -93,6 +93,7 @@ def render_contract():
         lines.append("export type Backend_" + re.sub(r"\W", "_", name) + " = " + _type(schema) + ";")
     for alias, name in sorted(models.items()):
         lines.append("export type " + alias + " = Backend_" + re.sub(r"\W", "_", name) + ";")
+    lines.append("export interface ContractTypes { " + "; ".join(alias + ": " + alias for alias in sorted(models)) + " }")
     lines.append("export const modelNames = " + json.dumps(models, sort_keys=True) + " as const;")
     lines.append("export const schemas: Record<string, unknown> = " + json.dumps(selected, sort_keys=True, separators=(",", ":")) + ";")
     lines.append("export const errorMessages: Record<string, string> = " + json.dumps(dict(ERROR_MESSAGES), sort_keys=True) + ";")

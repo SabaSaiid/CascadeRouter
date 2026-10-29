@@ -1,0 +1,37 @@
+{
+  "schema_version": "cascaderouter.patch-validation.v1",
+  "checked_at": "2026-10-29T00:00:00.000000Z",
+  "validator_version": "literal-static.v1",
+  "grammar_target": "3.11",
+  "python_version": "3.14.3",
+  "result": {
+    "patch_id": "patch_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "proposal_digest": "9f4e6c6720e9bad4358f5dc5e00621216c18316f1095f0a0e99f9e165505f187",
+    "analysis_id": "analysis_5dca3dad3cee4697b67de955d385d92f",
+    "source_manifest_digest": "93ee17ed2c86ee7aeef50cfc889abe749b7c2582031efa20c5da490a4a97d5a1",
+    "provenance": "test",
+    "status": "validated",
+    "reason": "statically_validated",
+    "structure": "valid",
+    "source_evidence": "available",
+    "source_identity": "verified",
+    "complete": true,
+    "omitted_nodes": 0,
+    "files": [
+      {
+        "file_path": "app.py",
+        "original_digest": "3ca71c3669a087890b5bdf3bf31df7708c09b7e06dbb2653e96b804ea6faee12",
+        "candidate_digest": "bf366609e39f34a17a8e0f6fa28c66c69b51aa385bc674968e5fe8d0fb1d19bb",
+        "spans": "valid",
+        "candidate": "constructed",
+        "syntax": "passed",
+        "ast_preservation": "verified",
+        "reason": "checked",
+        "diagnostic": null
+      }
+    ],
+    "omissions": []
+  },
+  "validation_id": "validation_d626eb0ee2aa70c846fef84ff68dca82435332cbe0314093bd947796b36ea50f",
+  "digest": "d626eb0ee2aa70c846fef84ff68dca82435332cbe0314093bd947796b36ea50f"
+}
