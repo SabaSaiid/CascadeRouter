@@ -76,6 +76,7 @@ class DiscoveredCall:
     max_tokens: Optional[int]
     snippet: str
     kwargs: list[str] = field(default_factory=list)
+    qualname: Optional[str] = None  # e.g. "Agent.classify" (internal, for the DAG)
 
     def to_llm_node(self) -> LLMNode:
         return LLMNode(
@@ -263,6 +264,10 @@ def _tokens(name: Optional[str]) -> set[str]:
     return {t for t in name.lower().split("_") if t and t not in {"schema", "prompt", "system", "template"}}
 
 
+def _requests_json(response_format: Any) -> bool:
+    return isinstance(response_format, dict) and response_format.get("type") in ("json_object", "json_schema")
+
+
 def find_expected_schema(
     func: Optional[ast.AST],
     response_format: Any,
@@ -286,7 +291,10 @@ def find_expected_schema(
             if name in candidates:
                 return candidates[name]
 
-    # 3. Best token overlap with the prompt constant / function name.
+    # 3. Best token overlap with the prompt constant / function name — only for
+    #    calls that explicitly request JSON, so free-text calls never get a schema.
+    if not _requests_json(response_format):
+        return None
     wanted = _tokens(prompt_reference) | _tokens(function_name)
     best_name, best_score = None, 0
     for name in sorted(candidates):
@@ -302,21 +310,48 @@ def find_expected_schema(
 
 
 class _CallVisitor(ast.NodeVisitor):
+    """Collects (call, enclosing function, enclosing statement, qualname) tuples.
+
+    Decorators, default values and annotations are evaluated in the *outer*
+    scope, so calls there are not credited to the function being defined.
+    """
+
     def __init__(self) -> None:
         self.func_stack: list[ast.AST] = []
+        self.qual_stack: list[str] = []
         self.stmt_stack: list[ast.stmt] = []
-        self.found: list[tuple[ast.Call, Optional[ast.AST], ast.stmt]] = []
+        self.found: list[tuple[ast.Call, Optional[ast.AST], ast.stmt, Optional[str]]] = []
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._visit_scope(node)
+        self._visit_function(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._visit_scope(node)
+        self._visit_function(node)
 
-    def _visit_scope(self, node: ast.AST) -> None:
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.stmt_stack.append(node)
+        for expr in node.decorator_list:
+            self.visit(expr)
+        self.visit(node.args)
+        if node.returns is not None:
+            self.visit(node.returns)
+        self.stmt_stack.pop()
         self.func_stack.append(node)
-        self.generic_visit(node)
+        self.qual_stack.append(node.name)
+        for stmt in node.body:
+            self.visit(stmt)
+        self.qual_stack.pop()
         self.func_stack.pop()
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.stmt_stack.append(node)
+        for expr in [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]:
+            self.visit(expr)
+        self.stmt_stack.pop()
+        self.qual_stack.append(node.name)
+        for stmt in node.body:
+            self.visit(stmt)
+        self.qual_stack.pop()
 
     def generic_visit(self, node: ast.AST) -> None:
         is_stmt = isinstance(node, ast.stmt)
@@ -324,10 +359,37 @@ class _CallVisitor(ast.NodeVisitor):
             self.stmt_stack.append(node)
         if isinstance(node, ast.Call) and is_llm_call(node):
             func = self.func_stack[-1] if self.func_stack else None
-            self.found.append((node, func, self.stmt_stack[-1]))
+            qualname = ".".join(self.qual_stack) if func is not None else None
+            self.found.append((node, func, self.stmt_stack[-1], qualname))
         super().generic_visit(node)
         if is_stmt:
             self.stmt_stack.pop()
+
+
+def _local_binding(func: Optional[ast.AST], name: str) -> Optional[str]:
+    """Value of `name` if the enclosing function binds it locally.
+
+    Returns the string when it is a single literal assignment, DYNAMIC_MODEL for
+    parameters or any other local binding, and None when `name` is not local.
+    """
+    if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    args = func.args
+    params = [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]
+    if any(p is not None and p.arg == name for p in params):
+        return DYNAMIC_MODEL
+    for node in ast.walk(func):
+        if isinstance(node, ast.Global) and name in node.names:
+            return None
+    values = _local_assignments(func).get(name)
+    if values is None:
+        bound = any(
+            isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Store) for n in ast.walk(func)
+        )
+        return DYNAMIC_MODEL if bound else None
+    if len(values) == 1 and isinstance(values[0], ast.Constant) and isinstance(values[0].value, str):
+        return values[0].value
+    return DYNAMIC_MODEL
 
 
 def _kwarg(call: ast.Call, name: str) -> Optional[ast.expr]:
@@ -367,10 +429,13 @@ def scan_module(
     visitor.visit(tree)
 
     calls: list[DiscoveredCall] = []
-    for call, func, stmt in visitor.found:
+    for call, func, stmt, qualname in visitor.found:
         model_expr = _kwarg(call, "model")
+        local_model = _local_binding(func, model_expr.id) if isinstance(model_expr, ast.Name) else None
         if isinstance(model_expr, ast.Constant) and isinstance(model_expr.value, str):
             model, literal = model_expr.value, True
+        elif local_model is not None:
+            model, literal = local_model, False
         elif isinstance(model_expr, ast.Name) and model_expr.id in string_constants:
             model, literal = string_constants[model_expr.id], False
         elif model_expr is None:
@@ -385,10 +450,7 @@ def scan_module(
         )
         response_format = _literal(_kwarg(call, "response_format"))
         schema = find_expected_schema(func, response_format, literal_constants, prompt_ref, function_name)
-        json_required = schema is not None or (
-            isinstance(response_format, dict)
-            and response_format.get("type") in ("json_object", "json_schema")
-        )
+        json_required = schema is not None or _requests_json(response_format)
         max_tokens = _literal(_kwarg(call, "max_tokens"))
         if not isinstance(max_tokens, int) or isinstance(max_tokens, bool):
             max_tokens = None
@@ -416,6 +478,7 @@ def scan_module(
                 max_tokens=max_tokens,
                 snippet=snippet,
                 kwargs=[kw.arg for kw in call.keywords if kw.arg],
+                qualname=qualname,
             )
         )
     return calls
