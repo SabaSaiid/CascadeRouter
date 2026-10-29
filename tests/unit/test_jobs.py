@@ -312,7 +312,7 @@ def test_v1_database_migration_preserves_analysis_and_is_repeatable(api_environm
         assert storage.get(analysis.analysis_id) == analysis
         storage.close()
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_failed_migration_rolls_back_schema_atomically(api_environment, monkeypatch):

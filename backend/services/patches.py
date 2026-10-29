@@ -190,5 +190,7 @@ class PatchService:
         result = self._validate(proposal, analysis, manifest, record, check)
         self.optimizations.revalidate(record, check)
         check()
-        return PatchValidationReport.create(result=result, checked_at=datetime.now(timezone.utc),
-                                            python_version=".".join(map(str, sys.version_info[:3])))
+        report = PatchValidationReport.create(result=result, checked_at=datetime.now(timezone.utc),
+                                              python_version=".".join(map(str, sys.version_info[:3])))
+        check()
+        return self.storage.save_validation(report)

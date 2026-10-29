@@ -23,7 +23,7 @@ from backend.config import BackendConfig
 from backend.schemas import (
     API_SCHEMA_VERSION, JOB_TRANSITIONS, TERMINAL_JOB_STATES, BenchmarkMeasurement,
     BenchmarkPlan, BenchmarkRequest, BenchmarkVersionRegistration, JobError, JobProgress, JobResponse, ScanResponse,
-    OptimizationRecord, OptimizationResponse, PatchProposal, PrivateSourceManifest, content_digest,
+    OptimizationRecord, OptimizationResponse, PatchProposal, PatchValidationReport, PrivateSourceManifest, content_digest,
 )
 from .errors import ServiceError
 
@@ -60,7 +60,7 @@ _DDL_V3 = _DDL_V2 + (
     "CREATE TRIGGER immutable_benchmark_version_delete BEFORE DELETE ON benchmark_versions "
     "BEGIN SELECT RAISE(ABORT, 'retained benchmark version'); END",
 )
-_DDL = _DDL_V3 + (
+_DDL_V4 = _DDL_V3 + (
     "CREATE TABLE source_manifests (analysis_id TEXT PRIMARY KEY NOT NULL REFERENCES analyses(analysis_id), digest TEXT NOT NULL, payload BLOB NOT NULL)",
     "CREATE TRIGGER immutable_source_update BEFORE UPDATE ON source_manifests BEGIN SELECT RAISE(ABORT, 'immutable source manifest'); END",
     "CREATE TRIGGER immutable_source_delete BEFORE DELETE ON source_manifests BEGIN SELECT RAISE(ABORT, 'retained source manifest'); END",
@@ -72,6 +72,13 @@ _DDL = _DDL_V3 + (
     "optimization_id TEXT NOT NULL REFERENCES optimizations(optimization_id), digest TEXT NOT NULL, payload BLOB NOT NULL)",
     "CREATE TRIGGER immutable_patch_update BEFORE UPDATE ON patches BEGIN SELECT RAISE(ABORT, 'immutable patch'); END",
     "CREATE TRIGGER immutable_patch_delete BEFORE DELETE ON patches BEGIN SELECT RAISE(ABORT, 'retained patch'); END",
+)
+_DDL = _DDL_V4 + (
+    "CREATE TABLE patch_validations (validation_id TEXT PRIMARY KEY NOT NULL, patch_id TEXT NOT NULL REFERENCES patches(patch_id), "
+    "analysis_id TEXT NOT NULL REFERENCES analyses(analysis_id), proposal_digest TEXT NOT NULL, source_manifest_digest TEXT NOT NULL, "
+    "digest TEXT NOT NULL, payload BLOB NOT NULL)",
+    "CREATE TRIGGER immutable_validation_update BEFORE UPDATE ON patch_validations BEGIN SELECT RAISE(ABORT, 'immutable validation'); END",
+    "CREATE TRIGGER immutable_validation_delete BEFORE DELETE ON patch_validations BEGIN SELECT RAISE(ABORT, 'retained validation'); END",
 )
 
 
@@ -99,13 +106,13 @@ class AnalysisStorage:
                 if version == 0 and not objects:
                     for statement in _DDL:
                         connection.execute(statement)
-                    connection.execute("PRAGMA user_version = 4")
-                elif version in (1, 2, 3):
+                    connection.execute("PRAGMA user_version = 5")
+                elif version in (1, 2, 3, 4):
                     self._check_schema(connection, version=version)
-                    previous = {1: _DDL_V1, 2: _DDL_V2, 3: _DDL_V3}[version]
+                    previous = {1: _DDL_V1, 2: _DDL_V2, 3: _DDL_V3, 4: _DDL_V4}[version]
                     for statement in _DDL[len(previous):]:
                         connection.execute(statement)
-                    connection.execute("PRAGMA user_version = 4")
+                    connection.execute("PRAGMA user_version = 5")
                 else:
                     self._check_schema(connection)
                 connection.commit()
@@ -115,10 +122,10 @@ class AnalysisStorage:
             self.closed = True
             raise ServiceError("capability_unavailable") from None
 
-    def _check_schema(self, connection: sqlite3.Connection, version: int = 4) -> None:
+    def _check_schema(self, connection: sqlite3.Connection, version: int = 5) -> None:
         actual_version = connection.execute("PRAGMA user_version").fetchone()[0]
         objects = connection.execute("SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'").fetchall()
-        expected = {1: _DDL_V1, 2: _DDL_V2, 3: _DDL_V3, 4: _DDL}[version]
+        expected = {1: _DDL_V1, 2: _DDL_V2, 3: _DDL_V3, 4: _DDL_V4, 5: _DDL}[version]
         if actual_version != version or {row[0] for row in objects} != set(expected) or len(objects) != len(expected):
             raise ServiceError("capability_unavailable")
 
@@ -405,6 +412,68 @@ class AnalysisStorage:
                     or proposal.manifest.optimization_id != row[1] or proposal.digest != row[2]):
                 raise ServiceError("source_conflict")
             return proposal
+
+    def _validation_binding(self, report):
+        result = report.result
+        proposal = self.get_patch(result.patch_id)
+        header = proposal.manifest
+        if (result.proposal_digest != proposal.digest or result.analysis_id != header.analysis_id
+                or result.source_manifest_digest != header.source_manifest_digest or result.provenance != header.provenance
+                or result.omitted_nodes != len(header.omissions)):
+            raise ServiceError("source_conflict")
+        files = {file.file_path: file for file in header.files}
+        for file in result.files:
+            original = files.get(file.file_path)
+            if original is None or file.original_digest != original.original_digest:
+                raise ServiceError("source_conflict")
+            if file.candidate_digest is not None and ((file.candidate_digest == original.proposed_digest) != (file.reason != "candidate_digest_mismatch")):
+                raise ServiceError("source_conflict")
+        if result.status in ("validated", "partial") and (
+                {file.file_path for file in result.files} != files.keys()
+                or result.complete != header.complete_for_requested_nodes):
+            raise ServiceError("source_conflict")
+        if result.reason == "no_editable_files" and header.files:
+            raise ServiceError("source_conflict")
+
+    def save_validation(self, report):
+        report = PatchValidationReport.model_validate(report)
+        payload = report.model_dump_json().encode("utf-8")
+        if len(payload) > self.max_result_bytes:
+            raise ServiceError("capacity_exceeded")
+        self._validation_binding(report)
+        with self._job_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute("SELECT length(payload) FROM patch_validations WHERE validation_id = ?", (report.validation_id,)).fetchone()
+            if existing is not None:
+                if type(existing[0]) is not int or not 0 < existing[0] <= self.max_result_bytes:
+                    raise ServiceError("source_conflict")
+                retained = self.get_validation(report.validation_id)
+                if retained != report:
+                    raise ServiceError("source_conflict")
+                return retained
+            if connection.execute("SELECT COUNT(*) FROM patch_validations").fetchone()[0] >= self.max_jobs:
+                raise ServiceError("capacity_exceeded")
+            result = report.result
+            connection.execute("INSERT INTO patch_validations (validation_id, patch_id, analysis_id, proposal_digest, source_manifest_digest, digest, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (report.validation_id, result.patch_id, result.analysis_id, result.proposal_digest, result.source_manifest_digest, report.digest, payload))
+            connection.commit()
+        return report
+
+    def get_validation(self, identifier):
+        with self._job_connection() as connection:
+            row = connection.execute("SELECT patch_id, analysis_id, proposal_digest, source_manifest_digest, digest, length(payload) FROM patch_validations WHERE validation_id = ?", (identifier,)).fetchone()
+            if row is None:
+                raise ServiceError("not_found")
+            if type(row[5]) is not int or not 0 < row[5] <= self.max_result_bytes:
+                raise ServiceError("source_conflict")
+            payload = connection.execute("SELECT payload FROM patch_validations WHERE validation_id = ?", (identifier,)).fetchone()[0]
+            report = PatchValidationReport.model_validate_json(payload)
+            result = report.result
+            if (report.validation_id != identifier or (result.patch_id, result.analysis_id, result.proposal_digest,
+                    result.source_manifest_digest, report.digest) != row[:5]):
+                raise ServiceError("source_conflict")
+            self._validation_binding(report)
+            return report
 
     def transition_job(self, run_id: str, expected: tuple[str, ...], *, status: str | None = None,
                        measurement: BenchmarkMeasurement | None = None, cancellation_reason: str | None = None,

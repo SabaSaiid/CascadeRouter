@@ -136,7 +136,7 @@ def test_v3_migration_preserves_legacy_records_without_inventing_manifests(api_e
     storage = AnalysisStorage(settings)
     try:
         with sqlite3.connect(directory / "analyses.sqlite3") as connection:
-            assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+            assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
             assert connection.execute("SELECT COUNT(*) FROM source_manifests").fetchone()[0] == 0
         assert storage.get(historical.analysis_id) == historical
         with pytest.raises(ServiceError) as error:

@@ -293,3 +293,18 @@ def patch_environment(optimization_environment):
                                proposal=proposal, raw=source, environment=env)
     env.build_patch = build
     return env
+
+
+@pytest.fixture
+def validation_environment(patch_environment):
+    """Actual static checks over synthetic proposals; never production approval."""
+    import sys
+    from backend.schemas import PatchValidationReport
+    env = patch_environment
+    def report(sample, proposal=None, *, checked_at="2026-10-29T00:00:00Z"):
+        proposal = proposal or sample.proposal(persist=True)
+        result = sample.service._validate(proposal, sample.analysis, sample.manifest, sample.record)
+        return PatchValidationReport.create(result=result, checked_at=checked_at,
+                                            python_version=".".join(map(str, sys.version_info[:3])))
+    env.validation_report = report
+    return env
