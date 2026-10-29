@@ -8,7 +8,11 @@ from pydantic import ValidationError
 
 from backend.compiler.router_optimizer import optimize
 from backend.config import BackendConfig
-from backend.schemas import LocalBenchmarkCase, OptimizationResult, RoutingDecision
+from backend.schemas import (
+    BenchmarkRegistryDocument, BenchmarkRequest, LocalBenchmarkCase, ModelVersion,
+    OptimizationResult, RecordingEvidence, RoutingDecision,
+)
+from backend.services.benchmark_cases import BenchmarkRegistry
 
 
 def test_lowest_cost_eligible_candidate_and_historical_savings(optimization_environment):
@@ -164,3 +168,121 @@ def test_failure_is_a_hard_exclusion_even_with_a_zero_threshold(optimization_env
     result = optimize(replace(sample.snapshot, quality_threshold=Decimal("0")))
     assert result.nodes_eligible == 0 and result.status == "inconclusive"
     assert all(item.eligibility == "rejected" for item in result.decisions[0].candidates)
+
+
+@pytest.fixture
+def cost_selection_case(optimization_environment):
+    """Build real optimizer inputs from synthetic, explicitly test-only captures."""
+    env = optimization_environment
+    env.registry = BenchmarkRegistry(BenchmarkRegistryDocument.model_validate({
+        **env.registry.document.model_dump(),
+        "models": (*env.registry.document.models, ModelVersion(identifier="local/alternative", version="v1")),
+    }))
+    env.request = BenchmarkRequest.model_validate({
+        **env.request.model_dump(), "candidate_model_ids": ("local/candidate", "local/alternative"),
+    })
+    make_offline = env.make_offline
+
+    def build(*, rates, latencies, outputs=None):
+        def with_latencies(**options):
+            original_evidence = options["evidence"]
+            def evidence(model, case):
+                return RecordingEvidence.model_validate({
+                    **original_evidence(model, case).model_dump(), "latency_ms": latencies.get(model),
+                })
+            return make_offline(**{**options, "evidence": evidence})
+        env.make_offline = with_latencies
+        sample = env.build_optimization(rates=rates, outputs=outputs)
+        assert sample.job.plan.provenance == "test"
+        assert all(item.provenance == "test" for item in sample.job.measurements)
+        return sample.snapshot
+    return build
+
+
+def test_nearby_costs_and_faster_competitors_never_hide_the_cheapest_eligible_model(cost_selection_case):
+    # Main's 86c6c86 fixes its 2% latency tie window. all-checks-then-cost.v1
+    # has no such window: neither the baseline nor another candidate may hide
+    # a cheaper model. Protect that existing behavior without porting the fix.
+    snapshot = cost_selection_case(
+        rates={"local/baseline": "1.00", "local/candidate": "0.99", "local/alternative": "0.995"},
+        latencies={"local/baseline": 100.0, "local/candidate": 101.0, "local/alternative": 100.5},
+    )
+    result = optimize(snapshot)
+    decision = result.decisions[0]
+    candidates = {item.model.identifier: item for item in decision.candidates}
+    assert result.provenance == decision.provenance == "test"
+    assert all(item.eligibility == "eligible" for item in candidates.values())
+    assert candidates["local/candidate"].latency_ms.mean == 101.0
+    assert candidates["local/alternative"].latency_ms.mean == 100.5
+    assert candidates["local/baseline"].latency_ms.mean == 100.0
+    assert decision.status == "recommended" and decision.selected_model_id == "local/candidate"
+    assert candidates["local/candidate"].cost_total_usd == Decimal("1.98")
+    assert candidates["local/alternative"].cost_total_usd == Decimal("1.990")
+    assert decision.recorded_savings_usd == Decimal("0.02")
+
+
+@pytest.mark.parametrize("baseline_rate,selected,status,savings", [
+    ("1.00", "local/baseline", "baseline_retained", Decimal("0")),
+    ("2.00", "local/alternative", "recommended", Decimal("2.00")),
+])
+def test_equal_costs_follow_baseline_then_identifier_despite_latency_and_plan_order(
+        cost_selection_case, baseline_rate, selected, status, savings):
+    snapshot = cost_selection_case(
+        rates={"local/baseline": baseline_rate, "local/candidate": "1.00", "local/alternative": "1.00"},
+        latencies={"local/baseline": 101.0, "local/candidate": 100.0, "local/alternative": 102.0},
+    )
+    decision = optimize(snapshot).decisions[0]
+    # The alphabetically first alternative is last in the plan and slowest.
+    assert snapshot.job.plan.models[-1].identifier == "local/alternative"
+    assert decision.selected_model_id == selected and decision.status == status
+    assert decision.recorded_savings_usd == savings
+    assert decision.candidates[1].cost_total_usd == decision.candidates[2].cost_total_usd == Decimal("2.00")
+
+
+@pytest.mark.parametrize("missing", ["local/baseline", "local/candidate", "all"])
+def test_missing_latency_cannot_disqualify_or_reprice_a_cheaper_eligible_model(cost_selection_case, missing):
+    latencies = {"local/baseline": 100.0, "local/candidate": 101.0, "local/alternative": 100.5}
+    latencies = {} if missing == "all" else {model: value for model, value in latencies.items() if model != missing}
+    snapshot = cost_selection_case(
+        rates={"local/baseline": "1.00", "local/candidate": "0.99", "local/alternative": "0.995"},
+        latencies=latencies,
+    )
+    decision = optimize(snapshot).decisions[0]
+    assert decision.status == "recommended" and decision.selected_model_id == "local/candidate"
+    assert decision.recorded_savings_usd == Decimal("0.02")
+    for candidate in decision.candidates:
+        if missing == "all" or candidate.model.identifier == missing:
+            assert candidate.latency_ms.availability == "unavailable"
+            assert candidate.latency_ms.sample_count == 0 and candidate.latency_ms.mean is None
+            assert candidate.eligibility == "eligible"
+
+
+@pytest.mark.parametrize("missing", ["local/baseline", "local/candidate", "local/alternative"])
+def test_available_latency_never_fills_a_missing_cost_or_proves_a_minimum(cost_selection_case, missing):
+    rates = {"local/baseline": "1.00", "local/candidate": "0.99", "local/alternative": "0.995", missing: None}
+    snapshot = cost_selection_case(rates=rates,
+        latencies={"local/baseline": 100.0, "local/candidate": 101.0, "local/alternative": 100.5})
+    decision = optimize(snapshot).decisions[0]
+    candidate = next(item for item in decision.candidates if item.model.identifier == missing)
+    assert candidate.latency_ms.availability == "available" and candidate.quality_pass_rate == Decimal("1")
+    assert candidate.eligibility == "insufficient" and candidate.cost_total_usd is None
+    assert candidate.reasons == ("cost_unavailable",)
+    assert decision.status == "inconclusive" and decision.selected_model_id is None
+    assert decision.recorded_savings_usd is None
+    assert decision.reason == ("baseline_ineligible" if missing == "local/baseline" else "candidate_evidence_incomplete")
+
+
+def test_cheapest_fastest_candidate_cannot_win_with_failed_required_checks(cost_selection_case):
+    outputs = {(model, case): ("wrong-test-output" if model == "local/alternative" else expected)
+               for model in ("local/baseline", "local/candidate", "local/alternative")
+               for case, expected in (("case-one", "PRIVATE_CAPTURE_ONE"), ("case-two", "PRIVATE_CAPTURE_TWO"))}
+    snapshot = cost_selection_case(
+        rates={"local/baseline": "1.00", "local/candidate": "0.99", "local/alternative": "0"},
+        latencies={"local/baseline": 100.0, "local/candidate": 101.0, "local/alternative": 1.0}, outputs=outputs,
+    )
+    decision = optimize(snapshot).decisions[0]
+    rejected = next(item for item in decision.candidates if item.model.identifier == "local/alternative")
+    assert rejected.cost_total_usd == Decimal("0") and rejected.latency_ms.mean == 1.0
+    assert rejected.eligibility == "rejected" and "quality_failed" in rejected.reasons
+    assert decision.status == "recommended" and decision.selected_model_id == "local/candidate"
+    assert decision.recorded_savings_usd == Decimal("0.02")
