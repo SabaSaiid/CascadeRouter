@@ -98,8 +98,9 @@ def summarize_latencies(values: Iterable[float]) -> LatencySummary:
 class DecisionTotals:
     total_baseline_cost_usd: float
     total_optimized_cost_usd: float
-    total_cost_reduction_pct: float
-    avg_latency_reduction_pct: float
+    # None when undefined (no positive baseline) - never a fabricated 0%.
+    total_cost_reduction_pct: float | None
+    avg_latency_reduction_pct: float | None
 
 
 def aggregate_totals(
@@ -109,19 +110,20 @@ def aggregate_totals(
 
     Each item is (baseline_cost, optimized_cost, baseline_latency_ms, optimized_latency_ms).
     Cost reduction is computed over summed costs; latency reduction is the mean of
-    per-node reductions for nodes with a defined baseline. Empty input yields zeros,
-    which is a true statement: nothing was optimized.
+    per-node reductions for nodes with a defined baseline.
     """
     items = list(decisions)
+    for item in items:
+        if any(not math.isfinite(v) or v < 0 for v in item):
+            raise ValueError(f"costs and latencies must be finite and non-negative, got {item}")
     total_base = sum(d[0] for d in items)
     total_opt = sum(d[1] for d in items)
-    cost_pct = reduction_pct(total_base, total_opt)
     latency_pcts = [
         pct for pct in (latency_reduction_pct(d[2], d[3]) for d in items) if pct is not None
     ]
     return DecisionTotals(
         total_baseline_cost_usd=total_base,
         total_optimized_cost_usd=total_opt,
-        total_cost_reduction_pct=cost_pct if cost_pct is not None else 0.0,
-        avg_latency_reduction_pct=sum(latency_pcts) / len(latency_pcts) if latency_pcts else 0.0,
+        total_cost_reduction_pct=reduction_pct(total_base, total_opt),
+        avg_latency_reduction_pct=sum(latency_pcts) / len(latency_pcts) if latency_pcts else None,
     )
