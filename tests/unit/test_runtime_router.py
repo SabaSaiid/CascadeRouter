@@ -183,6 +183,47 @@ def test_unregistered_primary_or_fallback_rejects_whole_binding(runtime_environm
     assert result.reason == "adapter_unavailable" and not env.calls and result.attempt_count == 0
 
 
+@pytest.mark.parametrize("change", [
+    {"model": {"identifier": "local/baseline", "version": "v2"}},
+    {"evaluation_profile": {"identifier": "profile", "version": "v2"}},
+    {"evaluation_profile_digest": "0" * 64},
+    {"output_kind": "json_value"},
+])
+def test_stale_or_incompatible_registered_fallback_blocks_primary_too(runtime_environment, change):
+    calls = []
+
+    def primary(*_):
+        calls.append("primary")
+        return "test-only validation failure"
+
+    env = runtime_environment(primary=primary, fallback=lambda *_: calls.append("fallback"))
+    first, second = env.registrations
+    stale = replace(second, spec=RuntimeAdapterSpec.model_validate({**second.spec.model_dump(), **change}))
+    with router_for(env, registrations=(first, stale)) as router:
+        result = run(router, env)
+    assert result.status == "unavailable" and result.reason == "policy_invalid"
+    assert result.attempt_count == 0 and result.attempts == () and not result.fallback_attempted
+    assert result.result_data is None and not calls
+
+
+def test_registered_fallback_without_explicit_binding_is_never_discovered(runtime_environment):
+    calls = []
+
+    def primary(*_):
+        calls.append("primary")
+        return "test-only validation failure"
+
+    env = runtime_environment(primary=primary, fallback=lambda *_: calls.append("fallback"))
+    data = env.authorization.model_dump()
+    data["bindings"][0]["fallback_adapter_id"] = None
+    with router_for(env, authorization=data) as router:
+        result = run(router, env)
+    assert result.status == "failed" and result.reason == "validation_failed"
+    assert result.attempt_count == 1 and not result.fallback_attempted and calls == ["primary"]
+    assert result.attempts[0].execution_status == "succeeded" and result.validation_status == "failed"
+    assert result.result_data is None and result.provenance == "test"
+
+
 def test_wrong_model_or_version_in_registry_is_rejected(runtime_environment):
     env = runtime_environment()
     original = env.registrations[0]
