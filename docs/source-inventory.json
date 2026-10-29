@@ -1,0 +1,333 @@
+{
+  "schema_version": "cascaderouter.source-inventory.v1",
+  "version": null,
+  "source_commit": "9f4361cc1a744d5be9db071084975ae0760b26ea",
+  "scope": "Selected tracked runtime/frontend/contract/build inputs; canonical Git blob bytes, not a built distribution or target-source snapshot",
+  "artifacts": [
+    {
+      "path": "backend/api/boundaries.py",
+      "bytes": 9200,
+      "sha256": "c3866b520e0ccc1d02e6a63ede1c7d49e2a6a35f95d609cd67cdc1b8fd9b5a43"
+    },
+    {
+      "path": "backend/api/jobs.py",
+      "bytes": 1530,
+      "sha256": "08f9b55ecdb624d4a80a241807c1a30eb5e76d628c6b81133915ca0b52674b17"
+    },
+    {
+      "path": "backend/api/optimization.py",
+      "bytes": 887,
+      "sha256": "e291b94986d484ecd592113bbb0dd8bb043601953eaa39f2aed9228b70f1f0b4"
+    },
+    {
+      "path": "backend/api/patches.py",
+      "bytes": 2180,
+      "sha256": "f62230ed7bd86aac00655bc5356edf77caacae1f870c755119395bf891fa176e"
+    },
+    {
+      "path": "backend/api/scan.py",
+      "bytes": 2007,
+      "sha256": "e694341e0a8fe3704308e747e4221b22d87d7f09a2395b9604165894e261f6e5"
+    },
+    {
+      "path": "backend/compiler/ast_scanner.py",
+      "bytes": 46145,
+      "sha256": "0fe5b4f80dbe4a9e6155a00a8106b3b472a1d60e59b1813af49bb95a21b37548"
+    },
+    {
+      "path": "backend/compiler/dag_builder.py",
+      "bytes": 33620,
+      "sha256": "13a50c6b22b53c2051bb27d39fa5a4c379940636589cc681dbc13422dfb4e834"
+    },
+    {
+      "path": "backend/compiler/evaluator.py",
+      "bytes": 10271,
+      "sha256": "4cf9c5bf2dc7ef970761653834185978ad8ebb003734c66240a98012c3d4c13b"
+    },
+    {
+      "path": "backend/compiler/metrics.py",
+      "bytes": 5505,
+      "sha256": "ae3830f8c44d6ad456ae74679195218f6e8241ad0f5c7040d97a04c09e85b6a7"
+    },
+    {
+      "path": "backend/compiler/patch_generator.py",
+      "bytes": 13184,
+      "sha256": "f0953f31ed110ee10688e6b89283d3cc0d51420347284c422b66ca736989c81d"
+    },
+    {
+      "path": "backend/compiler/patch_validator.py",
+      "bytes": 1944,
+      "sha256": "65d01370dab37fdb3a6ac13bddee05b7b9bff3a94362339af9657dc43fdee100"
+    },
+    {
+      "path": "backend/compiler/policy_generator.py",
+      "bytes": 4590,
+      "sha256": "d1c182930b96af08fb9a127e1f5b48a3f537112101cba83af476b500115f76a6"
+    },
+    {
+      "path": "backend/compiler/router_optimizer.py",
+      "bytes": 8012,
+      "sha256": "c7a892b44d77c1150b6950e25c094514776a7a323411c6909d4b95824e810674"
+    },
+    {
+      "path": "backend/config.py",
+      "bytes": 10702,
+      "sha256": "8e622ef8798c0560db8a5f5df0613d88971bb18c43d562a49c6da6cf048c3392"
+    },
+    {
+      "path": "backend/main.py",
+      "bytes": 7664,
+      "sha256": "733733046a3a86a2106116a098934738b8dcbd648f0cdc33175d5be42d3ff223"
+    },
+    {
+      "path": "backend/runtime/cascade_router.py",
+      "bytes": 21224,
+      "sha256": "ba42c1b8ea4644abaf31d0a03c85a711a8934825114a47f39f2ab11b2f3d89ee"
+    },
+    {
+      "path": "backend/schemas.py",
+      "bytes": 92905,
+      "sha256": "f15ad8e904951cf574156a50148e39acd2f9a9cecd8fd495e3b9b1f5080a626c"
+    },
+    {
+      "path": "backend/services/benchmark_assets.py",
+      "bytes": 6812,
+      "sha256": "7fcc6df0dd710906c245345b0892d4e5e014956798740067982ef024c2d419b5"
+    },
+    {
+      "path": "backend/services/benchmark_cases.py",
+      "bytes": 9165,
+      "sha256": "0a81fd1ae5a1ccfdae0c5293db0d9fe18407b38b4d22aa4bde2e341063854e8b"
+    },
+    {
+      "path": "backend/services/compiler_adapter.py",
+      "bytes": 3741,
+      "sha256": "dda9784fae2ca340ca6f81be35c0cd6313db79e80ff00de734713bc319c86d22"
+    },
+    {
+      "path": "backend/services/errors.py",
+      "bytes": 596,
+      "sha256": "ba4282fc77a4e6b728c7dd00f484540643cb1764fe6c86987654758fb1fb1b14"
+    },
+    {
+      "path": "backend/services/jobs.py",
+      "bytes": 15458,
+      "sha256": "64c403a9027754fa78cc52c7a2db8dff5184aef81d6489e19e1c6a298cc2415c"
+    },
+    {
+      "path": "backend/services/offline_benchmark.py",
+      "bytes": 6778,
+      "sha256": "d7d97f48e50c32e579b27a7cfce08084ed0e77827f191bf1129ae52dd5d57ee9"
+    },
+    {
+      "path": "backend/services/optimization.py",
+      "bytes": 6440,
+      "sha256": "ee6982f0590e6086e39db8324430aac79e0f1e791e2029525540d065cb7914ef"
+    },
+    {
+      "path": "backend/services/patches.py",
+      "bytes": 11745,
+      "sha256": "0e3b7f72546d8ab17c9c82cc374b70df69aaa6abf425b93755c0f7186665193c"
+    },
+    {
+      "path": "backend/services/repository_access.py",
+      "bytes": 4929,
+      "sha256": "9e9736de9bb25b48c1fb85d18d6e4818c235d4edd7427b3ae30315aae2caff03"
+    },
+    {
+      "path": "backend/services/scan_service.py",
+      "bytes": 4175,
+      "sha256": "a7c1768469459b50e0c5e3a522b070b54d938cc2a71aae6a8c3dae2c2e492855"
+    },
+    {
+      "path": "backend/services/source_manifests.py",
+      "bytes": 4015,
+      "sha256": "fd1a41c14835946f470e2524c60c520e3495463ad09a6ab0531a44b663708ec5"
+    },
+    {
+      "path": "backend/services/storage.py",
+      "bytes": 38062,
+      "sha256": "0cf46dfdf0e8fc20a385c207604ff0febc28e996a7a63aa9d4a2cae63ed884bf"
+    },
+    {
+      "path": "frontend/index.html",
+      "bytes": 548,
+      "sha256": "63fb47f443f5cd0bc9d4bbdd594448d5e48d75aea4b048739b0da46e23e7ff10"
+    },
+    {
+      "path": "frontend/package-lock.json",
+      "bytes": 70504,
+      "sha256": "483610387a5802e2b97d4dc1be41a0a6ba08dbd880293a578487505fe1d32c8b"
+    },
+    {
+      "path": "frontend/package.json",
+      "bytes": 875,
+      "sha256": "00b4a8e83d23a77c6b5d4ac5bb9663dd827953aead43111e412a5ebf321c078f"
+    },
+    {
+      "path": "frontend/scripts/check_cache.mjs",
+      "bytes": 2851,
+      "sha256": "dc2ad7e70c13d260772600f558d3dc5fc6f3b64d0d5171bcc5cd0e6858cffda9"
+    },
+    {
+      "path": "frontend/scripts/check_offline_inputs.py",
+      "bytes": 3638,
+      "sha256": "7cc211555465c17f4d4a90cc275cc2a3703fa4b0935851d6931cf65ecb6773b4"
+    },
+    {
+      "path": "frontend/scripts/sync_contracts.py",
+      "bytes": 5689,
+      "sha256": "2616522c0e802e0a0fa0e74f0105f4563658df6130b268e1d63323a98b4350fa"
+    },
+    {
+      "path": "frontend/scripts/typecheck.mjs",
+      "bytes": 1777,
+      "sha256": "41899966bde1dd2df2eb70039926508ccb62a2202a506681af6c50806c740d2d"
+    },
+    {
+      "path": "frontend/src/App.css",
+      "bytes": 34,
+      "sha256": "c922a749f64132650eb454be7fe0f1ab4b70790a74cd8fc8bde30ecd31f36774"
+    },
+    {
+      "path": "frontend/src/App.tsx",
+      "bytes": 3534,
+      "sha256": "df05e326fc662bd35eeae2ceb1fd9b70d1d1d3a55299ac41f6fc30197b55c568"
+    },
+    {
+      "path": "frontend/src/assets/react.svg",
+      "bytes": 4126,
+      "sha256": "35ef61ed53b323ae94a16a8ec659b3d0af3880698791133f23b084085ab1c2e5"
+    },
+    {
+      "path": "frontend/src/assets/vite.svg",
+      "bytes": 8709,
+      "sha256": "5be21acd42eb7b896e517f4e0f0f11eb5c5d9e54fbbcebe9453f033008fcca6f"
+    },
+    {
+      "path": "frontend/src/components/OperationStatus.tsx",
+      "bytes": 836,
+      "sha256": "ffdba6f4fbc76cb880161912ac239b8eaf13742b6d81b5829cdecacebfe74c17"
+    },
+    {
+      "path": "frontend/src/components/benchmark/BenchmarkPane.tsx",
+      "bytes": 7228,
+      "sha256": "7289434bc80b1c1c91dd540accbaa9b30cedf07e7fc25d4dcafef4fb88a013e3"
+    },
+    {
+      "path": "frontend/src/components/layout/Header.tsx",
+      "bytes": 486,
+      "sha256": "b1aabe9225f6ef6664855500fd4d4260fa6bf72bc52b1d2b08f1ab503fc5faba"
+    },
+    {
+      "path": "frontend/src/components/optimization/OptimizationPane.tsx",
+      "bytes": 3927,
+      "sha256": "a847336dbbccce4ccdcee45d57d304193cf839ad0e44eab001e701ec3b2c0a89"
+    },
+    {
+      "path": "frontend/src/components/patches/PatchPane.tsx",
+      "bytes": 8621,
+      "sha256": "759f8941fa512d7759c3b53eec3b928f3ea526cd465d5297c112191d41b624fe"
+    },
+    {
+      "path": "frontend/src/components/repository/AgentGraph.tsx",
+      "bytes": 2006,
+      "sha256": "b8cc5658b1733c8614561de83291249865a3c1ad460c386a971563e9e5ac5b27"
+    },
+    {
+      "path": "frontend/src/components/repository/RepositoryPane.tsx",
+      "bytes": 4564,
+      "sha256": "17816e00b34393f049536d97212fa4a0aa9562c2985f10dd73807f51de84a148"
+    },
+    {
+      "path": "frontend/src/index.css",
+      "bytes": 16596,
+      "sha256": "0d29cacc78a737bbbb6abb1a16685549ce34a124441a95f118a53f1f940f4452"
+    },
+    {
+      "path": "frontend/src/main.tsx",
+      "bytes": 230,
+      "sha256": "6e9e5807fcbd48b75a96db5cbef36c996262196be42e6d4760dc86babbe61ad2"
+    },
+    {
+      "path": "frontend/src/services/api.ts",
+      "bytes": 3247,
+      "sha256": "26e63f5d0ab04eb479afdd915e50f7bb17c8ddb10ab5c4c19351a99e47e47dd2"
+    },
+    {
+      "path": "frontend/src/services/benchmark.ts",
+      "bytes": 1364,
+      "sha256": "62e9e18f903e9396fed8e39e032c1ee1ddb091f3476683b6982d28506fc7990f"
+    },
+    {
+      "path": "frontend/src/services/contractCheck.ts",
+      "bytes": 12960,
+      "sha256": "1206008fc85ec624a97028e4a19602af5abfad913c0a1d63cdf6e3770b8ce233"
+    },
+    {
+      "path": "frontend/src/services/contracts.ts",
+      "bytes": 58394,
+      "sha256": "cf91e54d7da0382f93ca8c55e5f1d17342971a5552d41624d87fe3a269a44ac3"
+    },
+    {
+      "path": "frontend/src/services/demo.ts",
+      "bytes": 1165,
+      "sha256": "7d8c9c2ceef9dc56c034fd6cb0a0514b40fafa7e314e046e2bc13d7ac56a9a30"
+    },
+    {
+      "path": "frontend/src/services/graph.ts",
+      "bytes": 1187,
+      "sha256": "b4e72d6751c3a7d4075cdb30851c0a3cb2cf3e1a3c8fee259be1533e75ee6cc7"
+    },
+    {
+      "path": "frontend/src/services/operation.ts",
+      "bytes": 1916,
+      "sha256": "7f0acc4314114bc0aa26fca46c534b568f890e136c27f1f77766a5ab32155d73"
+    },
+    {
+      "path": "frontend/src/services/patches.ts",
+      "bytes": 1513,
+      "sha256": "8ade97b111019d801d74ddab8ebeba769ded55218cc6087b7c211bf73834c8bb"
+    },
+    {
+      "path": "frontend/src/services/presentation.ts",
+      "bytes": 995,
+      "sha256": "1b568f0a70b7f5b29f2025fc0d7a7a161abb9f7389eb06fb0ac0ea1621720321"
+    },
+    {
+      "path": "frontend/src/services/transport.ts",
+      "bytes": 6008,
+      "sha256": "c04a1d2c72f39fafaf1f0f075bea4035b789e5cf203a9c8ceff3d7e4fd5a4bf5"
+    },
+    {
+      "path": "frontend/src/services/useOperation.ts",
+      "bytes": 414,
+      "sha256": "8b249bb64b2270dad9558f9abbfa37df82823de64223ca760f7f63bb9b173fd5"
+    },
+    {
+      "path": "frontend/tsconfig.app.json",
+      "bytes": 655,
+      "sha256": "8e5d12ba330e7d86409edec74b95451e0db22ee09b9426c94b5bf817571eddb0"
+    },
+    {
+      "path": "frontend/tsconfig.json",
+      "bytes": 119,
+      "sha256": "770b4140bbb581e2dfd9ea9946ffc9c75a1d86ba7d2db5f77c83e37cbdf9d808"
+    },
+    {
+      "path": "frontend/tsconfig.node.json",
+      "bytes": 558,
+      "sha256": "d366cc0827139db39c61815f22491bbfda56c654354a42ad7795143d314e45e8"
+    },
+    {
+      "path": "frontend/vite.config.ts",
+      "bytes": 311,
+      "sha256": "cea977340b46193194fce10c8e2457a6e34d36ba4eaf7891eda3324eeac41010"
+    },
+    {
+      "path": "requirements.txt",
+      "bytes": 366,
+      "sha256": "00b93a23a7f34ab4e72bd1bbb34ee9bf199048decd62b861e275c2feabafa81e"
+    }
+  ]
+}

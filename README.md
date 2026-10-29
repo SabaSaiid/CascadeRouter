@@ -151,3 +151,7 @@ current operator instructions. No release tag or published package is implied.
 [Security model and limits](SECURITY.md) distinguish tested repository guards,
 point-in-time static checks and trusted local storage from a complete OS sandbox
 or independent security certification.
+
+The [unreleased preparation notes](docs/release-notes.md) inventory available APIs,
+compatibility caveats and selected committed-source artifacts. Verify those source
+identities with `python -B -m scripts.source_inventory`; this is not a build check.
