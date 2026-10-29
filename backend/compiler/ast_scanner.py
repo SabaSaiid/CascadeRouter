@@ -8,6 +8,7 @@ from __future__ import annotations
 import ast
 import logging
 import os
+import stat
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -25,6 +26,9 @@ SKIP_DIRS = frozenset(
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_FILES = 500
+# Total source bytes and AST size per scan, so one request cannot exhaust memory.
+MAX_TOTAL_BYTES = 20 * 1024 * 1024
+MAX_AST_NODES_PER_FILE = 200_000
 
 # Attribute chains (suffixes) that denote an LLM invocation.
 LLM_CALL_SUFFIXES = (
@@ -123,6 +127,7 @@ def resolve_scan_path(raw: str, allowed_roots: list[Path], base: Path) -> Path:
 
 def iter_python_files(root: Path, warnings: list[str]) -> list[Path]:
     files: list[Path] = []
+    total_bytes = 0
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         dirnames[:] = sorted(
             d for d in dirnames
@@ -132,11 +137,21 @@ def iter_python_files(root: Path, warnings: list[str]) -> list[Path]:
             if not name.endswith(".py") or name.startswith("test_") or name.endswith("_test.py"):
                 continue
             path = Path(dirpath) / name
-            if path.is_symlink():
+            rel = path.relative_to(root).as_posix()
+            try:
+                info = path.lstat()
+            except OSError:
+                warnings.append(f"Skipped {rel}: cannot stat")
                 continue
-            if path.stat().st_size > MAX_FILE_BYTES:
-                warnings.append(f"Skipped {path.relative_to(root).as_posix()}: larger than 2 MB")
+            if not stat.S_ISREG(info.st_mode):
+                continue  # symlinks, FIFOs, sockets, devices
+            if info.st_size > MAX_FILE_BYTES:
+                warnings.append(f"Skipped {rel}: larger than 2 MB")
                 continue
+            total_bytes += info.st_size
+            if total_bytes > MAX_TOTAL_BYTES:
+                warnings.append("Stopped: repository exceeds 20 MB of Python source")
+                return files
             files.append(path)
             if len(files) >= MAX_FILES:
                 warnings.append(f"Stopped after {MAX_FILES} files")
@@ -447,6 +462,9 @@ def scan_repository(root: Path) -> RepoScan:
             # utf-8-sig: files saved with a BOM must still parse.
             source = path.read_text(encoding="utf-8-sig")
             tree = ast.parse(source, filename=rel)
+            if sum(1 for _ in ast.walk(tree)) > MAX_AST_NODES_PER_FILE:
+                warnings.append(f"Skipped {rel}: syntax tree too large")
+                continue
             module_calls = scan_module(tree, source, rel)
         except (SyntaxError, UnicodeDecodeError, ValueError, OSError) as exc:
             warnings.append(f"Skipped {rel}: {exc.__class__.__name__}")
