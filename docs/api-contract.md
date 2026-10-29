@@ -494,7 +494,18 @@ temporary base. Plugin autoload is disabled because current tests are synchronou
 later asynchronous tests must explicitly enable their approved plugin. CI also
 uses the existing frontend lock with `npm ci` and propagates build failures. The
 existing Node 20 target is retained; the lock requires 20.19+ on that major.
+CI now uses `-ra --tb=short` so skip reasons and failed/error outcomes are visible,
+and writes a JUnit report outside pytest's disposable base directory. An always-run
+summary step reports the actual test-step outcome and JUnit counts, including when
+tests fail. A missing report is explicitly reported as unavailable, never as a pass.
+The summary does not replace or suppress pytest's exit code. No extra reporting
+dependency or numeric coverage gate is introduced; `pytest-cov` is declared but is
+not installed in the available local Python 3.14 environment.
+
 There is no successful hosted-CI result implied by these configuration changes.
+The previous failed GitHub check's cause remains unknown: no actual hosted run
+logs or check records are available locally, and this reconciliation does not
+fetch them. Configuration inspection cannot establish that historical cause.
 
 ## Offline optimization (Phase 4.5)
 
