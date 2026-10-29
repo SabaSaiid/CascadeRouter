@@ -51,8 +51,12 @@ class EvaluationResult:
 
 
 def strip_reasoning(text: str) -> str:
-    """Remove <think>…</think> blocks that reasoning models prepend."""
-    return _THINK_RE.sub("", text).strip()
+    """Remove <think>…</think> blocks; an unclosed <think> hides everything after it."""
+    text = _THINK_RE.sub("", text)
+    unclosed = re.search(r"<think>", text, re.I)
+    if unclosed:
+        text = text[: unclosed.start()]
+    return text.strip()
 
 
 def _reject_constant(name: str) -> Any:
@@ -63,36 +67,66 @@ def _reject_constant(name: str) -> Any:
 _DECODER = json.JSONDecoder(parse_constant=_reject_constant)
 
 
-def extract_json(text: str) -> tuple[bool, Any]:
-    """Find the first JSON object or array in `text`.
+def json_candidates(text: str) -> list[Any]:
+    """All JSON objects/arrays found in `text`, in order of appearance.
 
-    Accepts bare JSON, ```json fenced blocks, and JSON preceded by prose.
+    Accepts bare JSON, ```json fenced blocks, and JSON embedded in prose.
     Bare scalars (strings, numbers, null) are not accepted.
-    Returns (found, value).
     """
     cleaned = strip_reasoning(text)
-    candidates = [cleaned]
-    candidates.extend(m.group(1).strip() for m in _FENCE_RE.finditer(cleaned))
-    for candidate in candidates:
+    try:
+        whole = _DECODER.decode(cleaned)
+        if isinstance(whole, (dict, list)):
+            return [whole]
+    except (ValueError, RecursionError):
+        pass
+
+    found: list[Any] = []
+    for match in _FENCE_RE.finditer(cleaned):
         try:
-            value = _DECODER.decode(candidate)
+            value = _DECODER.decode(match.group(1).strip())
         except (ValueError, RecursionError):
             continue
         if isinstance(value, (dict, list)):
-            return True, value
+            found.append(value)
+    if found:
+        return found
 
-    attempts = 0
-    for idx, char in enumerate(cleaned):
+    attempts, idx = 0, 0
+    while idx < len(cleaned):
+        char = cleaned[idx]
         if char in "{[":
             attempts += 1
             if attempts > MAX_DECODE_ATTEMPTS:
                 break
             try:
-                value, _ = _DECODER.raw_decode(cleaned, idx)
+                value, end = _DECODER.raw_decode(cleaned, idx)
             except (ValueError, RecursionError):
+                idx += 1
                 continue
-            return True, value
-    return False, None
+            found.append(value)
+            idx = end
+            continue
+        idx += 1
+    return found
+
+
+def extract_json(text: str, schema: Optional[dict[str, Any]] = None) -> tuple[bool, Any]:
+    """Pick the JSON value that is the model's answer.
+
+    When several JSON values appear (e.g. an example followed by the answer),
+    the last one that has every required top-level field wins; otherwise the
+    last one. Returns (found, value).
+    """
+    candidates = json_candidates(text)
+    if not candidates:
+        return False, None
+    required = list(schema.get("required", [])) if isinstance(schema, dict) else []
+    if required:
+        for value in reversed(candidates):
+            if isinstance(value, dict) and all(k in value for k in required):
+                return True, value
+    return True, candidates[-1]
 
 
 # --------------------------------------------------------------------------- #
@@ -224,7 +258,7 @@ def _evaluate_structured(
     reference: Any,
 ) -> tuple[dict[str, float], list[str], bool, Any]:
     errors: list[str] = []
-    found, parsed = extract_json(text)
+    found, parsed = extract_json(text, schema)
     if not found:
         errors.append("Output is not valid JSON")
         components = {"parse": 0.0}
