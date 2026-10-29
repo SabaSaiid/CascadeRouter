@@ -72,7 +72,9 @@ def create_app(settings: BackendConfig | None = None, *, benchmark_registry: Ben
             app.state.optimization_service = None
             app.state.patch_service = None
 
-    app = FastAPI(title="CascadeRouter local scan API", version="1", lifespan=lifespan)
+    # Default Swagger/ReDoc HTML fetches CDN assets. Keep discovery local JSON only.
+    app = FastAPI(title="CascadeRouter local scan API", version="1", lifespan=lifespan,
+                  docs_url=None, redoc_url=None)
     app.state.scan_service = None
     app.state.job_service = None
     app.state.optimization_service = None

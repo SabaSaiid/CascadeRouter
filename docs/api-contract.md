@@ -294,6 +294,10 @@ Missing root policy, missing storage or incompatible storage never broaden acces
 | `GET /api/analyses/{analysis_id}` | Validate ID and retrieve the original immutable response under the current root policy |
 | `GET /openapi.json` | Generated request, response and controlled error schemas |
 
+The generated JSON contract remains available without external assets. Default
+Swagger/ReDoc HTML and its OAuth redirect page are disabled because those pages
+reference CDN-hosted resources. No documentation UI dependency is installed.
+
 Health reports initialization readiness, not a fresh database probe or available
 worker capacity. Benchmark capability is false unless approved local registry and
 recorded replay are configured (or explicit test injection is enabled). Health
