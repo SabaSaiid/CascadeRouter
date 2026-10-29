@@ -99,6 +99,23 @@ function semantics(name: keyof ContractTypes, v: Obj): boolean {
     if (['complete', 'cancelled', 'error', 'interrupted'].includes(v.status) !== (v.finished_at != null) || (v.status === 'complete') !== (v.result != null)) return false;
     if (v.result && v.result.provenance !== v.plan.provenance) return false;
     if (v.result?.metrics && (v.result.metrics.processed_units !== v.measurements.length || v.result.metrics.processing_complete !== (v.progress.completed_units === v.progress.total_units))) return false;
+    if (Date.parse(v.updated_at) < Date.parse(v.created_at) || Date.parse(v.deadline_at) <= Date.parse(v.created_at)) return false;
+    if (['error', 'interrupted'].includes(v.status) !== (v.error != null) || (v.status === 'queued' && v.measurements.length !== 0)) return false;
+    if (v.measurements.some((m: Obj) => m.evaluation != null && m.evaluation.status !== m.evaluation_status)) return false;
+    if (v.result) {
+      const statuses = new Set(v.measurements.map((m: Obj) => m.evaluation_status));
+      const expected = statuses.has('failed') ? 'failed' : statuses.size === 1 && statuses.has('passed') ? 'passed' : 'inconclusive';
+      if (v.result.evaluation_status !== expected) return false;
+      const metrics = v.result.metrics;
+      if (metrics) {
+        if (metrics.provenance !== v.plan.provenance || metrics.planned_units !== v.progress.total_units || metrics.planned_cases !== v.plan.case_ids.length
+          || metrics.valid_recorded_outputs !== v.measurements.filter((m: Obj) => m.output_available === true).length
+          || metrics.evaluated_units !== v.measurements.filter((m: Obj) => (m.evaluation?.checks_ran?.length ?? 0) > 0).length) return false;
+        for (const state of ['passed', 'failed', 'skipped', 'inconclusive', 'not_run']) {
+          if (metrics[state] !== v.measurements.filter((m: Obj) => (m.evaluation_status === 'unavailable' ? 'not_run' : m.evaluation_status) === state).length) return false;
+        }
+      }
+    }
   }
   if (name === 'Optimization') {
     if (v.result.provenance !== v.result.plan.provenance) return false;
