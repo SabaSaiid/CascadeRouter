@@ -183,6 +183,9 @@ class BenchmarkRunner:
                     outcome = CallOutcome(None, None, False, f"timed out after {settings.benchmark_timeout_seconds:g}s")
                 except LLMError as exc:
                     outcome = CallOutcome(None, None, False, str(exc))
+                except Exception as exc:  # one bad call must not abort the whole run
+                    logger.exception("benchmark call %s/%s failed", call.node_id, spec.id)
+                    outcome = CallOutcome(None, None, False, f"{spec.id}: unexpected error: {type(exc).__name__}")
                 else:
                     evaluation, hard_ok = _evaluate_case(call, cases_by_node[call.node_id][idx], completion.text, extras.threshold)
                     outcome = CallOutcome(completion, evaluation, hard_ok)
