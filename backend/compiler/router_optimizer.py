@@ -36,16 +36,12 @@ def select_model(
     if not candidates:
         return None
     candidates.sort(key=lambda m: (m.estimated_cost_usd, m.total_latency_ms, m.model_id))
-    best = candidates[0]
-    for other in candidates[1:]:
-        if best.estimated_cost_usd == 0:
-            break
-        diff_pct = (other.estimated_cost_usd - best.estimated_cost_usd) / best.estimated_cost_usd * 100
-        if diff_pct >= COST_TIE_PCT:
-            break
-        if other.total_latency_ms < best.total_latency_ms:
-            best = other
-    return best.model_id
+    cheapest = candidates[0]
+    # The tie window is measured from the cheapest model, never from a moving best,
+    # so the pick is at most COST_TIE_PCT more expensive than the cheapest pass.
+    limit = cheapest.estimated_cost_usd * (1 + COST_TIE_PCT / 100)
+    near_ties = [m for m in candidates if m.estimated_cost_usd < limit] or [cheapest]
+    return min(near_ties, key=lambda m: (m.total_latency_ms, m.estimated_cost_usd, m.model_id)).model_id
 
 
 @dataclass(frozen=True)
@@ -80,7 +76,10 @@ def _fallback_for(
     ]
     if higher:
         return min(higher, key=lambda m: (m.estimated_cost_usd, m.model_id)).model_id
-    return settings.powerful_model.id
+    # Escalate to the frontier tier, unless that is the chosen model itself.
+    if settings.powerful_model.id != chosen.model_id:
+        return settings.powerful_model.id
+    return chosen.model_id
 
 
 def decide_node(
