@@ -124,3 +124,56 @@ def test_node_diff_isolated():
 def test_build_patches_empty():
     assert build_patches({}, []).files == {}
     assert patch_source("x = 1\n", []) == "x = 1\n"
+
+
+# ------------------------------------------------------------- P3-P6 review regressions
+
+
+def test_chained_call_on_result_is_patched():
+    src = "import openai\ndef f(c):\n    return c.chat.completions.create(model='m', messages=[]).choices[0].message.content\n"
+    out = patch_source(src, calls_for(src))
+    assert "cascade_router.dispatch(node_id=\"node_f\", client=c, model='m', messages=[]).choices[0]" in out
+
+
+def test_import_text_in_comment_does_not_skip_setup():
+    src = f"import openai\n# {IMPORT_LINE}\ndef f(c):\n    return c.chat.completions.create(model='m', messages=[])\n"
+    out = patch_source(src, calls_for(src))
+    assert out.count(LOADER_LINE) == 1
+    tree = ast.parse(out)
+    assert any(isinstance(s, ast.ImportFrom) and s.module == "cascaderouter" for s in tree.body)
+
+
+def test_existing_setup_is_reused():
+    src = f"import openai\n{IMPORT_LINE}\n{LOADER_LINE}\ndef f(c):\n    return c.chat.completions.create(model='m', messages=[])\n"
+    out = patch_source(src, calls_for(src))
+    assert out.count(IMPORT_LINE) == 1 and out.count(LOADER_LINE) == 1
+
+
+def test_async_def_calls_use_dispatch_async_even_when_not_awaited_directly():
+    src = textwrap.dedent("""
+        import asyncio, openai
+        async def f(c):
+            task = c.chat.completions.create(model='m', messages=[])
+            return await asyncio.wait_for(task, 5)
+        async def g(c):
+            def sync_helper():
+                return c.chat.completions.create(model='m', messages=[])
+            return sync_helper()
+    """)
+    out = patch_source(src, calls_for(src))
+    assert 'task = cascade_router.dispatch_async(node_id="node_f"' in out
+    assert 'return cascade_router.dispatch(node_id="node_sync_helper"' in out
+
+
+@pytest.mark.parametrize("kw", ["stream=True", "tools=[]", "functions=[]", "tool_choice='auto'"])
+def test_streaming_and_tool_calls_are_not_patched(kw):
+    src = f"import openai\ndef f(c):\n    return c.chat.completions.create(model='m', messages=[], {kw})\n"
+    with pytest.raises(PatchError, match="not routed"):
+        patch_source(src, calls_for(src))
+
+
+def test_crlf_line_endings_preserved():
+    src = 'import openai\r\ndef f(c):\r\n    return c.chat.completions.create(\r\n        model="m",\r\n        messages=[],\r\n    )\r\n'
+    out = patch_source(src, calls_for(src))
+    assert "\n" not in out.replace("\r\n", "")  # no bare LF introduced
+    ast.parse(out)

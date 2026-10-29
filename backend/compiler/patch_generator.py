@@ -67,13 +67,22 @@ def _line_offsets(source: bytes) -> list[int]:
     return offsets
 
 
+# Call shapes the runtime cannot validate or re-route faithfully.
+UNSUPPORTED_KWARGS = ("stream", "tools", "functions", "tool_choice", "function_call")
+
+
 def _find_call(tree: ast.Module, call: DiscoveredCall) -> ast.Call:
+    """The exact Call node (start *and* end position), so `create(...).choices` style
+    chains, whose outer node starts at the same place, are never mistaken for it."""
     for node in ast.walk(tree):
         if (
             isinstance(node, ast.Call)
             and node.lineno == call.call_line
             and node.col_offset == call.call_col
+            and node.end_lineno == call.call_end_line
+            and node.end_col_offset == call.call_end_col
             and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "create"
         ):
             return node
     raise PatchError("call site not found in source (file changed since scan?)")
@@ -95,6 +104,9 @@ def _call_edit(
     """Replacement for the callee part `client.chat.completions.create(`."""
     if any(kw.arg in ("node_id", "client", "validator") for kw in node.keywords):
         raise PatchError("call already uses reserved keyword names")
+    unsupported = [kw.arg for kw in node.keywords if kw.arg in UNSUPPORTED_KWARGS]
+    if unsupported:
+        raise PatchError(f"calls using {', '.join(unsupported)} are not routed (runtime cannot validate them)")
     func = node.func
     assert isinstance(func, ast.Attribute)
     client = _client_expr(func)
@@ -122,7 +134,9 @@ def _call_edit(
     return start, paren + 1, replacement
 
 
-def _import_edit(tree: ast.Module, source: bytes, offsets: list[int]) -> tuple[int, int, bytes]:
+def _import_edit(
+    tree: ast.Module, source: bytes, offsets: list[int], need_import: bool = True, need_loader: bool = True
+) -> tuple[int, int, bytes]:
     """Insert the runtime import + loader after the last top-level import."""
     insert_line = 0
     for stmt in tree.body:
@@ -135,30 +149,76 @@ def _import_edit(tree: ast.Module, source: bytes, offsets: list[int]) -> tuple[i
         elif insert_line:
             break
     pos = offsets[insert_line] if insert_line < len(offsets) else len(source)
-    text = f"{IMPORT_LINE}\n{LOADER_LINE}\n".encode()
+    lines = ([IMPORT_LINE] if need_import else []) + ([LOADER_LINE] if need_loader else [])
+    text = ("\n".join(lines) + "\n").encode()
     if pos > 0 and not source[:pos].endswith(b"\n"):
         text = b"\n" + text
     return pos, pos, text
 
 
+def _async_call_ids(tree: ast.Module) -> set[int]:
+    """Calls whose nearest enclosing function is `async def` (they return awaitables)."""
+    found: set[int] = set()
+
+    def visit(node: ast.AST, in_async: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.AsyncFunctionDef):
+                visit(child, True)
+            elif isinstance(child, (ast.FunctionDef, ast.Lambda)):
+                visit(child, False)
+            else:
+                if in_async and isinstance(child, ast.Call):
+                    found.add(id(child))
+                visit(child, in_async)
+
+    visit(tree, False)
+    return found
+
+
+def _has_router_setup(tree: ast.Module) -> tuple[bool, bool]:
+    """(runtime import present, module-level cascade_router assignment present) — from the AST."""
+    has_import = any(
+        isinstance(s, ast.ImportFrom) and s.module == RUNTIME_MODULE and any(a.name == "CascadeRouter" and a.asname is None for a in s.names)
+        for s in tree.body
+    )
+    has_loader = any(
+        isinstance(s, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == ROUTER_NAME for t in s.targets)
+        and isinstance(s.value, ast.Call)
+        and isinstance(s.value.func, ast.Attribute)
+        and s.value.func.attr == "load"
+        and isinstance(s.value.func.value, ast.Name)
+        and s.value.func.value.id == "CascadeRouter"
+        for s in tree.body
+    )
+    return has_import, has_loader
+
+
 def patch_source(source: str, calls: list[DiscoveredCall]) -> str:
-    """Rewrite all `calls` (same file) in `source`; raises PatchError on any problem."""
+    """Rewrite all `calls` (same file) in `source`; raises PatchError on any problem.
+
+    The file's newline style (LF or CRLF) is preserved for inserted lines.
+    """
     if not calls:
         return source
     raw = source.encode("utf-8")
     tree = ast.parse(source)
-    if any(
+    has_import, has_loader = _has_router_setup(tree)
+    if not has_loader and any(
         isinstance(n, ast.Name) and n.id == ROUTER_NAME and isinstance(n.ctx, ast.Store) for n in ast.walk(tree)
     ):
         raise PatchError(f"module already defines `{ROUTER_NAME}`")
     offsets = _line_offsets(raw)
-    awaited_ids = {id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Await)}
+    async_ids = _async_call_ids(tree)
     edits = []
     for c in calls:
         node = _find_call(tree, c)
-        edits.append(_call_edit(raw, offsets, node, c.node_id, awaited=id(node) in awaited_ids))
-    if IMPORT_LINE not in source:
-        edits.append(_import_edit(tree, raw, offsets))
+        edits.append(_call_edit(raw, offsets, node, c.node_id, awaited=id(node) in async_ids))
+    if not (has_import and has_loader):
+        edits.append(_import_edit(tree, raw, offsets, need_import=not has_import, need_loader=not has_loader))
+    newline = b"\r\n" if b"\r\n" in raw else b"\n"
+    if newline != b"\n":
+        edits = [(a, b, t.replace(b"\n", newline)) for a, b, t in edits]
     edits.sort(key=lambda e: (e[0], e[1]), reverse=True)
     for (start, end, _), (next_start, _, _) in zip(edits[1:], edits[:-1]):
         if end > next_start:
