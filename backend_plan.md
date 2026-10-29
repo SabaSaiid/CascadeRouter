@@ -99,7 +99,8 @@ Deterministic, no LLM judge. The score is in [0, 1]:
 | Types and enums match schema | 0.20 | no |
 | Field agreement with reference output (case's `expected` or the Ultra baseline) | 0.25 | no |
 
-- For free-text nodes (no schema), the checks are non-empty, `must_include` keywords from the case file, a length window, and similarity to the reference (token Jaccard). Weights are renormalised.
+- For free-text nodes (no schema), the checks are non-empty, `must_include` / `must_not_include` phrases from the case file, and a length window. Weights are renormalised. Token-overlap similarity against a reference is deliberately **not** scored, because it unfairly fails correct paraphrases. Free-text quality is set by explicit case assertions.
+- Only JSON objects and arrays count as parsed output. Bare scalars, `NaN`/`Infinity`, and pathologically nested input are rejected without crashing.
 - `passes_validation = all hard checks pass and score ≥ τ`. Every failed check adds a human-readable string to `validation_errors` (the UI shows these).
 - A small built-in JSON-schema subset (type/properties/required/enum/items) so we don't add `jsonschema` as a dependency.
 - Tolerates fenced ```json blocks and leading prose (we pull out the first JSON object).
