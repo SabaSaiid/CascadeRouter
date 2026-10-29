@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from backend.compiler.ast_scanner import RepoScan
 from backend.compiler.shadow_runner import RunExtras
-from backend.schemas import BenchmarkRun, ScanResult
+from backend.schemas import BenchmarkRun, OptimizeResult, ScanResult
 
 MAX_SCANS = 32
 
@@ -64,6 +64,8 @@ class StoredRun:
     extras: RunExtras
     scan: StoredScan
     task: Optional[asyncio.Task[None]] = None
+    # Optimize results per quality threshold (the sandbox regression is expensive).
+    optimized: dict[float, OptimizeResult] = field(default_factory=dict)
 
 
 class RunStore:
