@@ -15,20 +15,31 @@
       ],
       "expected": "Zero failures/errors with reported skip reasons",
       "actual": {
-        "summary": "1230 passed, 8 platform skips; Phase 4.10",
+        "summary": "1280 passed, 8 skipped; zero failures/errors; see dependency scope",
         "exit_code": 0,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "counts": {
+          "tests": 1288,
+          "passed": 1280,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 8
+        }
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
+          "path": "docs/phase411-observations.json",
+          "scope": "repository_tests; current structured observations"
+        },
+        {
           "path": "docs/phase410-acceptance.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "Available local suite; not Python 3.11 compatibility",
@@ -45,20 +56,31 @@
       ],
       "expected": "Zero failed/error tests with explicit dependency scope",
       "actual": {
-        "summary": "78 passed with supplemental tools; Phase 4.10",
+        "summary": "86 passed, 0 skipped; zero failures/errors; see dependency scope",
         "exit_code": 0,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "counts": {
+          "tests": 86,
+          "passed": 86,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
+          "path": "docs/phase411-observations.json",
+          "scope": "frontend_tests; current structured observations"
+        },
+        {
           "path": "docs/phase410-acceptance.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "Local unit/render coverage only",
@@ -75,20 +97,25 @@
       ],
       "expected": "Zero diagnostics with exact installed dependencies",
       "actual": {
-        "summary": "Supplemental TypeScript 6.0.3 check passed; exact installation unavailable",
-        "exit_code": null,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "summary": "Supplemental check: zero diagnostics, exit 0; exact installed frontend validation remains blocked",
+        "exit_code": 0,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "dependency_scope": "supplemental"
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
-          "path": "docs/phase410-reproducibility.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "path": "docs/phase411-observations.json",
+          "scope": "typescript; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "Supplemental check does not prove locked runtime compatibility",
@@ -105,20 +132,26 @@
       ],
       "expected": "Successful tsc -b and Vite build",
       "actual": {
-        "summary": "Phase 4.10 exit 1: project tsc unavailable",
-        "exit_code": 1,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "summary": "Required exact installed packages/bin wrappers absent; see preflight and cache. Prior exit 1 is retained in Phase 4.10 report.",
+        "exit_code": null,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false,
+        "previous_attempt_exit_code": 1
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
-          "path": "docs/phase410-reproducibility.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "path": "docs/phase411-observations.json",
+          "scope": "production_build; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "No distributable production bundle verified",
@@ -135,20 +168,26 @@
       ],
       "expected": "Oxlint exits zero using installed locked tool",
       "actual": {
-        "summary": "Phase 4.10 exit 1: project oxlint unavailable",
-        "exit_code": 1,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "summary": "Locked Oxlint installation unavailable; not rerun without prerequisites.",
+        "exit_code": null,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false,
+        "previous_attempt_exit_code": 1
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
-          "path": "docs/phase410-reproducibility.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "path": "docs/phase411-observations.json",
+          "scope": "lint; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "Source lint remains unverified",
@@ -165,20 +204,25 @@
       ],
       "expected": "Observed browser interactions, labels and focus behavior",
       "actual": {
-        "summary": "No browser interaction run; Chrome/Edge presence is not coverage",
+        "summary": "No browser interaction run; SSR and loopback-client tests do not close this gate",
         "exit_code": null,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
-          "path": "docs/phase410-reproducibility.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "path": "docs/phase411-observations.json",
+          "scope": "browser_accessibility; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "SSR and client HTTP tests do not establish browser usability",
@@ -195,20 +239,26 @@
       ],
       "expected": "Full suite actually executed under Python 3.11",
       "actual": {
-        "summary": "No runnable Python 3.11 found in inspected locations",
+        "summary": "No python3.11 PATH command; ordinary per-user/system Python311 and repository .venv interpreter paths absent; no runtime downloaded",
         "exit_code": null,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false,
+        "release_preflight_exit_code": 1
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
-          "path": "docs/phase410-reproducibility.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "path": "docs/phase411-observations.json",
+          "scope": "python311; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "Grammar target is not runtime compatibility",
@@ -225,20 +275,25 @@
       ],
       "expected": "Clean Python 3.11 install/check and exact npm lock install, no downloads",
       "actual": {
-        "summary": "Existing environment only; Python requirements are unresolved ranges",
+        "summary": "No clean install/resolution performed; 37 locked tarballs verified, 84 absent in local cache",
         "exit_code": null,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
-          "path": "docs/phase410-reproducibility.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "path": "docs/phase411-observations.json",
+          "scope": "clean_dependencies; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "Reproducible clean installation is unverified",
@@ -255,20 +310,31 @@
       ],
       "expected": "Loopback API, durable analysis and source preservation checks pass",
       "actual": {
-        "summary": "3 real-client scan tests passed; Phase 4.10",
+        "summary": "3 real-client cases passed in final full suite",
         "exit_code": 0,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "counts": {
+          "tests": 3,
+          "passed": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
+          "path": "docs/phase411-observations.json",
+          "scope": "local_api; current structured observations"
+        },
+        {
           "path": "docs/phase410-acceptance.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "Covers configured local tests, not hosted or browser execution",
@@ -285,20 +351,24 @@
       ],
       "expected": "Generated contracts match authoritative Pydantic OpenAPI",
       "actual": {
-        "summary": "Contract drift check passed; Phase 4.10",
+        "summary": "Current generated OpenAPI/frontend contract check matched",
         "exit_code": 0,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check"
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
+          "path": "docs/phase411-observations.json",
+          "scope": "contracts; current structured observations"
+        },
+        {
           "path": "docs/phase410-acceptance.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "No invented API contract permitted",
@@ -315,20 +385,31 @@
       ],
       "expected": "Available tests pass; skipped platform checks remain explicit",
       "actual": {
-        "summary": "78 security cases passed, 5 platform skips in full suite; Phase 4.10",
+        "summary": "78 passed; 5 platform skips remain open",
         "exit_code": 0,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "counts": {
+          "tests": 83,
+          "passed": 78,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 5
+        }
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
+          "path": "docs/phase411-observations.json",
+          "scope": "security_integrity; current structured observations"
+        },
+        {
           "path": "docs/phase410-acceptance.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "Tested local guards; not independent security certification",
@@ -345,20 +426,31 @@
       ],
       "expected": "Terminal states, interruptions and corrupt identities remain truthful",
       "actual": {
-        "summary": "5 real-client lifecycle tests passed; Phase 4.10",
+        "summary": "5 real-client cases passed in final full suite",
         "exit_code": 0,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "counts": {
+          "tests": 5,
+          "passed": 5,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
+          "path": "docs/phase411-observations.json",
+          "scope": "recovery; current structured observations"
+        },
+        {
           "path": "docs/phase410-acceptance.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "No external task queue or recovery-success fabrication",
@@ -375,20 +467,25 @@
       ],
       "expected": "Actual approved provenance and successful authorized reference-only operations",
       "actual": {
-        "summary": "Test artifacts correctly receive 503; no genuine approved production dataset supplied",
+        "summary": "No genuine approved production recordings supplied; test-only artifacts remain unauthorized for production",
         "exit_code": null,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
+          "path": "docs/phase411-observations.json",
+          "scope": "production_evidence; current structured observations"
+        },
+        {
           "path": "docs/phase410-acceptance.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "Test/demo provenance cannot authorize production proposals",
@@ -405,20 +502,25 @@
       ],
       "expected": "Actual hosted run logs identify commit, counts and outcomes",
       "actual": {
-        "summary": "No hosted run during this offline sequence; historical failure cause unknown",
+        "summary": "No push/fetch or hosted run; historical failure cause remains unknown",
         "exit_code": null,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
+          "path": "docs/phase411-observations.json",
+          "scope": "hosted_ci; current structured observations"
+        },
+        {
           "path": "docs/phase410-acceptance.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "Local configuration checks are not hosted evidence",
@@ -435,20 +537,25 @@
       ],
       "expected": "All intended filesystem cases execute with actual outcomes",
       "actual": {
-        "summary": "Six Windows symlink privilege skips and two POSIX replacement skips; Phase 4.10",
+        "summary": "Final suite retains six Windows symlink-unavailable skips and two POSIX namespace-replacement skips",
         "exit_code": null,
-        "observation": "Phase 4.10; retained evidence, not a new execution"
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "skipped": 8
       },
       "environment": {
         "python": "3.14.3",
         "node": "24.16.0",
         "npm": "11.13.0",
-        "dependency_scope": "existing environment; supplemental React 19.3.0 and TypeScript 6.0.3"
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
       },
       "evidence": [
         {
+          "path": "docs/phase411-observations.json",
+          "scope": "platform_filesystem; current structured observations"
+        },
+        {
           "path": "docs/phase410-acceptance.md",
-          "scope": "Phase 4.10 observations at 2ff0b949dcbcc050a78e73d984a07d8ac226d034"
+          "scope": "Retained preceding-phase evidence and limitations"
         }
       ],
       "impact": "No universal OS sandbox or race-proof claim",

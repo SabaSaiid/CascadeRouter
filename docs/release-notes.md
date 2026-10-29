@@ -49,7 +49,7 @@ the generated API contract remains unchanged. No documentation package was added
 This phase consolidates release gates, adds non-installing runtime and exact-cache
 diagnostics, replaces obsolete provider/sandbox setup guidance, documents actual
 trust limits and prepares source identities. Required CI acceptance prerequisites
-and final results are recorded in the final handoff. Prior Phase 4.9 and 4.10
+and final results are recorded in the [final handoff](phase411-handoff.md). Prior Phase 4.9 and 4.10
 reports retain their original scoped results, environments and failure evidence.
 The original hosted CI failure cause is still unknown.
 

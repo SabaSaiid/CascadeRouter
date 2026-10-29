@@ -1,0 +1,411 @@
+{
+  "schema_version": "cascaderouter.release-observations.v1",
+  "tested_base_commit": "aeeb76144e9a2971a51db884138c307c2f00e99d",
+  "test_tree_scope": "Product/source inputs verified by source-inventory.json; final evidence-reconciliation tools also tested in the working tree before metadata-only final commit",
+  "environment": {
+    "node": "24.16.0",
+    "npm": "11.13.0",
+    "python": "3.14.3",
+    "typescript": "6.0.3",
+    "react": "19.3.0",
+    "react_dom": "19.3.0"
+  },
+  "frontend_dependency_scope": "supplemental",
+  "backend": {
+    "tests": 1288,
+    "passed": 1280,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 8
+  },
+  "frontend": {
+    "tests": 86,
+    "passed": 86,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "backend_exit_code": 0,
+  "frontend_exit_code": 0,
+  "groups": {
+    "compiler": {
+      "tests": 224,
+      "passed": 221,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 3
+    },
+    "integration": {
+      "tests": 144,
+      "passed": 144,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "security": {
+      "tests": 83,
+      "passed": 78,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 5
+    },
+    "unit": {
+      "tests": 837,
+      "passed": 837,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "subsets": {
+    "recovery": {
+      "tests": 5,
+      "passed": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "local_api": {
+      "tests": 3,
+      "passed": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "backend_seconds": 53.89,
+  "backend_warnings": 3778,
+  "junit_artifacts": {
+    "backend": {
+      "temporary_basename": "cascade-phase411-backend.xml",
+      "sha256": "8c473479f50815898aac070801ef6e57ee30451aa6fb26761ae6e529067e9fac"
+    },
+    "frontend": {
+      "temporary_basename": "cascade-phase411-frontend.xml",
+      "sha256": "04ba415ce6df693882fb1a790a1e7b20a9d6464b523d51c7986b89321a315db2"
+    }
+  },
+  "preflight": {
+    "backend": {
+      "exit_code": 0,
+      "result": {
+        "checks": [
+          {
+            "id": "python_runtime",
+            "remediation": "Use an approved preinstalled Python 3.11 interpreter for release/CI; no interpreter is downloaded.",
+            "required": true,
+            "status": "passed"
+          },
+          {
+            "id": "node_runtime",
+            "remediation": "Use an approved preinstalled Node 24+ runtime; Node client acceptance is separate from backend-only startup.",
+            "required": false,
+            "status": "passed"
+          },
+          {
+            "id": "npm_runtime",
+            "remediation": "Use an approved npm capable of lockfile v3; no package installation is performed here.",
+            "required": false,
+            "status": "passed"
+          },
+          {
+            "id": "backend_package_presence",
+            "remediation": "Provision declared backend packages from an approved offline wheelhouse; presence is not clean resolution or compatibility proof.",
+            "required": true,
+            "status": "passed"
+          },
+          {
+            "id": "static_frontend_inputs",
+            "remediation": "Review manifest, lock, script and import drift; do not substitute locked versions.",
+            "required": true,
+            "status": "passed"
+          },
+          {
+            "id": "exact_frontend_installation",
+            "remediation": "Provision required locked artifacts and install offline, then run typecheck, build and lint. Metadata/bin presence does not prove those commands passed.",
+            "required": false,
+            "status": "blocked"
+          },
+          {
+            "id": "optional_coverage_plugin",
+            "remediation": "Coverage is optional; no coverage result or threshold is claimed.",
+            "required": false,
+            "status": "blocked"
+          }
+        ],
+        "frontend_missing_or_mismatched": [
+          "@tailwindcss/vite",
+          "@types/node",
+          "@types/react",
+          "@types/react-dom",
+          "@vitejs/plugin-react",
+          "autoprefixer",
+          "bin:oxlint",
+          "bin:tsc",
+          "bin:vite",
+          "clsx",
+          "lucide-react",
+          "oxlint",
+          "postcss",
+          "react",
+          "react-dom",
+          "tailwind-merge",
+          "tailwindcss",
+          "typescript",
+          "vite"
+        ],
+        "package_versions": {
+          "PyYAML": "6.0.3",
+          "fastapi": "0.115.6",
+          "pydantic": "2.12.5",
+          "pytest-cov": null,
+          "uvicorn": "0.34.0"
+        },
+        "prerequisites_satisfied": true,
+        "production_build_verified": false,
+        "profile": "backend",
+        "release_verified": false,
+        "versions": {
+          "node": "24.16.0",
+          "npm": "11.13.0",
+          "python": "3.14.3"
+        }
+      }
+    },
+    "release": {
+      "exit_code": 1,
+      "result": {
+        "checks": [
+          {
+            "id": "python_runtime",
+            "remediation": "Use an approved preinstalled Python 3.11 interpreter for release/CI; no interpreter is downloaded.",
+            "required": true,
+            "status": "blocked"
+          },
+          {
+            "id": "node_runtime",
+            "remediation": "Use an approved preinstalled Node 24+ runtime; Node client acceptance is separate from backend-only startup.",
+            "required": true,
+            "status": "passed"
+          },
+          {
+            "id": "npm_runtime",
+            "remediation": "Use an approved npm capable of lockfile v3; no package installation is performed here.",
+            "required": true,
+            "status": "passed"
+          },
+          {
+            "id": "backend_package_presence",
+            "remediation": "Provision declared backend packages from an approved offline wheelhouse; presence is not clean resolution or compatibility proof.",
+            "required": true,
+            "status": "passed"
+          },
+          {
+            "id": "static_frontend_inputs",
+            "remediation": "Review manifest, lock, script and import drift; do not substitute locked versions.",
+            "required": true,
+            "status": "passed"
+          },
+          {
+            "id": "exact_frontend_installation",
+            "remediation": "Provision required locked artifacts and install offline, then run typecheck, build and lint. Metadata/bin presence does not prove those commands passed.",
+            "required": true,
+            "status": "blocked"
+          },
+          {
+            "id": "optional_coverage_plugin",
+            "remediation": "Coverage is optional; no coverage result or threshold is claimed.",
+            "required": false,
+            "status": "blocked"
+          }
+        ],
+        "frontend_missing_or_mismatched": [
+          "@tailwindcss/vite",
+          "@types/node",
+          "@types/react",
+          "@types/react-dom",
+          "@vitejs/plugin-react",
+          "autoprefixer",
+          "bin:oxlint",
+          "bin:tsc",
+          "bin:vite",
+          "clsx",
+          "lucide-react",
+          "oxlint",
+          "postcss",
+          "react",
+          "react-dom",
+          "tailwind-merge",
+          "tailwindcss",
+          "typescript",
+          "vite"
+        ],
+        "package_versions": {
+          "PyYAML": "6.0.3",
+          "fastapi": "0.115.6",
+          "pydantic": "2.12.5",
+          "pytest-cov": null,
+          "uvicorn": "0.34.0"
+        },
+        "prerequisites_satisfied": false,
+        "production_build_verified": false,
+        "profile": "release",
+        "release_verified": false,
+        "versions": {
+          "node": "24.16.0",
+          "npm": "11.13.0",
+          "python": "3.14.3"
+        }
+      }
+    },
+    "ci-backend": {
+      "exit_code": 1,
+      "result": {
+        "checks": [
+          {
+            "id": "python_runtime",
+            "remediation": "Use an approved preinstalled Python 3.11 interpreter for release/CI; no interpreter is downloaded.",
+            "required": true,
+            "status": "blocked"
+          },
+          {
+            "id": "node_runtime",
+            "remediation": "Use an approved preinstalled Node 24+ runtime; Node client acceptance is separate from backend-only startup.",
+            "required": true,
+            "status": "passed"
+          },
+          {
+            "id": "npm_runtime",
+            "remediation": "Use an approved npm capable of lockfile v3; no package installation is performed here.",
+            "required": false,
+            "status": "passed"
+          },
+          {
+            "id": "backend_package_presence",
+            "remediation": "Provision declared backend packages from an approved offline wheelhouse; presence is not clean resolution or compatibility proof.",
+            "required": true,
+            "status": "passed"
+          },
+          {
+            "id": "static_frontend_inputs",
+            "remediation": "Review manifest, lock, script and import drift; do not substitute locked versions.",
+            "required": true,
+            "status": "passed"
+          },
+          {
+            "id": "exact_frontend_installation",
+            "remediation": "Provision required locked artifacts and install offline, then run typecheck, build and lint. Metadata/bin presence does not prove those commands passed.",
+            "required": false,
+            "status": "blocked"
+          },
+          {
+            "id": "optional_coverage_plugin",
+            "remediation": "Coverage is optional; no coverage result or threshold is claimed.",
+            "required": false,
+            "status": "blocked"
+          }
+        ],
+        "frontend_missing_or_mismatched": [
+          "@tailwindcss/vite",
+          "@types/node",
+          "@types/react",
+          "@types/react-dom",
+          "@vitejs/plugin-react",
+          "autoprefixer",
+          "bin:oxlint",
+          "bin:tsc",
+          "bin:vite",
+          "clsx",
+          "lucide-react",
+          "oxlint",
+          "postcss",
+          "react",
+          "react-dom",
+          "tailwind-merge",
+          "tailwindcss",
+          "typescript",
+          "vite"
+        ],
+        "package_versions": {
+          "PyYAML": "6.0.3",
+          "fastapi": "0.115.6",
+          "pydantic": "2.12.5",
+          "pytest-cov": null,
+          "uvicorn": "0.34.0"
+        },
+        "prerequisites_satisfied": false,
+        "production_build_verified": false,
+        "profile": "ci-backend",
+        "release_verified": false,
+        "versions": {
+          "node": "24.16.0",
+          "npm": "11.13.0",
+          "python": "3.14.3"
+        }
+      }
+    }
+  },
+  "cache": {
+    "exit_code": 1,
+    "locked": 121,
+    "verified": 37,
+    "missing": 84,
+    "integrity_mismatch": 0,
+    "unavailable": 0,
+    "invalid_lock": 0,
+    "all_artifacts_verified": false
+  },
+  "supplemental_typecheck": {
+    "exit_code": 0,
+    "diagnostics": 0,
+    "production_build_verified": false
+  },
+  "contract_check": {
+    "exit_code": 0
+  },
+  "static_input_check": {
+    "exit_code": 0,
+    "locked_packages": 121,
+    "source_files": 20
+  },
+  "source_inventory": {
+    "exit_code": 0,
+    "artifacts": 65,
+    "canonical_source_bytes": 621437,
+    "source_commit": "9f4361cc1a744d5be9db071084975ae0760b26ea"
+  },
+  "browser_executed": false,
+  "hosted_ci_executed": false,
+  "clean_environment_executed": false,
+  "genuine_production_evidence_available": false,
+  "python311_executed": false,
+  "python311_search": "No python3.11 PATH command; ordinary per-user/system Python311 and repository .venv interpreter paths absent; no runtime downloaded",
+  "production_build": {
+    "status": "blocked",
+    "executed_this_phase": false,
+    "reason": "Required exact installed packages/bin wrappers absent; see preflight and cache. Prior exit 1 is retained in Phase 4.10 report."
+  },
+  "lint": {
+    "status": "blocked",
+    "executed_this_phase": false,
+    "reason": "Locked Oxlint installation unavailable; not rerun without prerequisites."
+  },
+  "skip_reasons": [
+    {
+      "reason": "Symbolic links unavailable on this platform (errno 22).",
+      "count": 3
+    },
+    {
+      "reason": "File symlink creation unavailable: errno=22, winerror=1314",
+      "count": 2
+    },
+    {
+      "reason": "Directory symlink creation unavailable: errno=22, winerror=1314",
+      "count": 1
+    },
+    {
+      "reason": "POSIX namespace replacement; Windows pins prevent this rename.",
+      "count": 2
+    }
+  ]
+}

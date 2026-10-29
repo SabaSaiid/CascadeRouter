@@ -8,7 +8,8 @@ applied, no target tests run, and no hosted inference is provided.
 
 **Release recommendation: blocked from release.** The authoritative
 [release-gate register](docs/release-gates.json) distinguishes observed local results
-from unverified requirements. The [Phase 4.10 record](docs/phase410-acceptance.md)
+from unverified requirements. The [Phase 4.11 handoff](docs/phase411-handoff.md)
+records final commands, results and remediation. The [Phase 4.10 record](docs/phase410-acceptance.md)
 and [reproducibility investigation](docs/phase410-reproducibility.md) are historical
 evidence, not proof that a clean build or browser journey passed.
 
