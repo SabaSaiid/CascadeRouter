@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Request, Response
 
-from backend.schemas import PatchAccepted, PatchId, PatchProposal, PatchRequest
+from backend.schemas import PatchAccepted, PatchId, PatchProposal, PatchRequest, PatchValidationReport, PatchValidationRequest
 from backend.services.errors import ServiceError
 from .scan import ERRORS
 
@@ -30,3 +30,12 @@ async def create_patch(body: PatchRequest, request: Request):
 @router.get("/patches/{patch_id}", response_model=PatchProposal, responses=ERRORS)
 async def get_patch(patch_id: PatchId, request: Request):
     return await _operation(request, lambda patches, check: patches.get(patch_id, check))
+
+
+@router.post("/patches/{patch_id}/validate", status_code=201, response_model=PatchValidationReport, responses=ERRORS)
+async def validate_patch(patch_id: PatchId, request: Request, body: PatchValidationRequest | None = None):
+    if request.query_params:
+        raise ServiceError("invalid_request")
+    response = await _operation(request, lambda patches, check: patches.validate(patch_id, check))
+    response.status_code = 201
+    return response

@@ -89,6 +89,15 @@ revalidates evidence/source and deterministically regenerates the artifact befor
 returning the immutable manifest and sensitive review text. A stale artifact is
 not exposed as current. There is no apply endpoint.
 
+`POST /api/patches/{patch_id}/validate` accepts an existing proposal ID and no
+body (or an empty JSON object). Caller source, paths, spans, commands and query
+parameters are rejected. It returns `201` for a newly retained static observation,
+including `invalid`, `stale` or `unavailable` outcomes; HTTP success describes the
+report operation. `result.status` describes validation. Production authorization
+still requires recorded, currently approved optimization evidence; test benchmark
+injection cannot enable this endpoint. No genuine production evidence was supplied
+for the component/transport tests, whose reports retain `test` provenance.
+
 Unknown IDs return `404`; malformed/extra input `422`; forbidden roots `403`;
 stale, corrupt or inconsistent inputs `409`; missing production approval/test
 evidence `503`; configured capacity exhaustion `429`; oversized bodies `413`.

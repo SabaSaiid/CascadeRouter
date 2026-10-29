@@ -1797,6 +1797,10 @@ class PatchAccepted(APIModel):
 PatchValidationId = Annotated[str, Field(min_length=75, max_length=75, pattern=r"^validation_[0-9a-f]{64}$")]
 
 
+class PatchValidationRequest(APIModel):
+    """Optional empty body; the stored proposal ID is the only input."""
+
+
 class PatchSyntaxDiagnostic(APIModel):
     code: Literal["candidate_syntax_error"] = "candidate_syntax_error"
     line_number: LineNumber | None = None
