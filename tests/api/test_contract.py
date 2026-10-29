@@ -1,6 +1,7 @@
 """Fails when backend/schemas.py drifts from frontend/src/types.ts."""
 
 import re
+import typing
 
 import pytest
 
@@ -48,3 +49,45 @@ def test_catalog_matches_frontend_catalog():
     s = load_settings()
     assert [m.id for m in s.models] == ts_ids
     assert [p for m in s.models for p in (m.input_price_per_m, m.output_price_per_m)] == ts_prices
+
+
+_PRIMITIVES = {"string": {str}, "number": {int, float}, "boolean": {bool}}
+
+
+def _ts_types(interface: str) -> dict[str, str]:
+    match = re.search(rf"export interface {interface} \{{(.*?)\n\}}", TYPES_TS, re.S)
+    return {n: t.strip() for n, t in re.findall(r"^\s+(\w+)\??:\s*([^;]+);", match.group(1), re.M)}
+
+
+def _resolve_alias(ts_type: str) -> str:
+    alias = re.search(rf"export type {re.escape(ts_type)} = (.*?);", TYPES_TS)
+    return alias.group(1).strip() if alias else ts_type
+
+
+def _py_leaf_types(annotation) -> set:
+    """Flatten Optional/Union and return the leaf python types or Literal values."""
+    origin = typing.get_origin(annotation)
+    if origin is typing.Union:
+        out = set()
+        for arg in typing.get_args(annotation):
+            if arg is not type(None):
+                out |= _py_leaf_types(arg)
+        return out
+    if origin is typing.Literal:
+        return {("literal", v) for v in typing.get_args(annotation)}
+    return {annotation}
+
+
+@pytest.mark.parametrize("name", MIRRORED)
+def test_literal_and_primitive_types_match(name):
+    model = getattr(schemas, name)
+    for field, ts_type in _ts_types(name).items():
+        resolved = _resolve_alias(ts_type)
+        py = _py_leaf_types(model.model_fields[field].annotation)
+        literals = re.findall(r"'([^']+)'", resolved)
+        if literals and re.fullmatch(r"(\s*'[^']+'\s*\|?)+", resolved):
+            assert py == {("literal", v) for v in literals}, f"{name}.{field}: {resolved} vs {py}"
+        elif resolved in _PRIMITIVES:
+            assert py and py <= _PRIMITIVES[resolved] | {int}, f"{name}.{field}: {resolved} vs {py}"
+            if resolved == "number":
+                assert bool not in py
