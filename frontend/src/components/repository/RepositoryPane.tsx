@@ -5,6 +5,7 @@ import { useOperation } from '../../services/useOperation.ts';
 import { demoScan } from '../../services/demo.ts';
 import { provenance, scanSummary } from '../../services/presentation.ts';
 import { OperationStatus } from '../OperationStatus.tsx';
+import { AgentGraph } from './AgentGraph.tsx';
 
 export function ScanFindings({ scan, selected, onSelect }: { scan: Scan; selected?: string; onSelect: (id: string) => void }) {
   const summary = scanSummary(scan); const [page, setPage] = useState(0);
@@ -22,6 +23,7 @@ export function ScanFindings({ scan, selected, onSelect }: { scan: Scan; selecte
       </tbody></table></div>
       <div className="control-row"><button disabled={page === 0} onClick={() => setPage(page - 1)}>Previous findings</button><button disabled={(page + 1) * 50 >= scan.nodes.length} onClick={() => setPage(page + 1)}>Next findings</button></div></>}
     {[...scan.scan_diagnostics, ...scan.graph_diagnostics].length > 0 && <details><summary>Coverage and analysis diagnostics</summary><ul>{[...scan.scan_diagnostics, ...scan.graph_diagnostics].map((d, i) => <li key={i}>{d.level}: {d.code}{d.location && ` — ${d.location.file_path}`}</li>)}</ul></details>}
+    <AgentGraph scan={scan} onSelect={onSelect} />
   </>;
 }
 export function RepositoryPane({ api, demo, onAnalysis, selected, onSelect }: { api?: ApiClient; demo: boolean; onAnalysis: (scan?: Scan) => void; selected?: string; onSelect: (id: string) => void }) {

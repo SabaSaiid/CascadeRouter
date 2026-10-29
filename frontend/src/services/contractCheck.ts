@@ -1,5 +1,6 @@
 import { schemas, modelNames } from './contracts.ts';
 import type { ContractTypes } from './contracts.ts';
+import { acyclic } from './graph.ts';
 
 type Obj = Record<string, any>;
 const object = (value: unknown): value is Obj => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -65,6 +66,7 @@ function semantics(name: keyof ContractTypes, v: Obj): boolean {
     if (!unique(ids) || v.complete !== (v.scan_complete && v.graph_complete) || v.scanned_files_count > v.discovered_files_count) return false;
     if (!v.graph_edges.every(([a, b]: string[]) => a !== b && ids.includes(a) && ids.includes(b))) return false;
     if (!unique(v.graph_edges.map((e: string[]) => e.join(':')))) return false;
+    if (!acyclic(ids, v.graph_edges)) return false;
   }
   if (name === 'Job') {
     if (v.progress.completed_units !== v.measurements.length || v.progress.completed_units > v.progress.total_units) return false;
