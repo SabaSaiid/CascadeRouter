@@ -45,30 +45,13 @@ jobs:
         env:
           BACKEND_TEST_OUTCOME: ${{ steps.backend_tests.outcome }}
         run: |
-          python - <<'PY'
-          import os
-          import xml.etree.ElementTree as ET
-          from pathlib import Path
-
-          report = Path(os.environ["BACKEND_JUNIT_PATH"])
-          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
-              outcome = os.environ["BACKEND_TEST_OUTCOME"] or "not run"
-              summary.write(f"### Backend tests\n\nTest step outcome: `{outcome}`.\n\n")
-              if not report.is_file():
-                  summary.write("No JUnit report was produced. Inspect earlier job logs; this does not indicate passing tests.\n")
-              else:
-                  root = ET.parse(report).getroot()
-                  suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
-                  counts = {key: sum(int(suite.get(key, "0")) for suite in suites)
-                            for key in ("tests", "failures", "errors", "skipped")}
-                  summary.write("| Tests | Failures | Errors | Skipped |\n| ---: | ---: | ---: | ---: |\n")
-                  summary.write("| {tests} | {failures} | {errors} | {skipped} |\n".format(**counts))
-                  summary.write("\nSee the test log for failure details and skip reasons. Pytest's exit status determines the test step result.\n")
-          PY
+          python scripts/summarize_tests.py --label Backend --report "$BACKEND_JUNIT_PATH" --outcome "$BACKEND_TEST_OUTCOME" --output "$GITHUB_STEP_SUMMARY"
 
   frontend-check:
-    name: Frontend Typecheck & Build
+    name: Frontend Tests, Typecheck & Build
     runs-on: ubuntu-latest
+    env:
+      FRONTEND_JUNIT_PATH: ${{ runner.temp }}/cascaderouter-frontend-${{ github.run_id }}-${{ github.run_attempt }}.xml
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -78,9 +61,21 @@ jobs:
         with:
           node-version: 24
 
-      - name: Check Frontend
+      - name: Install Frontend Dependencies
         working-directory: frontend
-        run: |
-          npm ci
-          npm test
-          npm run build
+        run: npm ci
+
+      - name: Run Frontend Contract and Render Tests
+        id: frontend_tests
+        working-directory: frontend
+        run: node --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$FRONTEND_JUNIT_PATH" tests/*.test.mjs
+
+      - name: Build Frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Summarize Frontend Test Results
+        if: always()
+        env:
+          FRONTEND_TEST_OUTCOME: ${{ steps.frontend_tests.outcome }}
+        run: python3 scripts/summarize_tests.py --label Frontend --report "$FRONTEND_JUNIT_PATH" --outcome "$FRONTEND_TEST_OUTCOME" --output "$GITHUB_STEP_SUMMARY"

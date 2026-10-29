@@ -111,3 +111,13 @@ Run CascadeRouter's own `tests/` suite (ignore `tests/fixtures/`); it includes a
 loopback TypeScript-client/backend contract test with byte-preservation assertions.
 It never executes/imports the temporary scanned application. See the
 [integration record](../docs/frontend-integration.md) for validation limitations.
+
+Phase 4.10 adds a static offline input check:
+`python -B frontend/scripts/check_offline_inputs.py` from the repository root.
+It checks lock declarations, supported version ranges, scripts and static imports;
+it does not install dependencies or establish production build success. See the
+[acceptance and risk register](../docs/phase410-acceptance.md) for actual client/API,
+restart, authorization and evidence-parser coverage, and the
+[reproducibility investigation](../docs/phase410-reproducibility.md) for exact cache
+blockers and browser/Python 3.11 status. CI now retains separate frontend JUnit
+test counts and build status; unavailable reports never become passing counts.
