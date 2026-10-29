@@ -1,5 +1,6 @@
 """Local fixtures never become production defaults or genuine recorded evidence."""
 
+import threading
 from datetime import datetime, timezone
 
 import pytest
@@ -7,11 +8,13 @@ from pydantic import ValidationError
 
 from backend.config import BackendConfig
 from backend.schemas import (
-    BenchmarkMeasurement, BenchmarkRegistryDocument, BenchmarkRequest, NumberMeasurement,
-    RecordedAnalysisResults, RecordingDocument, ScanResponse,
+    BenchmarkMeasurement, BenchmarkRegistryDocument, BenchmarkRequest, LocalBenchmarkCase,
+    NumberMeasurement, OfflineRecordingDocument, RecordedAnalysisResults, RecordingDocument,
+    ScanResponse,
 )
 from backend.services.benchmark_cases import BenchmarkRegistry, ReplayExecutor, digest, load_local_assets
 from backend.services.errors import ServiceError
+from backend.services.offline_benchmark import OfflineBenchmarkExecutor
 
 
 def test_versioned_plan_is_immutable_and_excludes_case_source(job_environment):
@@ -128,3 +131,70 @@ def test_recorded_profile_cannot_invent_success_from_unavailable_evaluations(job
 def test_asset_approval_cannot_be_coerced(job_environment, approval):
     with pytest.raises(ValidationError):
         BenchmarkRegistryDocument.model_validate({**job_environment.registry.document.model_dump(), "approved": approval})
+
+
+def test_offline_replay_uses_unit_identity_and_plan_order_not_input_or_storage_order(offline_environment):
+    env = offline_environment
+    cases = [LocalBenchmarkCase(identifier="case-z", input_text="same test input", expected_output="first"),
+             LocalBenchmarkCase(identifier="case-a", input_text="same test input", expected_output="second")]
+    outputs = {(model.identifier, case.identifier): case.expected_output
+               for model in env.registry.document.models for case in cases}
+    outputs[("local/candidate", "case-z")] = "test-only incorrect response"
+    registry, document, _ = env.make_offline(cases=cases, outputs=outputs)
+    data = document.model_dump(mode="json")
+    data["recordings"][0]["records"].reverse()
+    executor = OfflineBenchmarkExecutor(registry, OfflineRecordingDocument.model_validate(data))
+    plan = registry.resolve(env.request, env.analysis, env.settings, executor)
+    records = {record.unit_key(): record for record in document.recordings[0].records}
+
+    iterator = executor.execute(plan, threading.Event(), datetime.max.replace(tzinfo=timezone.utc))
+    actual = tuple(iterator)
+
+    assert tuple(item.unit_key() for item in actual) == plan.unit_keys()
+    assert plan.case_ids == ("case-z", "case-a")
+    for item in actual:
+        original = records[item.unit_key()]
+        assert item.provenance == "test" and item.output_available
+        assert (item.recording_id, item.evidence_digest) == (original.recording_id, original.digest)
+        expected = "failed" if item.unit_key()[1:] == ("local/candidate", "case-z") else "passed"
+        assert item.evaluation_status == expected
+    # Exhaustion remains exhaustion, including repeated reads of the iterator.
+    for _ in range(2):
+        with pytest.raises(StopIteration):
+            next(iterator)
+
+
+@pytest.mark.parametrize("missing_index", [0, -1])
+def test_offline_replay_rejects_missing_units_before_evaluation(offline_environment, monkeypatch, missing_index):
+    env = offline_environment
+    data = env.document.model_dump(mode="json")
+    data["recordings"][0]["records"].pop(missing_index)
+    executor = OfflineBenchmarkExecutor(env.registry, OfflineRecordingDocument.model_validate(data))
+
+    def unexpected_evaluation(*args):
+        pytest.fail("Incomplete recordings must be rejected before any evaluation.")
+
+    monkeypatch.setattr("backend.services.offline_benchmark.evaluate", unexpected_evaluation)
+    with pytest.raises(ServiceError) as error:
+        env.registry.resolve(env.request, env.analysis, env.settings, executor)
+    assert error.value.code == "source_conflict"
+
+
+@pytest.mark.parametrize("change,code", [
+    ({"analysis_id": "analysis_" + "b" * 32}, "capability_unavailable"),
+    ({"analysis_digest": "b" * 64}, "capability_unavailable"),
+    ({"node_ids": ["llm_" + "b" * 24]}, "source_conflict"),
+    ({"case_set": {"identifier": "cases", "version": "v2"}}, "capability_unavailable"),
+    ({"evaluation_profile": {"identifier": "profile", "version": "v2"}}, "capability_unavailable"),
+    ({"case_set_digest": "b" * 64}, "source_conflict"),
+    ({"evaluation_profile_digest": "b" * 64}, "source_conflict"),
+    ({"case_ids": ["case-two", "case-one"]}, "source_conflict"),
+])
+def test_offline_replay_rejects_stale_plan_associations_before_yielding(offline_environment, change, code):
+    env = offline_environment
+    plan = env.registry.resolve(env.request, env.analysis, env.settings, env.executor)
+    stale = type(plan).model_validate({**plan.model_dump(), **change})
+    iterator = env.executor.execute(stale, threading.Event(), datetime.max.replace(tzinfo=timezone.utc))
+    with pytest.raises(ServiceError) as error:
+        next(iterator)
+    assert error.value.code == code
