@@ -147,3 +147,7 @@ approved production evidence and hosted CI require separate recorded validation.
 document their detailed contracts. The Git history retains the earlier hackathon
 vision; the old hosted-provider setup, rates and sandbox-success claims are not
 current operator instructions. No release tag or published package is implied.
+
+[Security model and limits](SECURITY.md) distinguish tested repository guards,
+point-in-time static checks and trusted local storage from a complete OS sandbox
+or independent security certification.

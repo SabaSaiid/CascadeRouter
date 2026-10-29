@@ -27,8 +27,8 @@ billing setup, outbound provider calls or new paid dependencies are authorized.
 Missing approved inputs/recordings return controlled unavailable/inconclusive
 results. Test data must never be relabelled as recorded or real measurements.
 
-The earlier conceptual examples in `docs/architecture.md` are not exact definitions
-of this contract. Phase 4.9 replaced the old frontend DTOs with generated
+The component overview in `docs/architecture.md` links this authoritative contract;
+Git history retains the superseded conceptual examples. Phase 4.9 replaced the old frontend DTOs with generated
 `frontend/src/services/contracts.ts`; drift checks bind it to current OpenAPI.
 Phase 4.10 acceptance and remaining release evidence are recorded in
 [phase410-acceptance.md](phase410-acceptance.md). Compiler dataclasses remain
