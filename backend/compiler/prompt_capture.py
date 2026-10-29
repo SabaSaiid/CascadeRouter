@@ -9,6 +9,7 @@ execution is aborted. No credentials are present and no network call is made.
 from __future__ import annotations
 
 import json
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -21,11 +22,22 @@ HARNESS_FILENAME = "_cascade_capture_harness.py"
 RESULT_MARKER = "__CASCADE_CAPTURE_RESULT__"
 # Request parameters never forwarded to the benchmark (the runner sets its own).
 DROPPED_PARAMS = frozenset({"model", "stream", "stream_options", "n", "extra_headers", "extra_body"})
+# Only these generation parameters are forwarded to Nebius; anything else the
+# (untrusted) target code passed is ignored.
+FORWARDED_PARAMS = frozenset(
+    {"temperature", "top_p", "max_tokens", "max_completion_tokens", "response_format", "stop",
+     "seed", "presence_penalty", "frequency_penalty"}
+)
+DEFAULT_MAX_OUTPUT_TOKENS = 2048
+MAX_MESSAGES = 64
+MAX_REQUEST_CHARS = 200_000
+_ROLES = {"system", "user", "assistant", "developer"}
 
 HARNESS_SOURCE = r'''
 import asyncio, inspect, json, os, sys, types
 
 MARKER = "__CASCADE_CAPTURE_RESULT__"
+NONCE = ""
 
 
 class _Captured(BaseException):
@@ -87,7 +99,9 @@ def _json_safe(kwargs, dropped):
 
 
 def main():
+    global NONCE
     job = json.loads(sys.stdin.read())
+    NONCE = job.pop("nonce")
     root = os.path.realpath(os.getcwd())
     sys.path.insert(0, root)
     state = {
@@ -104,14 +118,14 @@ def main():
     except BaseException as exc:
         err = f"import failed: {type(exc).__name__}: {exc}"
         results = [{"ok": False, "error": err} for _ in job["cases"]]
-        print(MARKER + json.dumps(results))
+        print(MARKER + NONCE + json.dumps(results))
         return
     if hasattr(module, "client"):
         module.client = fake
     func = getattr(module, job["function"], None)
     if not callable(func):
         results = [{"ok": False, "error": f"function {job['function']} not found at module level"} for _ in job["cases"]]
-        print(MARKER + json.dumps(results))
+        print(MARKER + NONCE + json.dumps(results))
         return
     try:
         params = inspect.signature(func).parameters
@@ -137,7 +151,7 @@ def main():
             results.append({"ok": False, "error": str(exc)})
         except BaseException as exc:
             results.append({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
-    print(MARKER + json.dumps(results))
+    print(MARKER + NONCE + json.dumps(results))
 
 
 main()
@@ -193,6 +207,9 @@ def capture_requests(
         "end_line": call.end_line_number,
         "cases": [c.vars for c in cases],
         "dropped": sorted(DROPPED_PARAMS),
+        # Read by the harness before any target code is imported; a result line
+        # without it (e.g. printed by the target itself) is ignored.
+        "nonce": secrets.token_hex(16),
     }
     with sandbox_copy(repo_root, prefix="cascade_capture_") as work:
         (work / HARNESS_FILENAME).write_text(HARNESS_SOURCE, encoding="utf-8")
@@ -200,16 +217,43 @@ def capture_requests(
 
     if proc.timed_out:
         return [CaptureResult(None, f"prompt capture timed out after {timeout:g}s")] * len(cases)
-    return parse_harness_output(proc.stdout, proc.stderr, len(cases))
+    return parse_harness_output(proc.stdout, proc.stderr, len(cases), job["nonce"])
 
 
-def parse_harness_output(stdout: str, stderr: str, expected: int) -> list[CaptureResult]:
-    line = next((ln for ln in reversed(stdout.splitlines()) if ln.startswith(RESULT_MARKER)), None)
+def sanitize_request(
+    messages: Any, params: dict[str, Any], max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
+) -> tuple[Optional[CapturedRequest], Optional[str]]:
+    """Validate a captured request before it is sent to a paid API."""
+    if not isinstance(messages, list) or not 0 < len(messages) <= MAX_MESSAGES:
+        return None, f"captured messages must be a list of 1-{MAX_MESSAGES} items"
+    clean_messages = []
+    for m in messages:
+        if not isinstance(m, dict) or m.get("role") not in _ROLES or not isinstance(m.get("content"), str):
+            return None, "captured messages must be {role, content: str} objects"
+        clean_messages.append({"role": m["role"], "content": m["content"]})
+    clean = {k: v for k, v in params.items() if k in FORWARDED_PARAMS}
+    for key in ("max_tokens", "max_completion_tokens"):
+        value = clean.get(key)
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                return None, f"captured {key} must be a positive integer"
+            clean[key] = min(value, max_output_tokens)
+    if "max_tokens" not in clean and "max_completion_tokens" not in clean:
+        clean["max_tokens"] = max_output_tokens
+    size = len(json.dumps({"m": clean_messages, "p": clean}))
+    if size > MAX_REQUEST_CHARS:
+        return None, f"captured request is too large ({size} chars)"
+    return CapturedRequest(messages=clean_messages, params=clean), None
+
+
+def parse_harness_output(stdout: str, stderr: str, expected: int, nonce: str) -> list[CaptureResult]:
+    prefix = RESULT_MARKER + nonce
+    line = next((ln for ln in reversed(stdout.splitlines()) if ln.startswith(prefix)), None)
     if line is None:
         tail = stderr.strip().splitlines()[-1:] or ["no output"]
         return [CaptureResult(None, f"prompt capture failed: {tail[0]}")] * expected
     try:
-        raw = json.loads(line[len(RESULT_MARKER):])
+        raw = json.loads(line[len(prefix):])
     except json.JSONDecodeError:
         return [CaptureResult(None, "prompt capture returned malformed output")] * expected
     if not isinstance(raw, list) or len(raw) != expected:
@@ -219,8 +263,9 @@ def parse_harness_output(stdout: str, stderr: str, expected: int) -> list[Captur
     for item in raw:
         if isinstance(item, dict) and item.get("ok") and isinstance(item.get("request"), dict):
             request = dict(item["request"])
-            messages = request.pop("messages")
-            results.append(CaptureResult(CapturedRequest(messages=messages, params=request)))
+            messages = request.pop("messages", None)
+            sanitized, error = sanitize_request(messages, request)
+            results.append(CaptureResult(sanitized, error))
         else:
             error = item.get("error") if isinstance(item, dict) else None
             results.append(CaptureResult(None, str(error or "prompt capture failed")))
