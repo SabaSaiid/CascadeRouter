@@ -39,7 +39,7 @@ function shape(value: unknown, schema: Obj, budget: { left: number }, depth = 0)
   if (schema.type === 'object') {
     if (!object(value) || (schema.required ?? []).some((key: string) => !Object.hasOwn(value, key))) return false;
     for (const [key, v] of Object.entries(value)) {
-      const rule = schema.properties?.[key] ?? schema.additionalProperties;
+      const rule = schema.properties && Object.hasOwn(schema.properties, key) ? schema.properties[key] : schema.additionalProperties;
       if (rule === false || rule === undefined) return false;
       if (rule !== true && !shape(v, rule, budget, depth + 1)) return false;
     }
