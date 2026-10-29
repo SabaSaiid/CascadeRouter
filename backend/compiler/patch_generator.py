@@ -16,7 +16,7 @@ import re
 import tokenize
 from dataclasses import dataclass, field
 
-from backend.schemas import PatchEdit, PatchFile, PatchManifest, PatchOmission, PatchProposal
+from backend.schemas import PatchEdit, PatchFile, PatchFileValidation, PatchManifest, PatchOmission, PatchProposal, PatchSyntaxDiagnostic
 
 
 class PatchInputError(ValueError):
@@ -26,6 +26,14 @@ class PatchInputError(ValueError):
 
 class PatchBudgetExceeded(PatchInputError):
     pass
+
+
+class PatchVerificationError(PatchInputError):
+    """A bounded check outcome; never include parser text, source or host paths."""
+
+    def __init__(self, validation: PatchFileValidation):
+        super().__init__()
+        self.validation = validation
 
 
 @dataclass(frozen=True)
@@ -67,6 +75,58 @@ def _single_literal(text):
     tokens = [item for item in tokenize.generate_tokens(io.StringIO(text).readline)
               if item.type not in (tokenize.NEWLINE, tokenize.ENDMARKER)]
     return len(tokens) == 1 and tokens[0].type == tokenize.STRING and tokens[0].string == text
+
+
+def _parse_candidate(source):
+    return ast.parse(source, feature_version=(3, 11))
+
+
+def _verify_candidate(parsed, edits, encoding):
+    """Shared generation/validation checks. Candidate bytes exist only in memory."""
+    raw = parsed.raw
+    def fail(reason, spans, candidate, syntax, preservation, proposed=None, diagnostic=None):
+        raise PatchVerificationError(PatchFileValidation(
+            file_path=parsed.fingerprint.file_path, original_digest=hashlib.sha256(raw).hexdigest(),
+            candidate_digest=None if proposed is None else hashlib.sha256(proposed).hexdigest(),
+            spans=spans, candidate=candidate, syntax=syntax, ast_preservation=preservation,
+            reason=reason, diagnostic=diagnostic,
+        ))
+    replacements = [(edit.start_byte, edit.end_byte, replacement) for edit, replacement, _, _ in edits]
+    try:
+        proposed = _splice(raw, replacements)
+    except PatchInputError:
+        fail("invalid_spans", "invalid", "not_checked", "not_checked", "not_checked")
+    if len(proposed) > 1024 * 1024:
+        raise PatchBudgetExceeded()
+    try:
+        _verify_regions(raw, proposed, replacements)
+        source = proposed.decode(encoding)
+    except (PatchInputError, UnicodeError):
+        fail("candidate_failed", "valid", "failed", "not_checked", "not_checked")
+    try:
+        tree = _parse_candidate(source)
+        if sum(1 for _ in ast.walk(tree)) > 100000:
+            raise PatchBudgetExceeded()
+        expected = copy.deepcopy(parsed.tree)
+        changes = {location: edit.proposed_model_id for edit, _, _, location in edits}
+        changed = set()
+        for item in ast.walk(expected):
+            if isinstance(item, ast.Constant):
+                key = item.lineno, item.col_offset, item.end_lineno, item.end_col_offset
+                if key in changes:
+                    item.value = changes[key]
+                    item.kind = None
+                    changed.add(key)
+        if changed != changes.keys() or ast.dump(tree, include_attributes=False) != ast.dump(expected, include_attributes=False):
+            fail("ast_mismatch", "valid", "constructed", "passed", "failed", proposed)
+    except SyntaxError as error:
+        def position(value, minimum):
+            return value if type(value) is int and minimum <= value <= 2**53 - 1 else None
+        fail("syntax_error", "valid", "constructed", "failed", "not_checked", proposed,
+             PatchSyntaxDiagnostic(line_number=position(error.lineno, 1), column_number=position(error.offset, 0)))
+    except (RecursionError, MemoryError):
+        raise PatchBudgetExceeded() from None
+    return proposed
 
 
 def generate_file(parsed, nodes, decisions) -> FileProposal:
@@ -152,29 +212,7 @@ def generate_file(parsed, nodes, decisions) -> FileProposal:
     edits.sort(key=lambda item: item[0].start_byte)
     if not edits:
         return FileProposal(None, tuple(sorted(omissions, key=lambda item: item.node_id)))
-    replacements = [(edit.start_byte, edit.end_byte, replacement) for edit, replacement, _, _ in edits]
-    proposed = _splice(raw, replacements)
-    if len(proposed) > 1024 * 1024:
-        raise PatchBudgetExceeded()
-    _verify_regions(raw, proposed, replacements)
-    try:
-        tree = ast.parse(proposed.decode(encoding), feature_version=(3, 11))
-        if sum(1 for _ in ast.walk(tree)) > 100000:
-            raise PatchInputError()
-        expected = copy.deepcopy(parsed.tree)
-        changes = {location: edit.proposed_model_id for edit, _, _, location in edits}
-        changed = set()
-        for item in ast.walk(expected):
-            if isinstance(item, ast.Constant):
-                key = item.lineno, item.col_offset, item.end_lineno, item.end_col_offset
-                if key in changes:
-                    item.value = changes[key]
-                    item.kind = None  # The replacement is a safely serialized plain str token.
-                    changed.add(key)
-        if changed != changes.keys() or ast.dump(tree, include_attributes=False) != ast.dump(expected, include_attributes=False):
-            raise PatchInputError()
-    except (SyntaxError, UnicodeError, RecursionError, MemoryError):
-        raise PatchInputError() from None
+    proposed = _verify_candidate(parsed, edits, encoding)
     metadata = PatchFile(file_path=path, original_digest=hashlib.sha256(raw).hexdigest(),
                          proposed_digest=hashlib.sha256(proposed).hexdigest(), edits=[item[0] for item in edits])
     diff = [f"--- a/{path}\n+++ b/{path}\n"]
