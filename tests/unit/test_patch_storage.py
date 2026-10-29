@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from backend.schemas import PrivateSourceManifest, ScanResponse, content_digest
+from backend.schemas import PatchProposal, PrivateSourceManifest, ScanResponse, content_digest
 from backend.services.errors import ServiceError
 from backend.services.storage import AnalysisStorage, _DDL_V3
 
@@ -161,3 +161,39 @@ def test_valid_json_with_changed_review_bytes_fails_its_artifact_digest(patch_en
     with pytest.raises(ServiceError) as error:
         env.storage.get_patch(proposal.manifest.patch_id)
     assert error.value.code == "source_conflict" and "PRIVATE" not in str(error.value)
+
+
+@pytest.mark.parametrize("column,value", [
+    ("patch_id", "patch_" + "b" * 32),
+    ("analysis_id", "analysis_" + "b" * 32),
+    ("optimization_id", "opt_" + "b" * 64),
+    ("digest", "b" * 64),
+])
+def test_valid_patch_payload_cannot_hide_corrupt_storage_identity(patch_environment, column, value):
+    env = patch_environment
+    sample = env.build_patch()
+    proposal = sample.proposal(persist=True)
+    identifier = value if column == "patch_id" else proposal.manifest.patch_id
+    # Simulate storage corruption, restoring the immutable trigger immediately.
+    # The column is from the fixed parametrization, never caller-controlled SQL.
+    with sqlite3.connect(env.directory / "analyses.sqlite3") as connection:
+        original = connection.execute("SELECT payload FROM patches WHERE patch_id = ?", (proposal.manifest.patch_id,)).fetchone()[0]
+        trigger = connection.execute("SELECT sql FROM sqlite_master WHERE name = 'immutable_patch_update'").fetchone()[0]
+        connection.execute("DROP TRIGGER immutable_patch_update")
+        connection.execute(f"UPDATE patches SET {column} = ? WHERE patch_id = ?", (value, proposal.manifest.patch_id))
+        connection.execute(trigger)
+        retained = connection.execute("SELECT payload FROM patches WHERE patch_id = ?", (identifier,)).fetchone()[0]
+        assert retained == original and PatchProposal.model_validate_json(retained) == proposal
+
+    assert proposal.manifest.provenance == "test"
+    restarted = AnalysisStorage(env.settings)
+    try:
+        for storage in (env.storage, restarted):
+            with pytest.raises(ServiceError) as error:
+                storage.get_patch(identifier)
+            assert error.value.code == "source_conflict"
+        assert restarted.get_source_manifest(sample.analysis.analysis_id) == sample.manifest
+        assert restarted.get_optimization(sample.record.optimization_id) == sample.record
+        assert (env.repository / "app.py").read_bytes() == sample.raw
+    finally:
+        restarted.close()
