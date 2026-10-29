@@ -145,6 +145,24 @@ def outer():
     assert nodes[1].function_name == "outer.inner"
 
 
+@pytest.mark.parametrize("unrelated", [
+    "def run(client):\n    " + CALL,
+    "from sdk_usage import client\n" + CALL,
+    "def OpenAI():\n    return unrelated\nclient = OpenAI()\n" + CALL,
+])
+def test_sdk_import_in_another_file_does_not_authenticate_receivers(tmp_path, unrelated):
+    # A repository-wide SDK marker cannot establish this file's receiver binding.
+    source(tmp_path, PREAMBLE + CALL, "sdk_usage.py")
+    source(tmp_path, unrelated, "unrelated.py")
+
+    result = scan_repository(str(tmp_path))
+
+    assert result.complete and result.scanned_files_count == 2
+    assert [(node.file_path, node.current_model) for node in result.nodes] == [
+        ("sdk_usage.py", "fixture/model"),
+    ]
+
+
 @pytest.mark.parametrize("shadow", ["openai.py", "openai/__init__.py", "agent/openai.py"])
 def test_local_openai_modules_make_sdk_provenance_ambiguous(tmp_path, shadow):
     source(tmp_path, "raise RuntimeError('LOCAL MODULE MUST NEVER BE IMPORTED')\n", shadow)
