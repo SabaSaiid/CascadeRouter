@@ -1,7 +1,7 @@
 {
   "schema_version": "cascaderouter.source-inventory.v1",
   "version": null,
-  "source_commit": "d59f08d480e0a7d95f2c82f3b80549d6024db13e",
+  "source_commit": "3ac66cd7ec32208ca22558b4df0aefb170662e7f",
   "scope": "Selected tracked runtime/frontend/contract/build inputs; canonical Git blob bytes, not a built distribution or target-source snapshot",
   "artifacts": [
     {
