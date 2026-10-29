@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from backend import __version__
@@ -54,3 +55,27 @@ def test_cors_rejects_unknown_origin():
         headers={"Origin": "http://evil.example", "Access-Control-Request-Method": "GET"},
     )
     assert "access-control-allow-origin" not in res.headers
+
+
+def test_explicit_settings_override_routes():
+    import dataclasses
+
+    from backend.config import load_settings
+
+    s = dataclasses.replace(load_settings(), environment="production", data_source_mode="recorded")
+    body = TestClient(create_app(s)).get("/api/health").json()
+    assert (body["environment"], body["data_source"]) == ("production", "recorded")
+
+
+def test_importing_main_does_not_build_app(monkeypatch):
+    import importlib
+
+    import backend.main as main
+
+    monkeypatch.setenv("PORT", "abc")  # would raise if config were read at import
+    importlib.reload(main)
+    assert "app" not in vars(main)
+    monkeypatch.delenv("PORT")
+    assert main.app is main.app  # built lazily, once
+    with pytest.raises(AttributeError):
+        main.not_there
