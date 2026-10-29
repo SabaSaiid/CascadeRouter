@@ -25,14 +25,12 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
-          pip install pytest pytest-asyncio pytest-cov pydantic pyyaml fastapi httpx
 
       - name: Run Backend Unit & Integration Tests
         env:
-          NEBIUS_API_KEY: "mock-key-for-ci"
-          DATA_SOURCE_MODE: "mock"
+          NEBIUS_API_KEY: ""
         run: |
-          python -m pytest tests/ -v --ignore=tests/fixtures/ || true
+          python -m pytest tests/ -v --ignore=tests/fixtures/
 
   frontend-check:
     name: Frontend Typecheck & Build
