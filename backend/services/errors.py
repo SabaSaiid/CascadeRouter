@@ -5,6 +5,7 @@ from backend.schemas import ERROR_MESSAGES
 STATUS_CODES = {
     "invalid_request": 422, "repository_forbidden": 403, "repository_unavailable": 422,
     "not_found": 404, "source_conflict": 409, "request_too_large": 413,
+    "source_evidence_unavailable": 409,
     "capacity_exceeded": 429, "capability_unavailable": 503, "internal_error": 500,
 }
 

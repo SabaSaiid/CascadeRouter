@@ -86,17 +86,20 @@ plan (16 nodes, 9 models, 64 cases, at most 1,024 units) and the configured
 `max_benchmark_units`. The total JSON response must fit `max_job_result_bytes`.
 There is no background optimization queue or additional worker pool.
 
-No new persistent optimization store is needed: decisions are a deterministic
-projection of the retained job and exact approved input/configuration identities.
-Responses retain digests sufficient to identify those inputs. Repeating the same
-validated snapshot/configuration yields the same result and policy bytes. Old
-scan snapshots, job plans, terminal results and benchmark versions are never updated.
+Phase 4.7 adds an immutable optimization record to the existing SQLite store.
+The additive response field `optimization_id` is `opt_` plus the SHA-256 digest
+of the canonical validated response excluding that field. The result and policy
+digests retain their original meanings. Repeated identical responses reuse the
+same ID without overwriting anything. Records bind the retained analysis and job;
+all other record IDs remain immutable. Capacity exhaustion returns `429`.
 
 The public scan contract does not retain per-file source fingerprints. Here,
 source identity means the exact immutable analysis payload bound to the original
 capture, not proof that today's working directory is unchanged. A policy is bound
 to that snapshot and is not automatically applied. Deployment/current-source
-validation belongs to a subsequent approved phase. Operator approval of bytes
+validation for patch proposals is now provided by [patches.md](patches.md), using
+private evidence captured only during new scans. Runtime deployment and application
+remain separate gates. Operator approval of bytes
 cannot prove historical measurement authenticity; protected settings/manifest
 permissions and review of genuine capture origins remain necessary.
 
@@ -119,7 +122,8 @@ Example request shape (identifiers must reference real retained entities):
 ```
 
 No paths, costs, quality numbers, model selections or approval labels are accepted.
-The response contains `result` and `policy`. Per-node statuses are `recommended`,
+The response contains `result`, `policy` and the persisted `optimization_id`.
+Per-node statuses are `recommended`,
 `baseline_retained`, `inconclusive` and `unavailable`; unresolved decisions have
 null selected model and savings. Eligibility/exclusion reasons are controlled
 codes. Each candidate retains its actual planned model version, coverage counts,
@@ -147,7 +151,8 @@ plus an explicitly configured threshold. It is not a per-run eligibility decisio
 or a fresh integrity probe. The frontend's current types/client remain unchanged;
 they still expect older mock fields and silently substitute mocks on errors. A
 coordinated consumer update is required. This backend never returns those mocks,
-fabricated regression success, patch diffs or invented fallback models.
+fabricated regression success or invented fallback models. Patch diffs are exposed
+only through the separate authorized patch API.
 
 ## Pure YAML policy generation
 

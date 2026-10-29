@@ -7,13 +7,16 @@
 configuration and unit tests remain authoritative. Phase 4.2 adds the local
 FastAPI factory, repository authorizer, compiler adapter and immutable SQLite
 snapshots. Phase 4.3 adds persistent local benchmark jobs and approved recorded-run
-replay, documented in [benchmark-jobs.md](benchmark-jobs.md). Patching remains absent.
+replay, documented in [benchmark-jobs.md](benchmark-jobs.md).
 Phase 4.4 adds guarded, operator-approved captured-output evaluation and evidence
 metrics; see [offline-benchmark.md](offline-benchmark.md). It adds no inference
 runtime, provider SDK or outbound execution.
 Phase 4.5 adds reference-only offline optimization and pure safe-YAML policy
 generation; see [optimization.md](optimization.md) for its explicit objective,
 approval gates, request/response contracts and current consumer limitations.
+Phase 4.6 adds local runtime routing; see [runtime-routing.md](runtime-routing.md).
+Phase 4.7 adds source-verified patch proposals, private scan-version evidence and
+immutable optimization identities; see [patches.md](patches.md). No patch is applied.
 
 **Mandatory zero-cost policy:** this and all subsequent backend phases must remain
 local and independent of paid inference/search providers. No provider credentials,
@@ -322,6 +325,7 @@ repository snapshot or a runtime graph.
 | `403` | `repository_forbidden` |
 | `404` | `not_found` |
 | `409` | `source_conflict`, including duplicate analysis IDs and incompatible/stale results |
+| `409` | `source_evidence_unavailable`, requiring a new analysis before source proposals |
 | `413` | `request_too_large` |
 | `429` | `capacity_exceeded` |
 | `503` | `capability_unavailable`, including deadline and storage availability failures |
@@ -354,13 +358,19 @@ not create replacement threads. Admission limits are per application process;
 run one process through the supported entry point.
 
 Storage requires an existing absolute local directory outside **every** permitted
-repository root. It uses `analyses.sqlite3`, now schema `PRAGMA user_version = 3`
-after transactional migrations preserving version-1 snapshots and version-2 jobs,
+repository root. It uses `analyses.sqlite3`, now schema `PRAGMA user_version = 4`
+after transactional migrations preserving version-1 snapshots, version-2 jobs
+and version-3 benchmark versions,
 parameterized values, transactions, a primary key and update/delete rejection
 triggers. Unknown/corrupt schemas are unavailable and are never dropped or
-migrated implicitly. Payloads are validated public `ScanResponse` JSON plus
-timestamp/schema/completion metadata; no source, prompts, fingerprints, graph
-evidence or credentials are persisted. Retrieval validates both JSON and metadata.
+migrated implicitly. Analysis payloads remain validated public `ScanResponse` JSON
+plus timestamp/schema/completion metadata. New complete scans also atomically
+retain a separate private source manifest containing guarded-read hashes and
+file identities. Historical snapshots are never backfilled. Optimization and patch
+records are immutable; bounded patch artifacts contain only approved model-literal
+changes. Full source, prompts, graph evidence and credentials are not persisted
+by this patch capability. Private manifests never enter public scan responses.
+Retrieval validates payloads, metadata and artifact digests.
 The default caps are 256 records (maximum 4,096) and 16 MiB per record (maximum
 64 MiB); exhaustion returns `429`. There is no automatic expiration or deletion.
 The future job-retention setting does not expire analysis snapshots. Operators
@@ -460,7 +470,7 @@ case/profile version references. It returns honest unavailable decisions when
 only test evidence or no approved executor exists. Detailed semantics and policy
 limitations are in [optimization.md](optimization.md).
 
-New local evaluation, runtime routing, patching and regression execution require
-separate implementations and acceptance gates under the zero-cost policy. Paid
+Patch application and target regression execution require separate implementations
+and acceptance gates under the zero-cost policy. Paid
 provider dependencies/calls require explicit new authorization; they are not an
 implicit later phase.

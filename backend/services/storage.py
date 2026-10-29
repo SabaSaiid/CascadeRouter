@@ -7,6 +7,7 @@ It must not be writable by an untrusted local principal. This is not an OS sandb
 from __future__ import annotations
 
 import sqlite3
+import hashlib
 import os
 import stat
 import threading
@@ -22,6 +23,7 @@ from backend.config import BackendConfig
 from backend.schemas import (
     API_SCHEMA_VERSION, JOB_TRANSITIONS, TERMINAL_JOB_STATES, BenchmarkMeasurement,
     BenchmarkPlan, BenchmarkRequest, BenchmarkVersionRegistration, JobError, JobProgress, JobResponse, ScanResponse,
+    OptimizationRecord, OptimizationResponse, PatchProposal, PrivateSourceManifest, content_digest,
 )
 from .errors import ServiceError
 
@@ -50,13 +52,26 @@ _DDL_V2 = _DDL_V1 + (
     "BEGIN SELECT RAISE(ABORT, 'invalid job transition'); END",
     "CREATE TRIGGER immutable_job_delete BEFORE DELETE ON jobs BEGIN SELECT RAISE(ABORT, 'retained job'); END",
 )
-_DDL = _DDL_V2 + (
+_DDL_V3 = _DDL_V2 + (
     "CREATE TABLE benchmark_versions (kind TEXT NOT NULL, identifier TEXT NOT NULL, version TEXT NOT NULL, "
     "digest TEXT NOT NULL, provenance TEXT NOT NULL, PRIMARY KEY (kind, identifier, version, provenance))",
     "CREATE TRIGGER immutable_benchmark_version_update BEFORE UPDATE ON benchmark_versions "
     "BEGIN SELECT RAISE(ABORT, 'immutable benchmark version'); END",
     "CREATE TRIGGER immutable_benchmark_version_delete BEFORE DELETE ON benchmark_versions "
     "BEGIN SELECT RAISE(ABORT, 'retained benchmark version'); END",
+)
+_DDL = _DDL_V3 + (
+    "CREATE TABLE source_manifests (analysis_id TEXT PRIMARY KEY NOT NULL REFERENCES analyses(analysis_id), digest TEXT NOT NULL, payload BLOB NOT NULL)",
+    "CREATE TRIGGER immutable_source_update BEFORE UPDATE ON source_manifests BEGIN SELECT RAISE(ABORT, 'immutable source manifest'); END",
+    "CREATE TRIGGER immutable_source_delete BEFORE DELETE ON source_manifests BEGIN SELECT RAISE(ABORT, 'retained source manifest'); END",
+    "CREATE TABLE optimizations (optimization_id TEXT PRIMARY KEY NOT NULL, analysis_id TEXT NOT NULL REFERENCES analyses(analysis_id), "
+    "run_id TEXT NOT NULL REFERENCES jobs(run_id), digest TEXT NOT NULL, payload BLOB NOT NULL)",
+    "CREATE TRIGGER immutable_optimization_update BEFORE UPDATE ON optimizations BEGIN SELECT RAISE(ABORT, 'immutable optimization'); END",
+    "CREATE TRIGGER immutable_optimization_delete BEFORE DELETE ON optimizations BEGIN SELECT RAISE(ABORT, 'retained optimization'); END",
+    "CREATE TABLE patches (patch_id TEXT PRIMARY KEY NOT NULL, analysis_id TEXT NOT NULL REFERENCES source_manifests(analysis_id), "
+    "optimization_id TEXT NOT NULL REFERENCES optimizations(optimization_id), digest TEXT NOT NULL, payload BLOB NOT NULL)",
+    "CREATE TRIGGER immutable_patch_update BEFORE UPDATE ON patches BEGIN SELECT RAISE(ABORT, 'immutable patch'); END",
+    "CREATE TRIGGER immutable_patch_delete BEFORE DELETE ON patches BEGIN SELECT RAISE(ABORT, 'retained patch'); END",
 )
 
 
@@ -84,13 +99,13 @@ class AnalysisStorage:
                 if version == 0 and not objects:
                     for statement in _DDL:
                         connection.execute(statement)
-                    connection.execute("PRAGMA user_version = 3")
-                elif version in (1, 2):
+                    connection.execute("PRAGMA user_version = 4")
+                elif version in (1, 2, 3):
                     self._check_schema(connection, version=version)
-                    previous = _DDL_V1 if version == 1 else _DDL_V2
+                    previous = {1: _DDL_V1, 2: _DDL_V2, 3: _DDL_V3}[version]
                     for statement in _DDL[len(previous):]:
                         connection.execute(statement)
-                    connection.execute("PRAGMA user_version = 3")
+                    connection.execute("PRAGMA user_version = 4")
                 else:
                     self._check_schema(connection)
                 connection.commit()
@@ -100,10 +115,10 @@ class AnalysisStorage:
             self.closed = True
             raise ServiceError("capability_unavailable") from None
 
-    def _check_schema(self, connection: sqlite3.Connection, version: int = 3) -> None:
+    def _check_schema(self, connection: sqlite3.Connection, version: int = 4) -> None:
         actual_version = connection.execute("PRAGMA user_version").fetchone()[0]
         objects = connection.execute("SELECT sql FROM sqlite_master WHERE name NOT GLOB 'sqlite_*'").fetchall()
-        expected = _DDL_V1 if version == 1 else _DDL_V2 if version == 2 else _DDL
+        expected = {1: _DDL_V1, 2: _DDL_V2, 3: _DDL_V3, 4: _DDL}[version]
         if actual_version != version or {row[0] for row in objects} != set(expected) or len(objects) != len(expected):
             raise ServiceError("capability_unavailable")
 
@@ -134,11 +149,20 @@ class AnalysisStorage:
                 finally:
                     connection.close()  # Rolls back any uncommitted transaction.
 
-    def save(self, response: ScanResponse) -> bytes:
+    def save(self, response: ScanResponse, *, source_manifest: PrivateSourceManifest | None = None) -> bytes:
         response = ScanResponse.model_validate(response)
         payload = response.model_dump_json().encode("utf-8")
         if len(payload) > self.max_bytes:
             raise ServiceError("capacity_exceeded")
+        private_payload = None
+        if source_manifest is not None:
+            source_manifest = PrivateSourceManifest.model_validate(source_manifest)
+            if (source_manifest.analysis_id != response.analysis_id or source_manifest.digest is None
+                    or source_manifest.analysis_digest != hashlib.sha256(payload).hexdigest()):
+                raise ServiceError("source_conflict")
+            private_payload = source_manifest.model_dump_json().encode("utf-8")
+            if len(private_payload) > 4 * 1024 * 1024:
+                raise ServiceError("capacity_exceeded")
         try:
             with self._connection() as connection:
                 self._check_schema(connection)
@@ -153,6 +177,9 @@ class AnalysisStorage:
                     (response.analysis_id, response.model_dump(mode="json", include={"timestamp"})["timestamp"], API_SCHEMA_VERSION,
                      "complete" if response.complete else "partial", payload),
                 )
+                if private_payload is not None:
+                    connection.execute("INSERT INTO source_manifests (analysis_id, digest, payload) VALUES (?, ?, ?)",
+                                       (response.analysis_id, source_manifest.digest, private_payload))
                 connection.commit()
         except sqlite3.IntegrityError:
             raise ServiceError("source_conflict") from None
@@ -269,6 +296,115 @@ class AnalysisStorage:
     def get_job(self, run_id: str) -> JobResponse:
         with self._job_connection() as connection:
             return self._job_row(connection, run_id)
+
+    def get_source_manifest(self, analysis_id):
+        with self._job_connection() as connection:
+            row = connection.execute("SELECT digest, length(payload) FROM source_manifests WHERE analysis_id = ?", (analysis_id,)).fetchone()
+            if row is None:
+                raise ServiceError("source_evidence_unavailable")  # Never backfill a historical scan.
+            if type(row[1]) is not int or not 0 < row[1] <= 4 * 1024 * 1024:
+                raise ServiceError("source_conflict")
+            payload = connection.execute("SELECT payload FROM source_manifests WHERE analysis_id = ?", (analysis_id,)).fetchone()[0]
+            manifest = PrivateSourceManifest.model_validate_json(payload)
+            if manifest.digest != row[0] or manifest.analysis_id != analysis_id:
+                raise ServiceError("source_conflict")
+            return manifest
+
+    def save_optimization(self, response):
+        response = OptimizationResponse.model_validate(response)
+        digest = content_digest(response, exclude={"optimization_id"})
+        identifier = "opt_" + digest
+        if response.optimization_id not in (None, identifier):
+            raise ServiceError("source_conflict")
+        response = OptimizationResponse.model_validate({**response.model_dump(), "optimization_id": identifier})
+        record = OptimizationRecord(optimization_id=identifier, digest=digest, response=response)
+        payload = record.model_dump_json().encode("utf-8")
+        if len(payload) > self.max_result_bytes + 65536 or len(response.model_dump_json().encode("utf-8")) > self.max_result_bytes:
+            raise ServiceError("capacity_exceeded")
+        with self._job_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            job = self._job_row(connection, response.result.run_id)
+            if content_digest(job) != response.result.benchmark_digest or job.plan != response.result.plan:
+                raise ServiceError("source_conflict")
+            existing = connection.execute("SELECT length(payload) FROM optimizations WHERE optimization_id = ?", (identifier,)).fetchone()
+            if existing is not None:
+                if type(existing[0]) is not int or not 0 < existing[0] <= self.max_result_bytes + 65536:
+                    raise ServiceError("source_conflict")
+                retained = connection.execute("SELECT payload FROM optimizations WHERE optimization_id = ?", (identifier,)).fetchone()[0]
+                if retained != payload:
+                    raise ServiceError("source_conflict")
+                return response
+            if connection.execute("SELECT COUNT(*) FROM optimizations").fetchone()[0] >= self.max_jobs:
+                raise ServiceError("capacity_exceeded")
+            connection.execute("INSERT INTO optimizations (optimization_id, analysis_id, run_id, digest, payload) VALUES (?, ?, ?, ?, ?)",
+                               (identifier, job.plan.analysis_id, job.run_id, digest, payload))
+            connection.commit()
+        return response
+
+    def get_optimization(self, identifier):
+        with self._job_connection() as connection:
+            row = connection.execute("SELECT analysis_id, run_id, digest, length(payload) FROM optimizations WHERE optimization_id = ?", (identifier,)).fetchone()
+            if row is None:
+                raise ServiceError("not_found")
+            if type(row[3]) is not int or not 0 < row[3] <= self.max_result_bytes + 65536:
+                raise ServiceError("source_conflict")
+            payload = connection.execute("SELECT payload FROM optimizations WHERE optimization_id = ?", (identifier,)).fetchone()[0]
+            record = OptimizationRecord.model_validate_json(payload)
+            if (record.optimization_id != identifier or record.digest != row[2]
+                    or record.response.result.plan.analysis_id != row[0] or record.response.result.run_id != row[1]):
+                raise ServiceError("source_conflict")
+            return record
+
+    def save_patch(self, proposal):
+        proposal = PatchProposal.model_validate(proposal)
+        manifest = proposal.manifest
+        source = self.get_source_manifest(manifest.analysis_id)
+        optimization = self.get_optimization(manifest.optimization_id)
+        response = optimization.response
+        if (manifest.source_manifest_digest != source.digest or manifest.optimization_digest != optimization.digest
+                or manifest.analysis_id != response.result.plan.analysis_id or manifest.provenance != response.result.provenance
+                or manifest.policy_digest != response.policy.digest
+                or not set(manifest.requested_node_ids) <= set(response.result.plan.node_ids)):
+            raise ServiceError("source_conflict")
+        analysis = self.get(manifest.analysis_id)
+        nodes = {item.node_id: item for item in analysis.nodes}
+        versions = {item.file_path: item for item in source.files}
+        decisions = {item.node_id: item for item in response.result.decisions}
+        for file in manifest.files:
+            version = versions.get(file.file_path)
+            if version is None or file.original_digest != version.sha256:
+                raise ServiceError("source_conflict")
+            for edit in file.edits:
+                node, decision = nodes.get(edit.node_id), decisions.get(edit.node_id)
+                if (node is None or decision is None or node.file_path != file.file_path or node.model_resolution != "literal"
+                        or decision.status != "recommended" or node.current_model != edit.old_model_id
+                        or edit.old_model_id != decision.baseline_model_id or edit.proposed_model_id != decision.selected_model_id
+                        or edit.end_byte > version.size):
+                    raise ServiceError("source_conflict")
+        payload = proposal.model_dump_json().encode("utf-8")
+        if len(payload) > self.max_result_bytes:
+            raise ServiceError("capacity_exceeded")
+        with self._job_connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute("SELECT COUNT(*) FROM patches").fetchone()[0] >= self.max_jobs:
+                raise ServiceError("capacity_exceeded")
+            connection.execute("INSERT INTO patches (patch_id, analysis_id, optimization_id, digest, payload) VALUES (?, ?, ?, ?, ?)",
+                               (manifest.patch_id, manifest.analysis_id, manifest.optimization_id, proposal.digest, payload))
+            connection.commit()
+
+    def get_patch(self, identifier):
+        with self._job_connection() as connection:
+            row = connection.execute("SELECT analysis_id, optimization_id, digest, length(payload) FROM patches WHERE patch_id = ?", (identifier,)).fetchone()
+            if row is None:
+                raise ServiceError("not_found")
+            if type(row[3]) is not int or not 0 < row[3] <= self.max_result_bytes:
+                raise ServiceError("source_conflict")
+            payload = connection.execute("SELECT payload FROM patches WHERE patch_id = ?", (identifier,)).fetchone()[0]
+            proposal = PatchProposal.model_validate_json(payload)
+            if (proposal.manifest.patch_id != identifier or proposal.manifest.analysis_id != row[0]
+                    or proposal.manifest.optimization_id != row[1] or proposal.digest != row[2]):
+                raise ServiceError("source_conflict")
+            return proposal
 
     def transition_job(self, run_id: str, expected: tuple[str, ...], *, status: str | None = None,
                        measurement: BenchmarkMeasurement | None = None, cancellation_reason: str | None = None,

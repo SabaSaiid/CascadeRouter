@@ -1,8 +1,9 @@
 """First-party API contract v1, shared by routes, adapter and persistence.
 
-Public messages come from fixed catalogs. Source text, credentials, fingerprints
-and internal graph evidence have no fields in this contract. Validation performs
-no filesystem access and does not authorize a repository.
+Public messages come from fixed catalogs. Scan responses omit source text,
+credentials, fingerprints and internal graph evidence. Private source evidence
+and sensitive literal-only patch artifacts have separate models. Validation
+performs no filesystem access and does not authorize a repository.
 """
 
 from __future__ import annotations
@@ -107,6 +108,7 @@ ERROR_MESSAGES = MappingProxyType({
     "repository_unavailable": "The repository could not be safely analyzed.",
     "not_found": "The requested resource was not found.",
     "source_conflict": "The source version no longer matches the analysis.",
+    "source_evidence_unavailable": "A new analysis is required before proposing source changes.",
     "request_too_large": "The request exceeds the permitted size.",
     "capacity_exceeded": "The service has reached its capacity limit.",
     "capability_unavailable": "The requested capability is unavailable.",
@@ -1219,6 +1221,10 @@ def optimization_threshold(value):
     return value
 
 
+OptimizationId = Annotated[str, Field(min_length=68, max_length=68, pattern=r"^opt_[0-9a-f]{64}$")]
+PatchId = Annotated[str, Field(min_length=38, max_length=38, pattern=r"^patch_[0-9a-f]{32}$")]
+
+
 class OptimizationRequest(APIModel):
     analysis_id: AnalysisId
     run_id: RunId
@@ -1446,6 +1452,7 @@ class RoutingPolicyArtifact(APIModel):
 class OptimizationResponse(APIModel):
     result: OptimizationResult
     policy: RoutingPolicyArtifact
+    optimization_id: OptimizationId | None = None
 
     @model_validator(mode="after")
     def consistent_response(self):
@@ -1592,3 +1599,195 @@ class RuntimeResult(APIModel):
         if self.worker_still_running and self.status not in ("timed_out", "cancelled", "unavailable"):
             raise ValueError("Only interrupted waits can report continuing work.")
         return self
+
+
+# Private scan evidence is persisted separately and never nested in ScanResponse.
+FileIdentity = Annotated[int, Field(ge=0, le=2**128 - 1)]
+FileTime = Annotated[int, Field(ge=-(2**63), le=2**63 - 1)]
+
+
+class SourceFileVersion(APIModel):
+    file_path: Annotated[str, Field(min_length=1, max_length=4096)]
+    sha256: Digest
+    device: FileIdentity
+    inode: FileIdentity
+    size: Annotated[int, Field(ge=0, le=1024 * 1024)]
+    mtime_ns: FileTime
+    ctime_ns: FileTime
+
+    _path = field_validator("file_path")(_relative_path)
+
+
+class PrivateSourceManifest(APIModel):
+    schema_version: Literal["cascaderouter.sources.v1"] = "cascaderouter.sources.v1"
+    analysis_id: AnalysisId
+    analysis_digest: Digest
+    root_device: FileIdentity
+    root_inode: FileIdentity
+    complete: bool
+    files: tuple[SourceFileVersion, ...] = Field(max_length=500, repr=False)
+    digest: Digest | None = None
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def bounded_files(cls, value):
+        return _sequence(value, 500)
+
+    @model_validator(mode="after")
+    def integrity(self):
+        paths = tuple(item.file_path for item in self.files)
+        if len(set(paths)) != len(paths) or paths != tuple(sorted(paths)):
+            raise ValueError("Source evidence must use unique canonical ordering.")
+        if sum(item.size for item in self.files) > 25 * 1024 * 1024:
+            raise ValueError("Source evidence exceeds the scan budget.")
+        if self.digest is not None and self.digest != content_digest(self, exclude={"digest"}):
+            raise ValueError("Source evidence changed.")
+        return self
+
+
+class OptimizationRecord(APIModel):
+    optimization_id: OptimizationId
+    digest: Digest
+    response: OptimizationResponse
+
+    @model_validator(mode="after")
+    def integrity(self):
+        actual = content_digest(self.response, exclude={"optimization_id"})
+        if (self.digest != actual or self.optimization_id != "opt_" + actual
+                or self.response.optimization_id != self.optimization_id):
+            raise ValueError("Optimization identity must match retained content.")
+        return self
+
+
+PatchOmissionReason = Literal[
+    "baseline_retained", "decision_inconclusive", "model_unresolved", "baseline_mismatch",
+    "already_selected", "unsupported_call", "unsupported_encoding", "unsupported_literal",
+]
+
+
+class PatchRequest(APIModel):
+    analysis_id: AnalysisId
+    optimization_id: OptimizationId
+    transformation: Literal["literal_model_id.v1"] = "literal_model_id.v1"
+    node_ids: tuple[NodeId, ...] | None = Field(default=None, min_length=1, max_length=16)
+
+    @field_validator("node_ids", mode="before")
+    @classmethod
+    def nodes(cls, value):
+        return None if value is None else _sequence(value, 16)
+
+    @model_validator(mode="after")
+    def unique_nodes(self):
+        if self.node_ids is not None and len(set(self.node_ids)) != len(self.node_ids):
+            raise ValueError("Patch selections must be distinct.")
+        return self
+
+
+class PatchEdit(APIModel):
+    node_id: NodeId
+    old_model_id: ModelIdentifier
+    proposed_model_id: ModelIdentifier
+    start_byte: Count
+    end_byte: Count
+    _models = field_validator("old_model_id", "proposed_model_id")(LLMNode.safe_model_identifier)
+
+    @model_validator(mode="after")
+    def changed_literal(self):
+        if self.end_byte <= self.start_byte or self.old_model_id == self.proposed_model_id:
+            raise ValueError("An edit must change one nonempty literal range.")
+        return self
+
+
+class PatchFile(APIModel):
+    file_path: Annotated[str, Field(min_length=1, max_length=4096)]
+    original_digest: Digest
+    proposed_digest: Digest
+    edits: tuple[PatchEdit, ...] = Field(min_length=1, max_length=16)
+    _path = field_validator("file_path")(_relative_path)
+
+    @field_validator("edits", mode="before")
+    @classmethod
+    def bounded_edits(cls, value):
+        return _sequence(value, 16)
+
+    @model_validator(mode="after")
+    def non_overlapping(self):
+        if self.original_digest == self.proposed_digest or len({item.node_id for item in self.edits}) != len(self.edits):
+            raise ValueError("Edits must identify distinct changes.")
+        if any(left.end_byte > right.start_byte for left, right in zip(self.edits, self.edits[1:])):
+            raise ValueError("Edit ranges must be ordered and non-overlapping.")
+        return self
+
+
+class PatchOmission(APIModel):
+    node_id: NodeId
+    reason: PatchOmissionReason
+
+
+class PatchManifest(APIModel):
+    schema_version: Literal["cascaderouter.patch.v1"] = "cascaderouter.patch.v1"
+    patch_id: PatchId
+    analysis_id: AnalysisId
+    source_manifest_digest: Digest
+    optimization_id: OptimizationId
+    optimization_digest: Digest
+    policy_digest: Digest | None
+    created_at: datetime
+    transformation: Literal["literal_model_id.v1"] = "literal_model_id.v1"
+    patch_format: Literal["literal-spans.v1"] = "literal-spans.v1"
+    provenance: BenchmarkProvenance
+    status: Literal["proposed", "partial", "unavailable"]
+    requested_node_ids: tuple[NodeId, ...] = Field(min_length=1, max_length=16)
+    files: tuple[PatchFile, ...] = Field(max_length=16)
+    omissions: tuple[PatchOmission, ...] = Field(max_length=16)
+    complete_for_requested_nodes: bool
+
+    _time = field_validator("created_at", mode="before")(ScanResponse.supplied_timestamp)
+
+    @field_serializer("created_at", when_used="json")
+    def time_json(self, value):
+        return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+    @field_validator("files", "omissions", "requested_node_ids", mode="before")
+    @classmethod
+    def bounds(cls, value):
+        return _sequence(value, 16)
+
+    @model_validator(mode="after")
+    def coverage(self):
+        changed = tuple(edit.node_id for file in self.files for edit in file.edits)
+        omitted = tuple(item.node_id for item in self.omissions)
+        all_nodes = changed + omitted
+        if (len(all_nodes) > 16 or len(set(all_nodes)) != len(all_nodes)
+                or self.requested_node_ids != tuple(sorted(set(all_nodes)))
+                or tuple(file.file_path for file in self.files) != tuple(sorted({file.file_path for file in self.files}))):
+            raise ValueError("Patch coverage and file identities must be exact.")
+        expected = "unavailable" if not changed else "partial" if omitted else "proposed"
+        if self.status != expected or self.complete_for_requested_nodes != (bool(changed) and not omitted):
+            raise ValueError("A proposal cannot claim unsupported coverage.")
+        return self
+
+
+class PatchProposal(APIModel):
+    manifest: PatchManifest
+    review_diff: Annotated[str, Field(max_length=524288)] = Field(repr=False)
+    artifact_digest: Digest
+    digest: Digest
+
+    @model_validator(mode="after")
+    def integrity(self):
+        if (len(self.review_diff.encode("utf-8")) > 524288
+                or hashlib.sha256(self.review_diff.encode("utf-8")).hexdigest() != self.artifact_digest
+                or content_digest(self, exclude={"digest"}) != self.digest
+                or bool(self.review_diff) != bool(self.manifest.files)):
+            raise ValueError("Patch artifact integrity is invalid.")
+        return self
+
+
+class PatchAccepted(APIModel):
+    patch_id: PatchId
+    status: Literal["proposed", "partial", "unavailable"]
+    changed_nodes: Annotated[int, Field(ge=0, le=16)]
+    omitted_nodes: Annotated[int, Field(ge=0, le=16)]
+    complete_for_requested_nodes: bool
+    status_url: Annotated[str, Field(pattern=r"^/api/patches/patch_[0-9a-f]{32}$")]

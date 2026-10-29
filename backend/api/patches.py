@@ -1,0 +1,32 @@
+"""Reference-only patch creation and protected artifact review; no apply route."""
+
+from fastapi import APIRouter, Request, Response
+
+from backend.schemas import PatchAccepted, PatchId, PatchProposal, PatchRequest
+from backend.services.errors import ServiceError
+from .scan import ERRORS
+
+
+router = APIRouter(prefix="/api")
+
+
+async def _operation(request, operation):
+    scans, patches = request.app.state.scan_service, request.app.state.patch_service
+    if scans is None or patches is None:
+        raise ServiceError("capability_unavailable")
+    def work(check):
+        return operation(patches, check).model_dump_json().encode("utf-8")
+    payload = await scans._run(work, request.state.deadline)
+    return Response(payload, media_type="application/json")
+
+
+@router.post("/patches", status_code=201, response_model=PatchAccepted, responses=ERRORS)
+async def create_patch(body: PatchRequest, request: Request):
+    response = await _operation(request, lambda patches, check: patches.create(body, check))
+    response.status_code = 201
+    return response
+
+
+@router.get("/patches/{patch_id}", response_model=PatchProposal, responses=ERRORS)
+async def get_patch(patch_id: PatchId, request: Request):
+    return await _operation(request, lambda patches, check: patches.get(patch_id, check))

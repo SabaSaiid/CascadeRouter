@@ -60,6 +60,25 @@ class OptimizationService:
                 and self.jobs.executor.production_approved and self.jobs.registry.production_approved)
 
     def optimize(self, request: OptimizationRequest, check=lambda: None) -> OptimizationResponse:
+        response = self._evaluate(request, check)
+        check()
+        return self.scans.storage.save_optimization(response)
+
+    def revalidate(self, record, check=lambda: None):
+        response = record.response
+        plan = response.result.plan
+        if response.result.provenance != "recorded":
+            raise ServiceError("capability_unavailable")
+        request = OptimizationRequest(analysis_id=plan.analysis_id, run_id=response.result.run_id,
+                                      case_set=plan.case_set, evaluation_profile=plan.evaluation_profile)
+        fresh = self._evaluate(request, check)
+        if fresh.result.status == "unavailable":
+            raise ServiceError("capability_unavailable")
+        if fresh.model_dump(exclude={"optimization_id"}) != response.model_dump(exclude={"optimization_id"}):
+            raise ServiceError("source_conflict")
+        check()
+
+    def _evaluate(self, request: OptimizationRequest, check=lambda: None) -> OptimizationResponse:
         request = OptimizationRequest.model_validate(request)
         storage = self.scans.storage
         analysis = storage.get(request.analysis_id)

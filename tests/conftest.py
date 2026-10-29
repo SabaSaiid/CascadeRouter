@@ -236,3 +236,60 @@ def optimization_environment(offline_environment):
             snapshot=OptimizationSnapshot(job, Decimal("0.92"), "a" * 64))
     env.build_optimization = build
     return env
+
+
+@pytest.fixture
+def patch_environment(optimization_environment):
+    """Real guarded scans + synthetic test evidence; never production approval."""
+    import asyncio
+    import time
+    from backend.compiler.policy_generator import generate_policy
+    from backend.compiler.router_optimizer import optimize
+    from backend.schemas import OfflineRecordedUnit, OfflineRecordingDocument, OptimizationResponse, ScanResponse
+    from backend.services.offline_benchmark import OfflineBenchmarkExecutor
+    from backend.services.patches import PatchService
+    from backend.services.scan_service import ScanService
+    env = optimization_environment
+    original_make = env.make_offline
+    def make_all_nodes(**options):
+        registry, document, _ = original_make(**options)
+        data = document.model_dump(mode="json")
+        records = list(data["recordings"][0]["records"])
+        for index, node in enumerate(env.request.node_ids[1:], 1):
+            for unit in document.recordings[0].records:
+                values = unit.model_dump(mode="json", exclude={"digest"})
+                values.update(node_id=node, recording_id=unit.recording_id + "-node-" + str(index))
+                records.append(OfflineRecordedUnit(**values, digest=fixture_digest(values)).model_dump(mode="json"))
+        data["recordings"][0]["records"] = records
+        document = OfflineRecordingDocument.model_validate(data)
+        return registry, document, OfflineBenchmarkExecutor(registry, document)
+    env.make_offline = make_all_nodes
+
+    def build(raw=None, *, rates=None, outputs=None):
+        source = raw if raw is not None else b'from openai import OpenAI\nclient = OpenAI()\nresponse = client.chat.completions.create(model="local/baseline", messages=[])\n'
+        (env.repository / "app.py").write_bytes(source)
+        scans = ScanService(env.settings)
+        try:
+            encoded = asyncio.run(scans.scan(str(env.repository), time.monotonic() + 30))
+        finally:
+            scans.close()
+        env.analysis = ScanResponse.model_validate_json(encoded)
+        env.request = BenchmarkRequest.model_validate({**env.request.model_dump(), "analysis_id": env.analysis.analysis_id,
+                                                       "node_ids": [node.node_id for node in env.analysis.nodes]})
+        sample = env.build_optimization(rates=rates, outputs=outputs)
+        result = optimize(sample.snapshot)
+        response = env.storage.save_optimization(OptimizationResponse(result=result, policy=generate_policy(result)))
+        record = env.storage.get_optimization(response.optimization_id)
+        manifest = env.storage.get_source_manifest(env.analysis.analysis_id)
+        service = PatchService(env.settings, SimpleNamespace(storage=env.storage, access=env.access), None)
+        def proposal(nodes=None, *, patch_id="patch_" + "a" * 32, persist=False):
+            with env.access.authorize(str(env.repository)):
+                item = service._generate(env.analysis, manifest, record, nodes or result.plan.node_ids,
+                                         patch_id, "2026-10-29T00:00:00Z", lambda: None)
+            if persist:
+                env.storage.save_patch(item)
+            return item
+        return SimpleNamespace(analysis=env.analysis, manifest=manifest, record=record, sample=sample, service=service,
+                               proposal=proposal, raw=source, environment=env)
+    env.build_patch = build
+    return env

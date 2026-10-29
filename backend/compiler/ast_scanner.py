@@ -135,6 +135,30 @@ class ProvisionalScanResult:
 
 
 @dataclass(frozen=True)
+class _SourceVersion:
+    file_path: str
+    sha256: str
+    device: int
+    inode: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+
+
+_source_observer: ContextVar[Callable[[_SourceVersion], None] | None] = ContextVar("source_observer", default=None)
+
+
+@contextmanager
+def _capture_source_versions(observer: Callable[[_SourceVersion], None]):
+    """Private host hook: metadata from the actual guarded reads, never a rescan."""
+    token = _source_observer.set(observer)
+    try:
+        yield
+    finally:
+        _source_observer.reset(token)
+
+
+@dataclass(frozen=True)
 class _ParsedSource:
     """Ephemeral compiler hook data. ASTs never enter serialized scan results."""
 
@@ -142,6 +166,8 @@ class _ParsedSource:
     tree: ast.Module
     nodes: tuple[ProvisionalLLMNode, ...]
     calls: tuple[ast.Call, ...]
+    raw: bytes = field(default=b"", repr=False)
+    version: _SourceVersion | None = None
 
 
 class _RepositoryIdentityChanged(Exception):
@@ -424,6 +450,16 @@ class _RepositoryScan:
                 ):
                     self.report("file_changed", "Source changed while reading; analysis was skipped.", path)
                     return
+                current = path.lstat() if directory_fd is None else os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+                if (_is_link(current) or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+                        or (current.st_size, current.st_mtime_ns) != (opened.st_size, opened.st_mtime_ns)
+                        # Windows path stat and handle stat can expose different
+                        # ctime semantics after a write. Compare ctime across
+                        # handle reads above, and across path/handle on POSIX.
+                        or (os.name != "nt" and current.st_ctime_ns != opened.st_ctime_ns)
+                        or resolved.resolve(strict=True) != resolved):
+                    self.report("file_changed", "Source identity changed while reading; analysis was skipped.", path)
+                    return
         except (OSError, ValueError, RuntimeError):
             self.report("read_error", "Could not safely read this source file; it may be unreadable or missing.", path)
             return
@@ -457,7 +493,7 @@ class _RepositoryScan:
                     path,
                 )
                 self.scanned += 1
-                self.record_source(path, raw, tree, ())
+                self.record_source(path, raw, tree, (), info=opened)
                 return
             visitor = _CallVisitor(path.relative_to(self.root).as_posix(), tree, self.options)
             visitor.visit(tree)
@@ -475,19 +511,27 @@ class _RepositoryScan:
         self.nodes.extend(visitor.nodes)
         self.diagnostics.extend(visitor.diagnostics)
         self.scanned += 1
-        self.record_source(path, raw, tree, tuple(visitor.nodes), tuple(visitor.call_nodes))
+        self.record_source(path, raw, tree, tuple(visitor.nodes), tuple(visitor.call_nodes), info=opened)
 
     def record_source(
         self, path: Path, raw: bytes, tree: ast.Module,
         nodes: tuple[ProvisionalLLMNode, ...],
         calls: tuple[ast.Call, ...] = (),
+        *, info: os.stat_result | None = None,
     ) -> None:
         fingerprint = SourceFingerprint(
             path.relative_to(self.root).as_posix(), hashlib.sha256(raw).hexdigest(),
         )
         self.fingerprints.append(fingerprint)
+        version = None if info is None else _SourceVersion(
+            fingerprint.file_path, fingerprint.sha256, info.st_dev, info.st_ino,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+        )
+        observer = _source_observer.get()
+        if observer is not None and version is not None:
+            observer(version)
         if self.on_source is not None:
-            self.on_source(_ParsedSource(fingerprint, tree, nodes, calls))
+            self.on_source(_ParsedSource(fingerprint, tree, nodes, calls, raw, version))
 
     def local_sdk_shadow(self, path: Path) -> bool:
         # An absolute import is not sufficient SDK evidence if a local module or

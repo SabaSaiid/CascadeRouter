@@ -10,10 +10,12 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from backend.config import BackendConfig
+from backend.compiler.ast_scanner import _capture_source_versions
 from . import compiler_adapter
 from .errors import ServiceError
 from .repository_access import RepositoryAccess
 from .storage import AnalysisStorage
+from .source_manifests import SourceCapture
 
 
 _CONFLICT_CODES = frozenset({
@@ -70,13 +72,16 @@ class ScanService:
 
         def operation(check):
             with self.access.authorize(requested) as path:
-                response = compiler_adapter.analyze_for_api(str(path), analysis_id=analysis_id, timestamp=timestamp)
+                capture = SourceCapture(path)
+                with _capture_source_versions(capture.observe):
+                    response = compiler_adapter.analyze_for_api(str(path), analysis_id=analysis_id, timestamp=timestamp)
                 if response.repository_path != path.as_posix():
                     raise ServiceError("source_conflict")
                 if any(item.code in _CONFLICT_CODES for item in (*response.scan_diagnostics, *response.graph_diagnostics)):
                     raise ServiceError("source_conflict")
+                manifest = capture.finish(response)
             check()
-            return self.storage.save(response)
+            return self.storage.save(response, source_manifest=manifest)
 
         return await self._run(operation, deadline)
 
