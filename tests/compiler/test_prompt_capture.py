@@ -216,3 +216,23 @@ def test_parse_harness_output_edge_cases():
     assert parse_harness_output(ok_line, "", 1, "other")[0].ok is False
     bad = RESULT_MARKER + nonce + json.dumps([{"ok": True, "request": {"messages": "nope"}}])
     assert not parse_harness_output(bad, "", 1, nonce)[0].ok
+
+
+def test_noisy_target_output_does_not_hide_result(tmp_path):
+    root = _repo(tmp_path, '''
+        print("x" * 1_100_000)
+        def ask(client):
+            return client.chat.completions.create(model="m", messages=[{"role": "user", "content": "hi"}])
+    ''')
+    assert _capture(root, "node_ask", [BenchmarkCase(vars={})])[0].ok
+
+
+def test_background_helper_in_target_does_not_break_capture(tmp_path):
+    root = _repo(tmp_path, '''
+        import subprocess, sys
+        subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"])
+        def ask(client):
+            return client.chat.completions.create(model="m", messages=[{"role": "user", "content": "hi"}])
+    ''')
+    call = scan_repository(root).calls[0]
+    assert capture_requests(root, call, [BenchmarkCase(vars={})], timeout=5)[0].ok
