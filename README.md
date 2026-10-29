@@ -17,6 +17,27 @@ The [main integration merge review](docs/main-merge-acceptance.md) records the
 subsequent per-file reconciliation and current local acceptance results. It does
 not close the outstanding release gates.
 
+The [updated-main reconciliation](docs/updated-main-merge-acceptance.md) separately
+records the PR #5 README integration and its acceptance checks.
+
+## Project layout and reference guides
+
+| Path | Current responsibility |
+| --- | --- |
+| [backend/main.py](backend/main.py) | App factory and supported loopback CLI |
+| [backend/config.py](backend/config.py), [backend/schemas.py](backend/schemas.py) | Explicit configuration and authoritative Pydantic contracts |
+| [backend/api/](backend/api/) | Boundary checks and scan, job, optimization, proposal and validation/history routes |
+| [backend/compiler/](backend/compiler/) | Bounded static analysis, evidence metrics, cost selection, policies and literal-span candidate verification |
+| [backend/services/](backend/services/) | Authorized source access, durable jobs/evidence/artifacts and private source manifests |
+| [backend/runtime/cascade_router.py](backend/runtime/cascade_router.py) | Explicitly registered local executors and authorized fallback |
+| [frontend/src/services/](frontend/src/services/), [frontend/src/components/](frontend/src/components/) | Typed local client/contracts and provenance-aware workbench controls |
+| [tests/](tests/), [scripts/](scripts/), [frontend/scripts/](frontend/scripts/) | Trusted tests, offline diagnostics, contract generation and acceptance reporting |
+
+The [API reference](docs/api-contract.md) defines actual request/response shapes and
+authorization. The [API inventory](docs/release-notes.md) lists supported operations;
+proposal creation, static validation and historical retrieval are separate actions.
+Target samples under `tests/fixtures/` are parsed as source data, not run as apps.
+
 ## Required local tools and offline prerequisites
 
 Use an approved existing Python 3.11 environment for release validation, Node 24+
@@ -160,3 +181,7 @@ or independent security certification.
 The [unreleased preparation notes](docs/release-notes.md) inventory available APIs,
 compatibility caveats and selected committed-source artifacts. Verify those source
 identities with `python -B -m scripts.source_inventory`; this is not a build check.
+
+## License
+
+MIT. See [LICENSE](LICENSE) for the actual terms and existing contributor notice.

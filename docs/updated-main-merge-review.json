@@ -1,0 +1,136 @@
+{
+  "schema_version": "cascaderouter.updated-main-merge-review.v1",
+  "first_merge_commit": "8af490f6e4af51b94b933cb6a6e12b99d3f7a959",
+  "incoming_parent": "616ae073a0d4dc505a791c06e0914d429d5b49b4",
+  "common_ancestor": "5c5f09a86a554affac75cce4743cdf13d1d92450",
+  "pr5_incoming_parents": [
+    "5c5f09a86a554affac75cce4743cdf13d1d92450",
+    "f07df782d98bfafec89cb301426ddcbbc9b1531b"
+  ],
+  "incoming_changed_files": [
+    "README.md"
+  ],
+  "conflicted_files": [
+    "README.md"
+  ],
+  "automatically_staged_nonconflicting_files": [],
+  "reviewed_sources": {
+    "base": "6795e8f13d3871b31f9bfca05698fb0fa9e1d408dbde9ee1d4ae13dcf033b28e",
+    "integration": "a4a54b0a2304e6e256df4a68fae5592019fe3cefb4de5482426b49765c259c3a",
+    "incoming": "5f7d430e134e0970a664cddb43e766027ebb639ef421efbac51cd31f31e1027c"
+  },
+  "adopted": "PR #5 project-layout/navigation and license clarity, verified/adapted to actual selected paths and LICENSE",
+  "preserved": "Integration offline setup, Node 24 tools, authorization, evidence, lifecycle, literal-spans proposal/static validation/history workflows and blocked release gates",
+  "not_adopted": [
+    {
+      "upstream_lines": "3-81, 184-228",
+      "reason": "Paid provider/catalog/billing/env setup, sequence graph, heuristic scoring and latency tie window contradict accepted zero-cost contracts."
+    },
+    {
+      "upstream_lines": "85-180, 232-298",
+      "reason": "Dotenv/automatic installs, nonexistent backend.main:app, /docs and /models, obsolete request bodies, target capture/regression execution and SDK runtime calls are not supported."
+    },
+    {
+      "upstream_lines": "302-344, 388-424",
+      "reason": "Historical main test/coverage numbers, Node 20, suppressed builds, frontend mock-fallback claims, zero missing metrics and old memory-only services do not describe integration."
+    },
+    {
+      "upstream_lines": "430-461",
+      "reason": "Do not imply new provider infrastructure, deployment/compliance evidence or change team ownership from documentary claims."
+    }
+  ],
+  "production_inputs_changed": false,
+  "release_gates_closed": [],
+  "acceptance": {
+    "environment": {
+      "python": "3.14.3",
+      "node": "24.16.0",
+      "npm": "11.13.0",
+      "typescript": "6.0.3",
+      "react": "19.3.0",
+      "react_dom": "19.3.0",
+      "frontend_scope": "supplemental"
+    },
+    "supplemental_typecheck": {
+      "exit_code": 0,
+      "diagnostics": 0,
+      "exact_lock_verified": false
+    },
+    "guard_sha256": "cb96c485f736e62a11e75d12f40cf3a964c6fdd880b6a9585670490cdeb9eea9",
+    "source_inventory": {
+      "exit_code": 0,
+      "artifacts": 65,
+      "canonical_source_bytes": 621437
+    },
+    "contract_check_exit_code": 0,
+    "historical_release_evidence_check_exit_code": 0,
+    "focused": {
+      "counts": {
+        "tests": 905,
+        "passed": 897,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 8
+      },
+      "exit_code": 0,
+      "report_basename": "cascade-updated-main-focused.xml",
+      "junit_sha256": "14915d0620dcb5f9579d4ca9f52076d8cad4061e99793dd49cad1ff06b9e882e",
+      "network_guard": {
+        "non_loopback_attempts": 0,
+        "scope": "Python DNS/connect/connect_ex/sendto; child processes not instrumented",
+        "provider_sdk_imports": []
+      },
+      "seconds": 36.5,
+      "warnings": 3755
+    },
+    "full": {
+      "counts": {
+        "tests": 1299,
+        "passed": 1291,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 8
+      },
+      "exit_code": 0,
+      "report_basename": "cascade-updated-main-full.xml",
+      "junit_sha256": "e71f9f0e84f6b6af9833061659b05b2cddd201c7b5cae53b2e773b7884d7c0d3",
+      "network_guard": {
+        "non_loopback_attempts": 0,
+        "scope": "Python DNS/connect/connect_ex/sendto; child processes not instrumented",
+        "provider_sdk_imports": []
+      },
+      "seconds": 53.0,
+      "warnings": 3778,
+      "skip_reasons": [
+        {
+          "reason": "Symbolic links unavailable on this platform (errno 22).",
+          "count": 3
+        },
+        {
+          "reason": "File symlink creation unavailable: errno=22, winerror=1314",
+          "count": 2
+        },
+        {
+          "reason": "Directory symlink creation unavailable: errno=22, winerror=1314",
+          "count": 1
+        },
+        {
+          "reason": "POSIX namespace replacement; Windows pins prevent this rename.",
+          "count": 2
+        }
+      ]
+    },
+    "frontend": {
+      "counts": {
+        "tests": 86,
+        "passed": 86,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "report_basename": "cascade-updated-main-frontend.xml",
+      "junit_sha256": "a186b60493b321e0ce2f8cc5e7f8bb81cad1231cadc0faaad7b8c73d89f96834"
+    }
+  }
+}
