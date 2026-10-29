@@ -1,10 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { fixture } from './fixtures.mjs';
 import { LocalTransport, localBase } from '../src/services/transport.ts';
 import { parseContract } from '../src/services/contractCheck.ts';
 
-export const fixture = name => JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), 'utf8'));
 const json = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
 
 test('actual backend fixture contracts parse; synthetic provenance is retained', () => {

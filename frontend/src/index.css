@@ -4,7 +4,7 @@
    IBM Plex Sans for UI. IBM Plex Mono for code, paths, model IDs.
    ============================================================================= */
 
-/* IBM Plex Sans + IBM Plex Mono loaded via Google Fonts CDN in index.html */
+/* Offline system font fallbacks; no remote font requests. */
 @import "tailwindcss";
 
 /* --------------------------------------------------------------------------- */
@@ -484,3 +484,29 @@ code, pre, .mono {
 .yaml-str   { color: var(--cr-pass); }
 .yaml-num   { color: var(--cr-warn); }
 .yaml-com   { color: var(--cr-subtle); }
+
+/* Local workbench: preserve existing dark design tokens and permit zoom/reflow. */
+body { overflow: auto; min-width: 320px; }
+.workbench-header { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 20px; border-bottom: 1px solid var(--cr-line); }
+.workbench-header h1 { font-size: 20px; }
+.workbench { padding: 20px; display: grid; gap: 20px; max-width: 1600px; margin: auto; }
+.workbench section { background: var(--cr-panel); border: 1px solid var(--cr-line); border-radius: var(--cr-r-panel); padding: 20px; min-width: 0; }
+.workbench h2 { font-size: 18px; margin-bottom: 12px; }
+.workbench h3 { font-size: 16px; margin: 16px 0 8px; }
+.workbench p { margin: 8px 0; }
+.workbench form, .control-row { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 12px 0; }
+.workbench label { display: grid; gap: 4px; flex: 1 1 240px; }
+.workbench input, .workbench select, .workbench textarea { padding: 8px; border: 1px solid var(--cr-muted); border-radius: 4px; background: var(--cr-raised); color: var(--cr-text); width: 100%; }
+button { padding: 8px 12px; border: 1px solid var(--cr-muted); border-radius: 4px; cursor: pointer; }
+button:disabled { opacity: .55; cursor: not-allowed; }
+:focus-visible { outline: 3px solid var(--cr-accent); outline-offset: 3px; }
+.workbench dl { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(0, 3fr); gap: 8px; }
+.workbench dt { color: var(--cr-muted); }
+.workbench dd, .workbench code { overflow-wrap: anywhere; }
+.workbench pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; background: var(--cr-raised); }
+.table-scroll { overflow: auto; }
+.workbench table { width: 100%; border-collapse: collapse; }
+.workbench th, .workbench td { text-align: left; padding: 8px; border-bottom: 1px solid var(--cr-line); vertical-align: top; }
+.workbench [role="alert"], .evidence-warning { color: var(--cr-warn); }
+.skip-link { position: absolute; left: -10000px; }
+.skip-link:focus { left: 16px; top: 8px; background: var(--cr-panel); padding: 12px; z-index: 10; }
