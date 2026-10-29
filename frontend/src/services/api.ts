@@ -29,11 +29,11 @@ export class ApiClient {
   }
   async createPatch(value: PatchRequest, signal?: AbortSignal) { return this.transport.request('/api/patches', 'PatchAccepted', { method: 'POST', body: body('PatchRequest', value), signal }); }
   async patch(value: string, signal?: AbortSignal) {
-    const result = await this.transport.request(`/api/patches/${id(value, 'patch', 64)}`, 'Patch', { signal });
+    const result = await this.transport.request(`/api/patches/${id(value, 'patch', 32)}`, 'Patch', { signal });
     if (result.manifest.patch_id !== value) throw new ApiFailure('malformed'); return result;
   }
   async validate(value: string, signal?: AbortSignal) {
-    const result = await this.transport.request(`/api/patches/${id(value, 'patch', 64)}/validate`, 'Validation', { method: 'POST', signal });
+    const result = await this.transport.request(`/api/patches/${id(value, 'patch', 32)}/validate`, 'Validation', { method: 'POST', signal });
     if (result.result.patch_id !== value) throw new ApiFailure('malformed'); return result;
   }
   async validation(value: string, signal?: AbortSignal) {

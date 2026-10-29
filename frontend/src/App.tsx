@@ -8,12 +8,13 @@ import { OperationStatus } from './components/OperationStatus.tsx';
 import { RepositoryPane } from './components/repository/RepositoryPane.tsx';
 import { BenchmarkPane } from './components/benchmark/BenchmarkPane.tsx';
 import { OptimizationPane } from './components/optimization/OptimizationPane.tsx';
+import { PatchPane } from './components/patches/PatchPane.tsx';
 
 export default function App() {
   const [demo, setDemo] = useState(false);
   const [analysis, setAnalysis] = useState<Scan>();
   const [job, setJob] = useState<Job>();
-  const [, setOptimization] = useState<Optimization>();
+  const [optimization, setOptimization] = useState<Optimization>();
   const [selected, setSelected] = useState<string>();
   const [health, healthOperation] = useOperation<Health>();
   const connection = useMemo(() => {
@@ -33,6 +34,7 @@ export default function App() {
       <RepositoryPane api={connection.api} demo={demo} onAnalysis={scan => { setAnalysis(scan); setJob(undefined); setOptimization(undefined); setSelected(scan?.nodes[0]?.node_id); }} selected={selected} onSelect={setSelected} />
       <BenchmarkPane key={analysis?.analysis_id ?? 'no-analysis'} api={connection.api} demo={demo} analysis={analysis} selected={selected} onJob={value => { if (value?.run_id !== job?.run_id || !value) setOptimization(undefined); setJob(value); }} />
       <OptimizationPane key={job?.run_id ?? 'no-run'} api={connection.api} demo={demo} analysis={analysis} job={job} onOptimization={setOptimization} />
+      <PatchPane key={`${analysis?.analysis_id ?? 'independent'}:${optimization?.optimization_id ?? 'no-optimization'}`} api={connection.api} demo={demo} analysis={analysis} optimization={optimization} />
     </main>
   </>;
 }
