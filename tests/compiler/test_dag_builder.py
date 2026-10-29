@@ -78,10 +78,10 @@ def test_unknown_or_single_function(tmp_path):
     assert build_dag(scan.trees, scan.calls) == []
 
 
-def test_ambiguous_function_names_are_ignored(tmp_path):
+def test_same_named_function_resolves_to_local_definition(tmp_path):
     (tmp_path / "x.py").write_text('def a(c):\n    c.chat.completions.create(model="m")\n')
     (tmp_path / "y.py").write_text('def a(c):\n    c.chat.completions.create(model="m")\n'
                                    'def b(c):\n    c.chat.completions.create(model="m")\n'
                                    'def run(c):\n    a(c)\n    b(c)\n')
     scan = scan_repository(tmp_path)
-    assert build_dag(scan.trees, scan.calls) == []
+    assert build_dag(scan.trees, scan.calls) == [("node_a__2", "node_b")]
