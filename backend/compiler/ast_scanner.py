@@ -26,6 +26,7 @@ SKIP_DIRS = frozenset(
 )
 MAX_FILE_BYTES = 2 * 1024 * 1024
 MAX_FILES = 500
+MAX_PATH_CHARS = 1024
 # Total source bytes and AST size per scan, so one request cannot exhaust memory.
 MAX_TOTAL_BYTES = 20 * 1024 * 1024
 MAX_AST_NODES_PER_FILE = 200_000
@@ -111,18 +112,21 @@ class RepoScan:
 
 def resolve_scan_path(raw: str, allowed_roots: list[Path], base: Path) -> Path:
     """Resolve a user-supplied path and ensure it is a directory under an allowed root."""
-    if not raw or "\x00" in raw:
-        raise ScanPathError("repository_path is empty or invalid")
-    candidate = Path(raw).expanduser()
-    if not candidate.is_absolute():
-        candidate = base / candidate
-    if candidate.is_symlink():
-        raise ScanPathError("repository_path must not be a symlink")
-    resolved = candidate.resolve()
-    if not any(resolved == root or root in resolved.parents for root in allowed_roots):
-        raise ScanPathError("repository_path is outside the allowed scan roots")
-    if not resolved.is_dir():
-        raise ScanPathError(f"repository_path does not exist or is not a directory: {raw}")
+    if not raw or "\x00" in raw or len(raw) > MAX_PATH_CHARS:
+        raise ScanPathError("repository_path is empty, too long or invalid")
+    try:
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = base / candidate
+        if candidate.is_symlink():
+            raise ScanPathError("repository_path must not be a symlink")
+        resolved = candidate.resolve()
+        if not any(resolved == root or root in resolved.parents for root in allowed_roots):
+            raise ScanPathError("repository_path is outside the allowed scan roots")
+        if not resolved.is_dir():
+            raise ScanPathError("repository_path does not exist or is not a directory")
+    except (OSError, RuntimeError) as exc:  # ENAMETOOLONG, ELOOP, permission errors
+        raise ScanPathError("repository_path cannot be accessed") from exc
     return resolved
 
 

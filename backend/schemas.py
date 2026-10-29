@@ -127,7 +127,7 @@ class ModelTierConfig(_Model):
 
 
 class ScanRequest(_Model):
-    repository_path: str = Field(min_length=1)
+    repository_path: str = Field(min_length=1, max_length=1024)
 
 
 class BenchmarkRequest(_Model):
