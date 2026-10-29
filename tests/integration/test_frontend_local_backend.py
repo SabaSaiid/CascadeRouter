@@ -4,6 +4,7 @@ import socket
 import subprocess
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ import uvicorn
 
 from backend.config import BackendConfig
 from backend.main import create_app
+from acceptance_support import client_case, serve, tree_bytes
 
 
 def test_typescript_client_against_real_local_backend(tmp_path):
@@ -51,3 +53,29 @@ def test_typescript_client_against_real_local_backend(tmp_path):
         thread.join(timeout=10)
         sock.close()
     assert not thread.is_alive(), "Local contract test backend did not stop"
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_client_scan_graph_and_partial_coverage_survive_storage_restart(api_environment, partial):
+    from backend.services.storage import AnalysisStorage
+    from backend.services.errors import ServiceError
+    settings, repository, _ = api_environment
+    # This tripwire is part of static input, never a command to run.
+    source = repository / "app.py"
+    source.write_bytes(b'assert False, "TARGET_MUST_NEVER_EXECUTE"\n' + source.read_bytes().replace(b"model=MODEL", b'model="local/candidate"'))
+    if partial:
+        (repository / "invalid.py").write_bytes(b"def broken(:\n")
+    before = tree_bytes(repository)
+    with serve(settings) as server:
+        value = client_case(server.base, "scan.mjs", {"repository": str(repository), "partial": partial})
+        stored = server.app.state.scan_service.storage.get(value["analysis_id"])
+        assert stored.model_dump(mode="json") == value
+    with closing(AnalysisStorage(settings)) as storage:
+        assert storage.get(value["analysis_id"]) == stored
+        if partial:
+            with pytest.raises(ServiceError) as error:
+                storage.get_source_manifest(stored.analysis_id)
+            assert error.value.code == "source_evidence_unavailable"
+        else:
+            assert storage.get_source_manifest(stored.analysis_id).complete
+    assert tree_bytes(repository) == before
