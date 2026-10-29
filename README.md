@@ -1,297 +1,467 @@
-# CascadeRouter IDE
+# CascadeRouter
 
-### *Autonomous FinOps & Latency Compiler for LLM Architectures*
+**A FinOps and latency compiler for LLM calls in Python agent codebases.** It finds every LLM call site in a repository, benchmarks each one against NVIDIA Nemotron tiers on Nebius Token Factory, picks the cheapest model that still passes your quality checks, and emits a routing policy, a reviewable patch, and a regression result.
 
 [![Hackathon](https://img.shields.io/badge/Nebius%20%C3%97%20NVIDIA-Global%20AI%20Hackathon%202026-76B900?logo=nvidia&logoColor=white)](https://devpost.com)
 [![Track](https://img.shields.io/badge/Track-1%3A%20Coding%20%26%20Agentic%20Engineering-blue)](https://devpost.com)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/React-18-61DAFB.svg?logo=react&logoColor=black)](https://react.dev)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![Nebius Token Factory](https://img.shields.io/badge/Nebius-Token%20Factory-8A2BE2)](https://nebius.ai)
+[![React 19](https://img.shields.io/badge/React-19-61DAFB.svg?logo=react&logoColor=black)](https://react.dev)
+[![TypeScript 6](https://img.shields.io/badge/TypeScript-6.0-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Tests](https://img.shields.io/badge/tests-428%20passed%2C%201%20skipped-brightgreen)](docs/test-report.md)
+[![Coverage](https://img.shields.io/badge/coverage-98%25-brightgreen)](docs/test-report.md)
 
 ---
 
-## ⚡ Overview
+## What it does
 
-**CascadeRouter IDE** is an autonomous FinOps and latency compiler designed to eliminate LLM over-provisioning in modern Python AI agent codebases. 
+**Problem.** Agent codebases often hard-wire one large frontier model into every call, including simple ones such as classification, field extraction or fixed-format JSON. Each of those calls pays frontier-model prices and latency for work a smaller model may handle just as well.
 
-In production AI applications, developers frequently default to expensive 70B+ or 550B frontier models for straightforward tasks such as schema extraction, classification, sentiment analysis, or deterministic formatting. This practice causes **10x–50x cost inflation** and unacceptable token-to-first-token (TTFT) latency spikes.
+**Approach.** CascadeRouter treats this as a compile step:
 
-CascadeRouter statically inspects your repository, benchmarks your exact prompt nodes across **NVIDIA Nemotron** model tiers via **Nebius Token Factory**, mathematically selects the lowest-cost model that satisfies quality and schema requirements ($\ge 0.92$), and automatically generates:
-1. A **declarative routing policy** (`.cascaderouter.yaml`)
-2. A **unified, reviewable Git code patch**
-3. An **isolated regression test validation** ensuring zero semantic regressions
-4. A **runtime fallback wrapper** that escalates to frontier models dynamically if runtime validation fails
+1. **Scan.** Static analysis with Python's `ast` finds OpenAI-SDK-style LLM call sites and builds a dependency DAG between them. Scanning never imports the target code.
+2. **Benchmark.** It captures each call's real request in a sandbox and replays it against all four Nemotron models. Each answer is scored by a deterministic evaluator (no LLM judge) against hand-written cases in `cascade_cases.yaml`.
+3. **Optimize.** For each call site it picks the cheapest model that passes the hard checks and meets the quality threshold (default `0.92`), and chooses a fallback model.
+4. **Emit.** It writes a `.cascaderouter.yaml` routing policy and a unified diff that routes the call through a small runtime wrapper. It then runs the target repo's own pytest suite against the patched copy.
 
-All workflows are presented in a real-time, interactive **three-pane developer workbench UI**.
-
----
-
-## 🏗️ Architecture & Pipeline
-
-```
-┌────────────────────────────────────────────────────────────────────────────────┐
-│                           TARGET PYTHON AI CODEBASE                            │
-│                 (e.g., tests/fixtures/sample_repo with LLM calls)              │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│  [1] AST Static Scanner & DAG Builder                                          │
-│  - Parses codebase using Python's native `ast` module (safe, zero code exec)  │
-│  - Extracts call sites, prompt references, model IDs, expected schemas         │
-│  - Emits normalized LLM nodes and directed workflow graph                      │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│  [2] Nebius Token Factory Benchmark Runner & Evaluator                         │
-│  - Queries NVIDIA Nemotron model tiers concurrently with bounded concurrency   │
-│  - Measures exact input/output tokens, wall-clock latency, and TTFT            │
-│  - Deterministic evaluation: JSON schema conformance, required fields, checks  │
-│  - Calculates FinOps cost ($) using verified Nebius per-million token rates    │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│  [3] FinOps Router Optimizer                                                   │
-│  - Objective: min(Cost) s.t. Quality >= Threshold (0.92) & Hard Checks Pass    │
-│  - Generates `.cascaderouter.yaml` policy & unified git code patch             │
-│  - Configures runtime fallback escalation paths                                │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│  [4] Sandbox Regression Runner                                                 │
-│  - Clones sample repo to isolated temp directory (no credentials, 30s timeout) │
-│  - Applies patch and executes test suite (`pytest`) to ensure zero regression  │
-└──────────────────────────────────────┬─────────────────────────────────────────┘
-                                       │
-                                       ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│  [5] Three-Pane Developer Workbench UI                                         │
-│  - Left: Repository Analysis, Discovered LLM Nodes & Agent DAG                 │
-│  - Center: Benchmark Matrix (Nebius tokens, latency, cost $, pass/fail badges) │
-│  - Right: FinOps Comparison, Unified Diff, Policy YAML & Regression Status     │
-└────────────────────────────────────────────────────────────────────────────────┘
-```
+The runtime wrapper (`cascaderouter.py`) reads the policy in production. It calls the chosen model and, when the response fails a structural check, retries once on the fallback model.
 
 ---
 
-## 💰 Verified NVIDIA Nemotron Models on Nebius Token Factory
+## How it works
 
-Rates verified against Nebius Token Factory on **October 26, 2026**:
-
-| Tier | Model ID | Input ($/1M) | Output ($/1M) | Characteristics & Workload Fit |
-| :--- | :--- | :---: | :---: | :--- |
-| **Efficient** | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | **$0.06** | **$0.24** | Extremely lightweight, low latency, ideal for structured JSON extraction & classification |
-| **Efficient (Alt)** | `nvidia/Nemotron-3_5-Lightning` | **$0.06** | **$0.24** | Ultra-fast token generation, rapid summarization & intermediate agent steps |
-| **Balanced** | `nvidia/Nemotron-3.5-Super-VL` | **$0.30** | **$0.90** | Multimodal reasoning, complex synthesis, high-accuracy structured tasks |
-| **Powerful** | `nvidia/Nemotron-3-Ultra-550b-a55b` | **$1.00** | **$3.00** | Frontier reasoning & code generation; acts as final runtime fallback |
-
-### FinOps Cost Equation (`backend/compiler/metrics.py`)
-$$\text{Cost} = \left(\frac{\text{Tokens}_{\text{in}}}{10^6} \times \text{Price}_{\text{in}}\right) + \left(\frac{\text{Tokens}_{\text{out}}}{10^6} \times \text{Price}_{\text{out}}\right)$$
-
-$$\text{Savings \%} = \frac{\text{Cost}_{\text{baseline}} - \text{Cost}_{\text{optimized}}}{\text{Cost}_{\text{baseline}}} \times 100\%$$
-
----
-
-## 🖥️ The Three-Pane Developer Workbench
-
-The frontend interface (`frontend/src/`) delivers a high-density, mission-control developer experience:
+The pipeline is three HTTP calls. The benchmark runs in the background and the client polls for it.
 
 ```
-+-----------------------------------+-----------------------------------+-----------------------------------+
-|  1. REPOSITORY ANALYSIS           |  2. BENCHMARK MATRIX              |  3. OPTIMIZATION & DIFF           |
-|                                   |                                   |                                   |
-|  * Loaded repo: sample_repo       |  * Model Comparison Matrix        |  * Baseline vs. Recommended       |
-|  * Discovered LLM Calls:          |    - Nano-30B:    $0.00012 | PASS |    Ultra-550b  -> Nano-30B        |
-|    - [app.py:42] classify_intent  |    - Lightning:   $0.00011 | PASS |  * Cost Reduction:      -88.4%    |
-|    - [app.py:89] extract_entities |    - Super-VL:    $0.00062 | PASS |  * Latency Reduction:   -62.1%    |
-|    - [app.py:150] synthesize_plan |    - Ultra-550b:  $0.00284 | PASS |  * Quality Score:       0.96      |
-|  * Interactive DAG Graph          |  * Telemetry (Tokens, Latency)    |  * .cascaderouter.yaml Preview    |
-|  * AST Metadata & Schema Specs    |  * Mode: [Live / Recorded / Mock] |  * Unified Code Diff View         |
-|                                   |  * Rate Limit & Spend Guardrails  |  * Sandbox Regression: [PASSED]   |
-+-----------------------------------+-----------------------------------+-----------------------------------+
+POST /api/scan ─────────► ast_scanner ──► dag_builder ──► ScanStore (in memory)
+                          (parse only;     (data-flow +
+                           never imports)   sequence edges)
+
+POST /api/benchmark ────► spend-cap / projected-cost check ──► 202 {run_id}
+  └ background task:      load cascade_cases.yaml
+                          prompt_capture   (runs node function in sandbox with a fake client)
+                          mark vacuous cases failed
+                          node × case × model completions   (Semaphore(BENCHMARK_CONCURRENCY))
+                          evaluator ──► aggregate_metric ──► select_model
+GET  /api/runs/{run_id} ─► progress + per-model metrics
+
+POST /api/optimize ─────► decide_node (per node)
+                          aggregate_totals
+                          build_policy ──► .cascaderouter.yaml
+                          build_patches  (optimized nodes only)
+                          run_regression (only if a file was patched; pytest in sandbox)
+                          ──► OptimizeResult (cached per run_id + threshold)
 ```
 
----
+### Stage details
 
-## 📁 Repository Structure
-
-```
-CascadeRouter/
-├── .github/
-│   └── workflows/
-│       └── tests.yml                 # CI workflow: Unit tests, typechecks & lint
-├── backend/
-│   ├── api/
-│   │   ├── routes.py                 # /api/health, /models, /scan, /benchmark, /runs/{id}, /optimize
-│   │   └── deps.py                   # stores, spend tracker, data-source aware LLM client
-│   ├── compiler/
-│   │   ├── ast_scanner.py            # Static AST parser and LLM call discoverer (never executes code)
-│   │   ├── dag_builder.py            # Path- and import-aware workflow DAG reconstruction
-│   │   ├── cases.py                  # cascade_cases.yaml benchmark cases
-│   │   ├── sandbox.py                # Credential-free subprocess sandbox
-│   │   ├── prompt_capture.py         # Captures each node's exact request in the sandbox
-│   │   ├── shadow_runner.py          # Bounded-concurrency benchmark runner
-│   │   ├── metrics.py                # FinOps cost & latency calculations
-│   │   ├── evaluator.py              # Deterministic schema & task validation
-│   │   ├── router_optimizer.py       # Lowest-cost model selection engine
-│   │   ├── policy_generator.py       # .cascaderouter.yaml generator
-│   │   ├── patch_generator.py        # Unified diff & code patch synthesizer
-│   │   └── regression_runner.py      # Isolated sandbox regression tester
-│   ├── runtime/
-│   │   └── cascade_router.py         # Runtime router with validation-triggered fallback
-│   ├── services/
-│   │   ├── nebius_client.py          # Streaming Nebius Token Factory client (TTFT + usage)
-│   │   ├── recordings.py             # Record/replay of real responses ("recorded" mode)
-│   │   └── optimization.py           # Decisions + policy + patch + regression → OptimizeResult
-│   ├── guardrails.py                 # Rate limit, daily spend cap, request size limits
-│   ├── store.py                      # In-memory scan and run stores
-│   ├── config.py                     # Central configuration & verified model rates
-│   ├── main.py                       # FastAPI application entrypoint
-│   └── schemas.py                    # Pydantic contracts mirroring frontend/src/types.ts
-├── frontend/
-│   ├── src/
-│   │   ├── components/               # Workbench panes, matrix, diff viewer, DAG
-│   │   ├── hooks/                    # API query hooks & WebSocket listeners
-│   │   ├── pages/                    # Workbench layout pages
-│   │   ├── services/                 # Backend API client
-│   │   ├── styles/                   # Tailwind & styling tokens
-│   │   ├── types.ts                  # Mirrored TypeScript contracts
-│   │   └── App.tsx                   # Main workbench application
-│   ├── package.json
-│   ├── tsconfig.json
-│   └── vite.config.ts
-├── tests/
-│   ├── api/                          # Endpoint, contract and flow tests
-│   ├── compiler/                     # Unit tests for every compiler module
-│   ├── services/ runtime/            # Client, recording, optimization and runtime tests
-│   ├── integration/                  # End-to-end pipeline (+ opt-in live Nebius smoke test)
-│   └── fixtures/
-│       └── sample_repo/              # Bundled sample AI app with over-provisioned calls
-├── docs/
-│   ├── architecture.md               # Technical specification & system blueprint
-│   ├── demo-scenarios.md             # 3-minute hackathon demo script & walkthrough
-│   └── test-report.md                # Verification logs and regression test report
-├── .env.example                      # Template for API keys & config
-├── .gitignore                        # Git exclusion rules
-├── LICENSE                           # MIT Open Source License
-└── README.md                         # This file
-```
-
----
-
-## 👥 Team Work Breakdown & Ownership
-
-This project is built for the **Nebius × NVIDIA Global AI Hackathon 2026** under strict module ownership:
-
-| Member | Role | Core Deliverable & Owned Files |
+| Stage | Module | Behaviour |
 | :--- | :--- | :--- |
-| **Saba** | **Frontend Lead** | Three-pane workbench UI connected to live API (`frontend/`) |
-| **Meenal Sinha** | **Backend Lead & Integration Owner** | FastAPI service, shared schemas, benchmark runner, optimizer, policy & patch generator, runtime wrapper (`backend/`) |
-| **Pritam Singh** | **AST Scanner & Agent Graph Lead** | AST static scanner, DAG builder, bundled sample repo & test fixtures (`backend/compiler/ast_scanner.py`, `dag_builder.py`, `tests/fixtures/`) |
-| **Aditya** | **Testing, Metrics & Docs Lead** | Cost metrics, evaluator checks, regression runner, integration suite, docs & repo files (`metrics.py`, `evaluator.py`, `regression_runner.py`, `tests/`, `README.md`) |
-| **Salman Khurshid**| **Spare Member & Overflow Backup** | PR review, overflow backup for runner/runtime, friction logging |
+| Scan | `backend/compiler/ast_scanner.py` | A call counts as an LLM call when its attribute chain ends in `chat.completions.create`, `completions.create` or `responses.create`, and some module imports `openai`, `langchain_openai`, `litellm`, `together` or `groq`. The model argument resolves from a string literal, a single local literal assignment, or a module-level constant; anything else becomes `<dynamic>` or `<unspecified>`. Skips `tests/`, `test/`, `build/`, `dist/`, venvs (`venv`, `.venv`, `env`), `site-packages`, `node_modules`, dot-dirs, symlinked dirs, `test_*.py` and `*_test.py`. Limits: 2 MB per file, 500 files, 20 MB total. Node ids are `node_<function_name>` (module-level calls: `node_<file>_l<line>`; duplicates get a `__2` suffix). |
+| DAG | `backend/compiler/dag_builder.py` | Edges come from data flow (one node's output passed to another) and from call sequence. Branches are handled, and any edge that would close a cycle is dropped. |
+| Cases | `backend/compiler/cases.py` | Reads `cascade_cases.yaml` at the scanned repo's root: `node_id -> [ {vars, expected, must_include, must_not_include, min_chars, max_chars} ]`, at most 20 cases per node. **A node with no cases is not benchmarked.** |
+| Capture | `backend/compiler/prompt_capture.py` | Imports the node's module in a sandbox copy, patches the OpenAI client with a fake, calls the function with each case's `vars`, and records the request at the call site. It makes no network calls and uses no credentials. Only `chat.completions` calls inside functions can be benchmarked. `max_tokens` is capped at 2048. |
+| Benchmark | `backend/compiler/shadow_runner.py` | Runs every node × case × model. Per cell: mean tokens, median latency and TTFT, mean cost. Quality = the sum of case scores divided by all cases, with failed calls scored 0. |
+| Evaluate | `backend/compiler/evaluator.py` | Deterministic. Structured output is scored on parse (hard), required fields (hard), types/enums, and agreement with the reference. Free text is scored on non-empty (hard), `must_include` (hard), `must_not_include` (hard), and a length window. `<think>` blocks are stripped. Supports a JSON Schema subset: `type`, `properties`, `required`, `enum`, `items`. |
+| Select | `backend/compiler/router_optimizer.py` | Candidates must pass the hard checks and have quality >= threshold. The cheapest wins; when several are within 2% of the cheapest cost, the lowest latency wins. Status is `optimized`, `baseline_retained` or `inconclusive`. The fallback is the cheapest passing higher-tier model, or else Nemotron-3 Ultra. |
+| Policy | `backend/compiler/policy_generator.py` | `.cascaderouter.yaml` (version `1.0`). For each node it records primary, fallback and baseline model, routing conditions (`enforce_json`, `required_fields`, `max_retries: 1`) and the evidence. |
+| Patch | `backend/compiler/patch_generator.py` | Rewrites `client.chat.completions.create(...)` to `cascade_router.dispatch(node_id=..., client=client, ...)`, or to `dispatch_async` inside `async def`, and adds the import and loader lines. It refuses calls that use `stream`, `tools`, `functions`, `tool_choice` or `function_call`. Output is a unified diff. |
+| Regression | `backend/compiler/regression_runner.py`, `sandbox.py` | Copies the scanned repo to a temp dir and writes in the patched files, the policy, and the runtime as `cascaderouter.py`. Runs `python -m pytest -q` with `REGRESSION_TIMEOUT_SECONDS`. If no tests are collected, the patch is reported as **unverified**, not passed. |
+
+### Model catalog (defaults)
+
+| Tier | Model id | Input $/1M | Output $/1M |
+| :--- | :--- | ---: | ---: |
+| efficient | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | 0.06 | 0.24 |
+| efficient (alt) | `nvidia/Nemotron-3_5-Lightning` | 0.06 | 0.24 |
+| balanced | `nvidia/Nemotron-3.5-Super-VL` | 0.30 | 0.90 |
+| powerful | `nvidia/Nemotron-3-Ultra-550b-a55b` | 1.00 | 3.00 |
+
+Model ids and prices are configurable defaults in `backend/config.py`. Override them with the `MODEL_TIER_*` and `PRICE_*` env vars. They have not been checked against the live Nebius pricing API (see [docs/test-report.md](docs/test-report.md)). Cost per call is `in_tokens/1e6 * price_in + out_tokens/1e6 * price_out`. When the provider reports no usage, tokens are estimated as `ceil(chars/4)` and the cell is flagged `is_estimated`.
 
 ---
 
-## 🚀 Quickstart & Setup
+## Quickstart
 
 ### Prerequisites
-- Python 3.11+
-- Node.js 20+ & npm / pnpm
-- A Nebius Token Factory API Key ([Nebius AI Studio](https://studio.nebius.ai/))
 
-### 1. Backend Setup
+- Python 3.11 (CI and development use 3.11)
+- Node.js `^20.19.0` or `>=22.12.0` (required by Vite 8) and npm
+- A Nebius Token Factory API key, needed only for live benchmarking
+
+### Backend
 
 ```bash
-# Clone the repository
 git clone https://github.com/SabaSaiid/CascadeRouter.git
 cd CascadeRouter
 
-# Create and activate a Python virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
+python3.11 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# Configure environment variables
-cp .env.example .env
-# Edit .env and insert your NEBIUS_API_KEY
-```
-
-Start the FastAPI development server:
-```bash
+cp .env.example .env               # then set NEBIUS_API_KEY in .env
 uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
-Verify the health check at `http://localhost:8000/api/health`.
 
-### 2. Frontend Setup
+Check it is up:
+
+```bash
+curl http://127.0.0.1:8000/api/health
+# {"status":"ok","version":"0.1.0","environment":"development","data_source":"live","nebius_configured":true}
+```
+
+Interactive OpenAPI docs are served at `http://127.0.0.1:8000/docs`.
+
+### Frontend
 
 ```bash
 cd frontend
-
-# Install Node dependencies
 npm install
-
-# Start the Vite development server
-npm run dev
+VITE_DATA_SOURCE=live npm run dev  # Vite on http://localhost:5173
 ```
-Open `http://localhost:5173` in your browser to access the CascadeRouter Workbench IDE.
 
-### 3. Running an Optimization Cycle
+The UI defaults to **mock** mode, which shows the bundled fixtures in `frontend/src/services/mockData.ts` and never calls the backend. To use the backend, either set `VITE_DATA_SOURCE=live` as above or click the data-source badge in the header to switch modes. The backend URL comes from `VITE_API_BASE_URL` (default `http://localhost:8000`).
 
-1. **Scan**: Click **"Analyze Repository"** or point the IDE to `tests/fixtures/sample_repo`. The AST scanner identifies LLM nodes without executing any code.
-2. **Benchmark**: Click **"Run Nemotron Benchmark Matrix"**. CascadeRouter benchmarks prompts across Nano, Lightning, Super-VL, and Ultra tiers on Nebius Token Factory.
-3. **Review**: Inspect the FinOps matrix for latency, TTFT, token counts, and cost reduction.
-4. **Compile & Patch**: Click **"Generate Patch & Policy"**. Review the unified Git diff and the generated `.cascaderouter.yaml`.
-5. **Verify**: Click **"Run Regression Suite"** to verify that tests in the patched sample repository pass cleanly with zero semantic regression.
+### Both at once
+
+```bash
+./start.sh
+```
+
+`start.sh` does the following:
+
+- Copies `.env.example` to `.env` if `.env` is missing.
+- Activates `./venv` or `./.venv`.
+- Starts `uvicorn backend.main:app --host "${HOST:-127.0.0.1}" --port "${PORT:-8000}" --reload`.
+- Runs `npm install` in `frontend/` if `node_modules` is missing, then starts `npm run dev` on port 5173.
+- Stops both processes when it exits.
+
+It does **not** install Python dependencies. Run `pip install -r requirements.txt` first. `HOST` and `PORT` are read from the shell only; values in `.env` do not affect them.
+
+### End-to-end with curl
+
+This walkthrough uses the bundled sample repo (`tests/fixtures/sample_repo`, a customer-support triage agent with three Ultra-550b calls and six labelled cases):
+
+```bash
+# 1. Scan: returns 3 nodes and 3 edges
+curl -s -X POST localhost:8000/api/scan -H 'Content-Type: application/json' \
+  -d '{"repository_path":"tests/fixtures/sample_repo"}'
+
+# 2. Benchmark: returns 202 {"run_id":"run_..."}
+curl -s -X POST localhost:8000/api/benchmark -H 'Content-Type: application/json' \
+  -d '{"node_ids":["node_classify_customer_intent","node_extract_ticket_metadata","node_generate_support_resolution"]}'
+
+# 3. Poll until status is "complete"
+curl -s localhost:8000/api/runs/<run_id>
+
+# 4. Optimize: decisions, policy YAML, patch diff, regression result
+curl -s -X POST localhost:8000/api/optimize -H 'Content-Type: application/json' \
+  -d '{"run_id":"<run_id>","quality_threshold":0.92}'
+```
+
+To scan your own project, add its path to `ALLOWED_SCAN_ROOTS` and put a `cascade_cases.yaml` at its root. Example:
+
+```yaml
+# excerpt from tests/fixtures/sample_repo/cascade_cases.yaml
+node_classify_customer_intent:
+  - vars: {query: "I was charged twice for my subscription this month, please refund one charge."}
+    expected: {category: billing}
+node_generate_support_resolution:
+  - vars:
+      ticket: "The desktop app crashes with error 0x80070005 every time I open a project."
+      intent: {category: tech_support}
+      metadata: {account_id: "", os_version: "", error_code: "0x80070005"}
+    must_include: ["1.", "2."]
+    min_chars: 80
+    max_chars: 4000
+```
+
+A case with no assertions (no `expected`, no include/exclude list, no length bound) and no schema on the node counts as vacuous. It is never sent to a model, but it counts as a failed case for every model (score 0, hard check fails), so a node with any vacuous case cannot be optimized and stays `baseline_retained`.
 
 ---
 
-## 🔒 Safety & Operational Guardrails
+## Configuration
 
-- **Zero Untrusted Execution**: Scans are purely AST-based (`ast.parse`). Target code is never imported, executed, or `eval`'d during scanning.
-- **Hermetic Sandbox**: Code patches are tested inside isolated temporary directories (`tempfile.mkdtemp`) with strict 30-second timeouts and clean environments without host credentials.
-- **Judge-Safe Hosted Demo**: The public demo deployment features strict in-memory rate limiting (60 req/min) and daily spend caps to remain free, secure, and accessible throughout the entire judging period (until Dec 15).
-- **Badge Transparency**: The UI prominently badges telemetry as **LIVE** (real Nebius API calls), **RECORDED** (deterministic replay), or **MOCK** (offline fixtures).
+Settings load from the repo-root `.env`; real environment variables override it. An invalid value fails at startup with `ConfigError`. Booleans accept `1/true/yes/on` and `0/false/no/off`.
+
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `NEBIUS_API_KEY` | *(empty)* | Required for `live` mode. A value starting with `your-` counts as unset. |
+| `NEBIUS_BASE_URL` | `https://api.studio.nebius.ai/v1` | OpenAI-compatible endpoint |
+| `MODEL_TIER_EFFICIENT` | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B` | Model ids, which must be unique |
+| `MODEL_TIER_EFFICIENT_ALT` | `nvidia/Nemotron-3_5-Lightning` | Shares the `PRICE_EFFICIENT_*` prices |
+| `MODEL_TIER_BALANCED` | `nvidia/Nemotron-3.5-Super-VL` | |
+| `MODEL_TIER_POWERFUL` | `nvidia/Nemotron-3-Ultra-550b-a55b` | |
+| `PRICE_{EFFICIENT,BALANCED,POWERFUL}_{INPUT,OUTPUT}` | see catalog | USD per 1M tokens, >= 0 |
+| `QUALITY_THRESHOLD` | `0.92` | Threshold used during benchmark runs, in [0, 1]. `/api/optimize` takes its own `quality_threshold` (body default `0.92`). |
+| `BENCHMARK_CONCURRENCY` | `4` | Maximum concurrent model calls per run |
+| `BENCHMARK_TIMEOUT_SECONDS` | `45` | Per-call timeout for the Nebius client |
+| `REGRESSION_TIMEOUT_SECONDS` | `30` | Timeout for prompt capture and for the regression sandbox |
+| `DATA_SOURCE_MODE` | `live` | `live`, `recorded` or `mock`. The backend treats `mock` as `recorded`. |
+| `RECORD_RUNS` | `false` | Save every successful live response for later replay |
+| `RECORDINGS_DIR` | `recordings` | Directory for recordings, resolved against the repo root |
+| `ALLOWED_SCAN_ROOTS` | repo root (`.env.example`: `.`) | Comma-separated directories that scans may read |
+| `ENABLE_RATE_LIMITING` | `true` | Per-IP token bucket |
+| `RATE_LIMIT_PER_MINUTE` | `60` | Bucket capacity |
+| `DAILY_SPEND_CAP_USD` | `10.0` | In-memory live-mode cap that resets at UTC midnight |
+| `MAX_CONCURRENT_RUNS` | `2` | Benchmark runs allowed at once |
+| `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173` | |
+| `ALLOWED_HOSTS` | `localhost,127.0.0.1` | Trusted `Host` headers; `*` disables the check |
+| `ENVIRONMENT` | `development` | Reported by `/api/health` |
+| `LOG_LEVEL` | `INFO` | Python logging level |
+| `HOST`, `PORT` | `127.0.0.1`, `8000` | Used only as shell variables by `start.sh` |
+| `TAVILY_API_KEY` | *(empty)* | Parsed but currently unused |
+
+Frontend (Vite, set in the shell or in `frontend/.env`):
+
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `VITE_API_BASE_URL` | `http://localhost:8000` | Backend base URL |
+| `VITE_DATA_SOURCE` | `mock` | Mode the UI starts in: `live`, `recorded` or `mock` |
+
+Runtime wrapper:
+
+| Variable | Purpose |
+| :--- | :--- |
+| `CASCADEROUTER_POLICY` | Explicit path to the policy file. If the file is missing, every call passes through. |
+| `CASCADEROUTER_DISABLE` | When set to a non-empty value at the time `CascadeRouter.load()` runs, the router loads no policy and every call passes through unchanged |
 
 ---
 
-## 🧪 Testing
+## API reference
 
-Run all unit, compiler, API and integration tests (offline: the LLM is a test double, nothing is billed):
+All routes are under `/api`. Every request schema rejects unknown fields. `backend/schemas.py` mirrors `frontend/src/types.ts`, and a contract test keeps the two in sync.
+
+| Method | Path | Body | Returns | Errors |
+| :--- | :--- | :--- | :--- | :--- |
+| GET | `/api/health` | | `{status, version, environment, data_source, nebius_configured}` | Exempt from rate limiting |
+| GET | `/api/models` | | `ModelTierConfig[]` `{id, name, tier, inputPricePerM, outputPricePerM, description, badgeColor}` | |
+| POST | `/api/scan` | `{repository_path}` | `ScanResult {repository_path, nodes, graph_edges, timestamp, data_source, scanned_files_count, detected_framework}` | 400 if the path is outside `ALLOWED_SCAN_ROOTS` |
+| POST | `/api/benchmark` | `{node_ids: [..], repository_path?}` | **202** `{run_id}` | 400 bad path, or unknown nodes when `repository_path` is given; 409 no stored scan contains all the node ids (run `/api/scan` first); 429 too many runs, spend cap reached, or projected cost over the remaining budget; 503 live mode without `NEBIUS_API_KEY` |
+| GET | `/api/runs/{run_id}` | | `BenchmarkRun {run_id, status, progress_pct, current_step, nodes, data_source, created_at}` | 404 unknown run |
+| POST | `/api/optimize` | `{run_id, quality_threshold=0.92}` | `OptimizeResult {decisions, total_baseline_cost_usd, total_optimized_cost_usd, total_cost_reduction_pct, avg_latency_reduction_pct, combined_policy_yaml, combined_patch_diff, all_regressions_passed, data_source}` | 404 unknown run; 409 run not complete |
+
+There is no streaming or WebSocket endpoint and no separate regression endpoint: the regression runs inside `/api/optimize`. All state (32 scans, 64 runs) is held in memory in a single process and is lost on restart.
+
+---
+
+## Using the runtime router in your code
+
+The runtime is a single file that needs only the standard library and PyYAML. Vendor it next to your code under the name the patch imports:
+
+```bash
+cp backend/runtime/cascade_router.py /path/to/your/project/cascaderouter.py
+```
+
+Then put the generated `.cascaderouter.yaml` anywhere at or above the calling module:
+
+```python
+from openai import OpenAI
+from cascaderouter import CascadeRouter
+
+cascade_router = CascadeRouter.load(__file__)   # walks up from this file to find .cascaderouter.yaml
+client = OpenAI(base_url="https://api.studio.nebius.ai/v1", api_key="...")
+
+resp = cascade_router.dispatch(
+    node_id="node_classify_customer_intent",
+    client=client,
+    model="nvidia/Nemotron-3-Ultra-550b-a55b",   # used only if the node is not in the policy
+    messages=[{"role": "user", "content": "I was charged twice this month"}],
+    validator=lambda r: True,                     # optional extra check
+)
+
+print(cascade_router.stats)   # DispatchStats(primary_ok, escalations, passthrough, events)
+
+# Async: await cascade_router.dispatch_async(node_id=..., client=AsyncOpenAI(...), ...)
+```
+
+Behaviour:
+
+- **Unknown node, or no policy found:** the call passes through unchanged with your `model`. A missing or invalid policy is logged and never raises.
+- **Known node:** the router calls `primary_model`. It escalates to `fallback_model` (up to `max_retries`, which is 1) when the call raises, the text is empty, the node requires JSON and no JSON object parses, required fields are missing, or `validator` returns `False`. If every attempt fails, it returns the first invalid response, or re-raises the last exception if there was none.
+- **`stream=True`:** the call goes to the primary model with no validation or fallback.
+- The runtime does **not** check `min_quality_score`; only the structural checks and your validator trigger escalation.
+
+---
+
+## Data modes
+
+| Mode | Backend | Frontend |
+| :--- | :--- | :--- |
+| `live` | Real Nebius calls through the spend-capped client. If `RECORD_RUNS=true`, each successful response is also saved. | Calls the backend |
+| `recorded` | Replays saved responses from `RECORDINGS_DIR`, keyed by SHA-256 of `{model, messages, params}`. **It never fabricates data:** a missing recording becomes a per-cell error. | Calls the backend (same as `live`; the UI does not send its mode to the server) |
+| `mock` | Treated as `recorded` | Returns the fixtures in `mockData.ts` without calling the backend |
+
+The repo ships **no** `recordings/` directory. Recorded mode only works after at least one live run with `RECORD_RUNS=true`. Until then, every metric fails with `no recording for this request; run once in live mode with RECORD_RUNS=true`.
+
+Scanning is always real static analysis, so `/api/scan` always reports `data_source: "live"`.
+
+---
+
+## Testing
+
 ```bash
 source .venv/bin/activate
-pytest -q                       # full suite
-pytest -q --cov=backend         # with coverage
+pytest -q                                  # 428 passed, 1 skipped (~21 s)
+pytest -q --cov=backend --cov-report=term-missing   # 98% line coverage of backend/
 ```
 
-The optional live smoke test runs only when you set a dedicated key:
+The suite runs offline: the LLM is replaced by a test double and nothing is billed. An autouse fixture clears the backend's configuration env vars (`NEBIUS_*`, `MODEL_TIER_*`, `PRICE_*`, ...) and ignores your `.env`. It does not clear the runtime wrapper's `CASCADEROUTER_POLICY` / `CASCADEROUTER_DISABLE`. Tests per area:
+
+| Area | Tests |
+| :--- | ---: |
+| `tests/compiler` | 256 |
+| `tests/api` | 56 |
+| `tests/services` | 35 |
+| `tests/runtime` | 28 |
+| `tests/test_config.py` | 24 |
+| `tests/test_guardrails.py` | 15 |
+| `tests/test_schemas.py` | 8 |
+| `tests/test_store.py` | 5 |
+| `tests/integration` | 2 |
+| **Total collected** | **429** |
+
+`tests/integration/test_pipeline.py` runs the full scan → DAG → benchmark → optimize → regression pipeline on the sample repo. It then loads the emitted policy into `CascadeRouter`.
+
+The one skipped test is a live smoke test. It is gated on a dedicated key, deliberately **not** `NEBIUS_API_KEY`:
+
 ```bash
 NEBIUS_LIVE_TEST_KEY=sk-... pytest -m live tests/integration/test_live_nebius.py
 ```
 
-See [`docs/test-report.md`](docs/test-report.md) for the latest results.
+The sample repo's own suite (the one the regression runner executes) also runs on its own:
+
+```bash
+cd tests/fixtures/sample_repo && python -m pytest -q -p no:cacheprovider   # 6 passed
+```
+
+**CI** (`.github/workflows/tests.yml`) runs on pushes and PRs to `main`:
+
+- **Backend:** Python 3.11, `pytest tests/ --cov=backend --cov-fail-under=95`.
+- **Frontend:** Node 20, `npm ci` and then `npm run build || true`, so a frontend build failure does not fail CI.
+
+CI has no lint step. The frontend has no test script; `npm run lint` (oxlint) is available locally.
 
 ---
 
-## 📜 Hackathon Compliance & Submission
+## Project layout
 
-- **Track**: Track 1 — Coding & Agentic Engineering
-- **Models Used**: NVIDIA Nemotron-3-Nano, Nemotron-3.5-Lightning, Nemotron-3.5-Super-VL, Nemotron-3-Ultra-550b
-- **Infrastructure**: Nebius Token Factory (Nebius AI Studio API)
-- **License**: MIT Open Source License (detectable in repository root)
-- **Hosted Demo**: Free and unrestricted for hackathon judges with rate limiting and spend guardrails
-- **Demo Video**: [3-Minute YouTube Video Walkthrough Placeholder]
+```
+CascadeRouter/
+├── backend/
+│   ├── main.py                 # FastAPI app factory (backend.main:app)
+│   ├── config.py               # Settings, model catalog, prices
+│   ├── schemas.py              # Pydantic models (mirror frontend/src/types.ts)
+│   ├── guardrails.py           # Rate limit, body-size cap, spend tracker
+│   ├── store.py                # In-memory scan and run stores
+│   ├── api/                    # routes.py, deps.py (client wiring per data mode)
+│   ├── compiler/               # ast_scanner, dag_builder, cases, prompt_capture,
+│   │                           # shadow_runner, evaluator, metrics, router_optimizer,
+│   │                           # policy_generator, patch_generator, sandbox, regression_runner
+│   ├── services/               # llm.py, nebius_client.py, recordings.py, optimization.py
+│   └── runtime/cascade_router.py   # Standalone runtime; vendor as cascaderouter.py
+├── frontend/
+│   ├── src/
+│   │   ├── App.tsx, main.tsx, types.ts, App.css, index.css
+│   │   ├── components/{repository,benchmark,optimization,layout}/
+│   │   ├── services/{api.ts,mockData.ts}
+│   │   └── utils/metrics.ts
+│   ├── package.json, vite.config.ts, tsconfig*.json, index.html
+├── tests/
+│   ├── api/ compiler/ services/ runtime/ integration/
+│   ├── test_config.py test_guardrails.py test_schemas.py test_store.py
+│   ├── conftest.py
+│   └── fixtures/sample_repo/   # agent/workflow.py, cascade_cases.yaml, tests/
+├── docs/                       # architecture.md, demo-scenarios.md, test-report.md
+├── .github/workflows/tests.yml
+├── backend_plan.md
+├── start.sh
+├── requirements.txt
+├── pytest.ini
+├── .env.example
+└── LICENSE
+```
 
 ---
 
-## 📄 License
+## Workbench UI
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+The React app (`frontend/`, page title "CascadeRouter IDE") has three panes:
+
+- **Repository:** call sites with their file and line, the current or recommended model, and a code snippet. Below them is a linear dependency chain built from the DAG edges. The repo picker only offers the bundled sample repo.
+- **Benchmark:** a grid of call sites × the four Nemotron models with pass/fail, cost, latency and quality. Clicking a cell opens tokens, TTFT and validation errors.
+- **Recommendation:** baseline vs optimized cost per call site, plus Diff, Policy and Tests tabs.
+
+A single header button moves through **Scan repository → Run benchmark → Generate patch**.
+
+Current UI limitations:
+
+- On page load the UI auto-loads a demo run id, which falls back to mock data when the backend is live.
+- A benchmark is polled only once rather than in a loop.
+- A failed backend call silently falls back to the mock fixtures while the badge still shows the selected mode.
+- The Tests tab shows a fixed sample pytest log instead of the backend's regression log.
+- The latency summary is not shown.
+- The quality threshold is fixed at 0.92.
+- The header spend meter compares against a hard-coded $10 and does not read the backend's spend tracker.
+
+The API responses above are the source of truth.
+
+---
+
+## Safety guardrails
+
+These guardrails are implemented in the code:
+
+- **Static scanning.** `/api/scan` only parses files with `ast`; it never imports them. Paths must resolve inside `ALLOWED_SCAN_ROOTS`; anything else, such as `/etc`, gets a 400.
+- **Sandboxed execution.** Prompt capture and regression tests *do* execute target code. They run in a temporary copy of the repo, with `.git`, venvs and `.env*` files excluded, and with a scrubbed environment that passes no API keys (`CASCADE_OFFLINE=1`). The process group is killed on timeout. This is **credential isolation, not an OS-level jail**: target code still has network and filesystem access.
+- **Rate limiting.** A per-client-IP token bucket allows `RATE_LIMIT_PER_MINUTE` requests (default 60) and returns 429 with `Retry-After: 1`. `/api/health` and `OPTIONS` requests are exempt.
+- **Request size.** Request bodies over 64 KiB get 413.
+- **Host check.** `TrustedHostMiddleware` checks against `ALLOWED_HOSTS`; any other host gets 400. CORS allows only GET and POST, and only the `Content-Type` header.
+- **Spend cap (live mode).** `DAILY_SPEND_CAP_USD` is a daily budget (default $10) that resets at UTC midnight. Before each call the worst-case cost is reserved; afterwards it is settled to the actual cost. A failed or cancelled call is charged its full reservation. Before a run starts, its projected cost is checked against the remaining budget. Models that are not in the catalog are refused. The cap is held in memory, so it applies per process.
+- **Concurrency.** `MAX_CONCURRENT_RUNS` (default 2) benchmark runs at a time, and `BENCHMARK_CONCURRENCY` (default 4) model calls per run.
+- **Honest data.** The backend never fabricates results. Missing recordings and failed calls are reported as errors, and the policy's `total_projected_cost_reduction_pct` is `null` when there is no baseline (the API's reduction fields report 0 in that case).
+- **Conservative patching.** Calls that use streaming, tool calls or function calls are never rewritten. Every patched file must re-parse, and CRLF line endings and BOMs are preserved.
+
+There is currently no hosted deployment. These limits apply to whatever instance you run.
+
+---
+
+## Team
+
+Built for the **Nebius × NVIDIA Global AI Hackathon 2026**.
+
+| Member | Role | Owned areas |
+| :--- | :--- | :--- |
+| **Saba** | Frontend Lead | Three-pane workbench UI (`frontend/`) |
+| **Meenal Sinha** | Backend Lead & Integration Owner | FastAPI service, shared schemas, benchmark runner, optimizer, policy and patch generator, runtime wrapper (`backend/`) |
+| **Pritam Singh** | AST Scanner & Agent Graph Lead | AST scanner, DAG builder, sample repo and fixtures (`backend/compiler/ast_scanner.py`, `dag_builder.py`, `tests/fixtures/`) |
+| **Aditya** | Testing, Metrics & Docs Lead | Cost metrics, evaluator, regression runner, test suite, docs (`metrics.py`, `evaluator.py`, `regression_runner.py`, `tests/`, `README.md`) |
+| **Salman Khurshid** | Spare Member & Overflow Backup | PR review, overflow backup for runner and runtime, friction logging |
+
+---
+
+## Docs
+
+- [docs/architecture.md](docs/architecture.md): original architecture spec. Parts of it describe an earlier design; the code and this README take precedence.
+- [docs/demo-scenarios.md](docs/demo-scenarios.md): demo script with curl examples and failure demos.
+- [docs/test-report.md](docs/test-report.md): test results, per-module coverage, adversarial review notes.
+- [backend_plan.md](backend_plan.md): backend plan, API contract and known limitations.
+
+---
+
+## Hackathon compliance
+
+- **Event:** Nebius × NVIDIA Global AI Hackathon 2026
+- **Track:** Track 1 — Coding & Agentic Engineering
+- **Models (configured defaults, not yet confirmed with a live run):** NVIDIA Nemotron-3 Nano (30B-A3B), Nemotron-3.5 Lightning, Nemotron-3.5 Super-VL, Nemotron-3 Ultra (550B-A55B)
+- **Infrastructure:** Nebius Token Factory (OpenAI-compatible API)
+- **License:** MIT, see [LICENSE](LICENSE) in the repo root
+- **Hosted demo:** none yet; run it locally with the Quickstart above
+- **Demo video:** TODO, link to be added
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE). Copyright (c) 2026 CascadeRouter Contributors (Saba, Meenal Sinha, Pritam Singh, Aditya, Salman Khurshid).
