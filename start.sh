@@ -63,7 +63,23 @@ if [ -f "$ROOT_DIR/backend/main.py" ]; then
     elif [ -d "$ROOT_DIR/.venv" ]; then
         source "$ROOT_DIR/.venv/bin/activate"
     fi
-    python -B -m backend.main "${BACKEND_ARGS[@]}" &
+
+    PYTHON_CMD=""
+    if command -v python >/dev/null 2>&1; then
+        PYTHON_CMD="python"
+    elif command -v python3 >/dev/null 2>&1; then
+        PYTHON_CMD="python3"
+    else
+        echo -e "${YELLOW}[!] Error: Neither python nor python3 found in PATH.${NC}"
+        exit 1
+    fi
+
+    if ! "$PYTHON_CMD" -c "import fastapi, uvicorn" >/dev/null 2>&1; then
+        echo -e "${YELLOW}[!] Warning: Backend dependencies (fastapi, uvicorn) not found for $PYTHON_CMD.${NC}"
+        echo -e "${YELLOW}[!] Install them using: pip install -r requirements.txt${NC}"
+    fi
+
+    "$PYTHON_CMD" -B -m backend.main "${BACKEND_ARGS[@]}" &
     BACKEND_PID=$!
     PIDS+=("$BACKEND_PID")
     echo -e "${GREEN}[✓] Backend service launched (PID: $BACKEND_PID)${NC}"
@@ -95,8 +111,20 @@ if [ -d "$ROOT_DIR/frontend" ]; then
     PIDS+=("$FRONTEND_PID")
 
     # Wait for child processes
-    # Bash 4.3+: propagate either service's failure and stop its sibling.
-    wait -n "${PIDS[@]}"
+    # Bash 4.3+: wait -n propagates either service's failure and stops its sibling.
+    # Bash < 4.3 (such as macOS default /bin/bash): monitor processes periodically.
+    if (( BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 3) )); then
+        wait -n "${PIDS[@]}"
+    else
+        while true; do
+            for pid in "${PIDS[@]}"; do
+                if ! kill -0 "$pid" 2>/dev/null; then
+                    break 2
+                fi
+            done
+            sleep 1
+        done
+    fi
 else
     echo -e "${YELLOW}[!] Error: frontend directory not found.${NC}"
     exit 1
