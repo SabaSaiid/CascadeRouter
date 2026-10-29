@@ -444,14 +444,19 @@ def scan_repository(root: Path) -> RepoScan:
     for path in files:
         rel = path.relative_to(root).as_posix()
         try:
-            source = path.read_text(encoding="utf-8")
+            # utf-8-sig: files saved with a BOM must still parse.
+            source = path.read_text(encoding="utf-8-sig")
             tree = ast.parse(source, filename=rel)
-        except (SyntaxError, UnicodeDecodeError, ValueError) as exc:
+            module_calls = scan_module(tree, source, rel)
+        except (SyntaxError, UnicodeDecodeError, ValueError, OSError) as exc:
             warnings.append(f"Skipped {rel}: {exc.__class__.__name__}")
+            continue
+        except (RecursionError, MemoryError):
+            warnings.append(f"Skipped {rel}: too deeply nested to analyse")
             continue
         trees[rel] = tree
         sources[rel] = source
-        calls.extend(scan_module(tree, source, rel))
+        calls.extend(module_calls)
 
     _dedupe_ids(calls)
     for w in warnings:
