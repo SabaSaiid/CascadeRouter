@@ -2,6 +2,7 @@
 
 import builtins
 import hashlib
+from decimal import Decimal
 
 import pytest
 import yaml
@@ -9,7 +10,8 @@ from pydantic import ValidationError
 
 from backend.compiler.policy_generator import generate_policy
 from backend.compiler.router_optimizer import optimize
-from backend.schemas import OptimizationResult
+from backend.schemas import BenchmarkRegistryDocument, BenchmarkRequest, ModelVersion, OptimizationResult, content_digest
+from backend.services.benchmark_cases import BenchmarkRegistry
 
 
 def test_policy_safe_round_trip_determinism_and_no_file_writes(optimization_environment, monkeypatch):
@@ -28,6 +30,36 @@ def test_policy_safe_round_trip_determinism_and_no_file_writes(optimization_envi
     assert data["routes"][0]["model"]["identifier"] == "local/candidate"
     assert "fallback" not in artifact.yaml_content and "regression" not in artifact.yaml_content
     assert "PRIVATE_" not in artifact.yaml_content and set(env.repository.iterdir()) == before
+
+
+@pytest.mark.parametrize("baseline,selected", [("false", "null"), ("0123", "true"), ("2026-10-29", "1e-5")])
+def test_policy_preserves_yaml_scalar_like_model_ids_and_exact_cost_evidence(optimization_environment, baseline, selected):
+    env = optimization_environment
+    env.registry = BenchmarkRegistry(BenchmarkRegistryDocument.model_validate({
+        **env.registry.document.model_dump(),
+        "models": [ModelVersion(identifier=baseline, version="v1"), ModelVersion(identifier=selected, version="v1")],
+    }))
+    env.request = BenchmarkRequest.model_validate({
+        **env.request.model_dump(), "baseline_model_id": baseline, "candidate_model_ids": [selected],
+    })
+    sample = env.build_optimization(rates={baseline: "0.100000000001", selected: "0.100000000000"}, tokens=1)
+    result = optimize(sample.snapshot)
+    artifact = generate_policy(result)
+    parsed = yaml.safe_load(artifact.yaml_content)
+    route = parsed["routes"][0]
+
+    assert artifact.status == "available" and artifact == generate_policy(result)
+    assert parsed["provenance"] == result.provenance == sample.job.plan.provenance == "test"
+    assert route["model"]["identifier"] == selected and type(route["model"]["identifier"]) is str
+    assert route["baseline_model"]["identifier"] == baseline and type(route["baseline_model"]["identifier"]) is str
+    assert all(type(route[key]) is str for key in (
+        "recorded_baseline_cost_usd", "recorded_selected_cost_usd", "recorded_savings_usd"))
+    assert Decimal(route["recorded_baseline_cost_usd"]) == Decimal("0.000000200000000002")
+    assert Decimal(route["recorded_selected_cost_usd"]) == Decimal("0.0000002")
+    assert Decimal(route["recorded_savings_usd"]) == Decimal("0.000000000000000002")
+    assert route["measurement_digest"] == result.decisions[0].candidates[1].measurement_digest
+    assert route["latency_ms"]["availability"] == "unavailable" and route["latency_ms"]["mean"] is None
+    assert parsed["optimization_digest"] == content_digest(result)
 
 
 def test_inconclusive_nodes_emit_no_policy_routes(optimization_environment):
