@@ -1843,7 +1843,7 @@ class PatchValidationResult(APIModel):
     provenance: BenchmarkProvenance
     status: Literal["validated", "partial", "invalid", "stale", "unavailable"]
     reason: Literal["statically_validated", "partial_proposal", "no_editable_files", "proposal_mismatch",
-                    "file_validation_failed", "source_changed", "source_evidence_unavailable", "resource_limit"]
+                    "file_validation_failed", "file_validation_unavailable", "source_changed", "source_evidence_unavailable", "resource_limit"]
     structure: Literal["valid", "invalid"]
     source_evidence: Literal["available", "unavailable"]
     source_identity: Literal["verified", "stale", "not_verified"]
@@ -1864,6 +1864,7 @@ class PatchValidationResult(APIModel):
             "no_editable_files": ("unavailable", "valid", "available", "verified", False),
             "proposal_mismatch": ("invalid", "invalid", "available", "verified", False),
             "file_validation_failed": ("invalid", "valid", "available", "verified", False),
+            "file_validation_unavailable": ("unavailable", "valid", "available", "verified", False),
             "source_changed": ("stale", "valid", "available", "stale", False),
             "source_evidence_unavailable": ("unavailable", "valid", "unavailable", "not_verified", False),
             "resource_limit": ("unavailable", "valid", "available", "not_verified", False),
@@ -1878,9 +1879,12 @@ class PatchValidationResult(APIModel):
                 raise ValueError("Static success requires every included candidate to be checked.")
             if (self.omitted_nodes == 0) != self.complete:
                 raise ValueError("Partial proposals cannot claim complete validation.")
-        elif self.reason == "file_validation_failed":
+        elif self.reason in ("file_validation_failed", "file_validation_unavailable"):
             if not self.files or all(file.reason == "checked" for file in self.files):
                 raise ValueError("A failed file check is required.")
+            limited = all(file.reason in ("checked", "resource_limit", "unsupported_encoding") for file in self.files)
+            if limited != (self.reason == "file_validation_unavailable"):
+                raise ValueError("A validation limitation is distinct from an invalid candidate.")
         elif self.reason != "proposal_mismatch" and self.files:
             raise ValueError("Unverified source cannot claim candidate checks.")
         if self.reason == "no_editable_files" and self.omitted_nodes == 0:
