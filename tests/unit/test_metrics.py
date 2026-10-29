@@ -50,6 +50,45 @@ def test_populations_count_only_observed_values_and_ttft_is_not_derived(offline_
     assert result.cost_usd.total_usd is None
 
 
+def test_failed_and_inconclusive_outputs_retain_observed_metrics_without_quality_credit(offline_environment):
+    env = offline_environment
+    cases = [LocalBenchmarkCase(identifier="pass", input_text="test", expected_output="yes"),
+             LocalBenchmarkCase(identifier="fail", input_text="test", expected_output="yes"),
+             LocalBenchmarkCase(identifier="unknown", input_text="test"),
+             LocalBenchmarkCase(identifier="missing", input_text="test", expected_output="yes")]
+    outputs = {(model.identifier, case.identifier): {"pass": "yes", "fail": "no", "unknown": "observed"}.get(case.identifier)
+               for model in env.registry.document.models for case in cases}
+    prices = tuple(env.price(model.identifier) for model in env.registry.document.models)
+    price_map = {price.model_id: price for price in prices}
+
+    def evidence(model, case):
+        observed = case != "missing"
+        return RecordingEvidence(source_id="test-mixed-quality", captured_at="2026-10-28T00:00:00Z",
+            input_tokens=(0 if case == "fail" else 1) if observed else None,
+            output_tokens=(1 if case == "pass" else 0) if observed else None,
+            latency_ms={"pass": 2.0, "fail": 0.0}.get(case),
+            pricing_reference=VersionedReference(identifier=price_map[model].identifier, version=price_map[model].version))
+
+    registry, _, executor = env.make_offline(cases=cases, outputs=outputs, evidence=evidence, prices=prices)
+    plan, records = measurements(env, registry, executor)
+    result = aggregate(plan, records)
+
+    assert result.provenance == "test" and all(item.quality_score is None for item in records)
+    assert result.planned_cases == 4 and result.planned_units == result.processed_units == 8
+    assert result.processing_complete and not result.evaluation_complete
+    assert (result.passed, result.failed, result.inconclusive, result.not_run, result.skipped) == (2, 2, 2, 2, 0)
+    assert result.valid_recorded_outputs == 6 and result.evaluated_units == 4
+    assert result.latency_ms.sample_count == 4 and result.latency_ms.mean == 1.0
+    assert (result.latency_ms.minimum, result.latency_ms.maximum) == (0.0, 2.0)
+    assert result.input_tokens.sample_count == result.output_tokens.sample_count == result.cost_usd.sample_count == 6
+    assert result.input_tokens.total_tokens == 4 and result.output_tokens.total_tokens == 2
+    assert result.cost_usd.total_usd == Decimal("0.0000008")
+    assert result.ttft_ms.sample_count == 0 and result.ttft_ms.mean is None
+    partial = aggregate(plan, records[:-1])
+    assert not partial.processing_complete and partial.processed_units == 7 and partial.not_run == 1
+    assert partial.cost_usd == result.cost_usd and partial.latency_ms == result.latency_ms
+
+
 def test_decimal_calculation_uses_pinned_usage_and_pricing_without_float_rounding(offline_environment):
     env = offline_environment
     price = env.price(input_usd_per_million="0.100000000001", output_usd_per_million="0.200000000002")
