@@ -216,10 +216,11 @@ Working rules: small commits per step, no demo data in `backend/`, every module 
 - [x] P4 Optimize: optimizer, policy generator, patch generator, `/api/optimize` (code complete)
 - [x] P5 Runtime + regression: `runtime/cascade_router.py`, `regression_runner.py` (code complete)
 - [x] P6 Hardening: rate limit, spend cap, body limit, trusted hosts, loopback bind (code complete)
-- [ ] Testing pass: unit tests for every P3–P6 module, API and integration tests
-- [ ] Docs: `docs/test-report.md`, `docs/demo-scenarios.md`
+- [x] Testing pass: 428 tests, 98% coverage, plus three adversarial review rounds (55 confirmed defects, all resolved; see `docs/test-report.md`)
+- [x] Docs: `docs/test-report.md`, `docs/demo-scenarios.md`, README backend layout
 
 Known limitations, kept on purpose:
-- Prompt capture and regression isolate credentials, not the OS. Target code still has network and filesystem access inside the sandbox. Only scan repositories you trust enough to run their tests.
+- Prompt capture and regression isolate credentials, not the OS. Target code still has network and filesystem access inside the sandbox, and a child process that detaches itself into its own session can outlive a timeout. Only scan repositories you trust enough to run their tests.
+- Calls using `stream`, `tools` or `functions` are benchmarked without those features and are never patched. The optimize result reports them as "patch could not be generated".
 - The contract requires numbers. Failed matrix cells therefore report 0 tokens, cost and latency with `status: "failed"`, and an undefined total reduction is reported as 0.
 - Node ids come from function names (`node_<function>`, then `__2`, `__3` for extra calls in one function). They stay stable across edits elsewhere in the file. Content-hashed ids would also survive renames, but they're unreadable as `cascade_cases.yaml` keys.
