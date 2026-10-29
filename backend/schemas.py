@@ -1791,3 +1791,130 @@ class PatchAccepted(APIModel):
     omitted_nodes: Annotated[int, Field(ge=0, le=16)]
     complete_for_requested_nodes: bool
     status_url: Annotated[str, Field(pattern=r"^/api/patches/patch_[0-9a-f]{32}$")]
+
+
+# Static validation is an observation, never patch application or runtime proof.
+PatchValidationId = Annotated[str, Field(min_length=75, max_length=75, pattern=r"^validation_[0-9a-f]{64}$")]
+
+
+class PatchSyntaxDiagnostic(APIModel):
+    code: Literal["candidate_syntax_error"] = "candidate_syntax_error"
+    line_number: LineNumber | None = None
+    column_number: Count | None = None
+
+
+class PatchFileValidation(APIModel):
+    file_path: Annotated[str, Field(min_length=1, max_length=4096)]
+    original_digest: Digest
+    candidate_digest: Digest | None = None
+    spans: Literal["valid", "invalid", "not_checked", "not_applicable"]
+    candidate: Literal["constructed", "failed", "not_checked", "not_applicable"]
+    syntax: Literal["passed", "failed", "not_checked", "not_applicable"]
+    ast_preservation: Literal["verified", "failed", "not_checked", "not_applicable"]
+    reason: Literal["checked", "invalid_spans", "candidate_failed", "candidate_digest_mismatch",
+                    "syntax_error", "ast_mismatch", "resource_limit", "unsupported_encoding"]
+    diagnostic: PatchSyntaxDiagnostic | None = None
+    _path = field_validator("file_path")(_relative_path)
+
+    @model_validator(mode="after")
+    def truthful_checks(self):
+        expected = {
+            "checked": ("valid", "constructed", "passed", "verified"),
+            "invalid_spans": ("invalid", "not_checked", "not_checked", "not_checked"),
+            "candidate_failed": ("valid", "failed", "not_checked", "not_checked"),
+            "candidate_digest_mismatch": ("valid", "constructed", "not_checked", "not_checked"),
+            "syntax_error": ("valid", "constructed", "failed", "not_checked"),
+            "ast_mismatch": ("valid", "constructed", "passed", "failed"),
+            "resource_limit": ("not_checked", "not_checked", "not_checked", "not_checked"),
+            "unsupported_encoding": ("not_applicable",) * 4,
+        }[self.reason]
+        if ((self.spans, self.candidate, self.syntax, self.ast_preservation) != expected
+                or (self.candidate_digest is not None) != (self.candidate == "constructed")
+                or (self.diagnostic is not None) != (self.reason == "syntax_error")):
+            raise ValueError("Static checks must describe only established results.")
+        return self
+
+
+class PatchValidationResult(APIModel):
+    patch_id: PatchId
+    proposal_digest: Digest
+    analysis_id: AnalysisId
+    source_manifest_digest: Digest
+    provenance: BenchmarkProvenance
+    status: Literal["validated", "partial", "invalid", "stale", "unavailable"]
+    reason: Literal["statically_validated", "partial_proposal", "no_editable_files", "proposal_mismatch",
+                    "file_validation_failed", "source_changed", "source_evidence_unavailable", "resource_limit"]
+    structure: Literal["valid", "invalid"]
+    source_evidence: Literal["available", "unavailable"]
+    source_identity: Literal["verified", "stale", "not_verified"]
+    complete: bool
+    omitted_nodes: Annotated[int, Field(ge=0, le=16)]
+    files: tuple[PatchFileValidation, ...] = Field(default=(), max_length=16)
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def bounds(cls, value):
+        return _sequence(value, 16)
+
+    @model_validator(mode="after")
+    def truthful_outcome(self):
+        expected = {
+            "statically_validated": ("validated", "valid", "available", "verified", True),
+            "partial_proposal": ("partial", "valid", "available", "verified", False),
+            "no_editable_files": ("unavailable", "valid", "available", "verified", False),
+            "proposal_mismatch": ("invalid", "invalid", "available", "verified", False),
+            "file_validation_failed": ("invalid", "valid", "available", "verified", False),
+            "source_changed": ("stale", "valid", "available", "stale", False),
+            "source_evidence_unavailable": ("unavailable", "valid", "unavailable", "not_verified", False),
+            "resource_limit": ("unavailable", "valid", "available", "not_verified", False),
+        }[self.reason]
+        if (self.status, self.structure, self.source_evidence, self.source_identity, self.complete) != expected:
+            raise ValueError("Static validation status must agree with its evidence.")
+        paths = tuple(file.file_path for file in self.files)
+        if paths != tuple(sorted(set(paths))):
+            raise ValueError("Validated file identities must be distinct and ordered.")
+        if self.reason in ("statically_validated", "partial_proposal"):
+            if not self.files or any(file.reason != "checked" for file in self.files):
+                raise ValueError("Static success requires every included candidate to be checked.")
+            if (self.omitted_nodes == 0) != self.complete:
+                raise ValueError("Partial proposals cannot claim complete validation.")
+        elif self.reason == "file_validation_failed":
+            if not self.files or all(file.reason == "checked" for file in self.files):
+                raise ValueError("A failed file check is required.")
+        elif self.reason != "proposal_mismatch" and self.files:
+            raise ValueError("Unverified source cannot claim candidate checks.")
+        if self.reason == "no_editable_files" and self.omitted_nodes == 0:
+            raise ValueError("An empty proposal must explain its omissions.")
+        return self
+
+
+class PatchValidationObservation(APIModel):
+    schema_version: Literal["cascaderouter.patch-validation.v1"] = "cascaderouter.patch-validation.v1"
+    checked_at: datetime
+    validator_version: Literal["literal-static.v1"] = "literal-static.v1"
+    grammar_target: Literal["3.11"] = "3.11"
+    python_version: Annotated[str, Field(pattern=r"^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$", max_length=11)]
+    result: PatchValidationResult
+    _time = field_validator("checked_at", mode="before")(ScanResponse.supplied_timestamp)
+
+    @field_serializer("checked_at", when_used="json")
+    def time_json(self, value):
+        return value.isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+class PatchValidationReport(PatchValidationObservation):
+    validation_id: PatchValidationId
+    digest: Digest
+
+    @classmethod
+    def create(cls, *, result, checked_at, python_version):
+        observation = PatchValidationObservation(result=result, checked_at=checked_at, python_version=python_version)
+        digest = content_digest(observation)
+        return cls(**observation.model_dump(), digest=digest, validation_id="validation_" + digest)
+
+    @model_validator(mode="after")
+    def integrity(self):
+        actual = content_digest(self, exclude={"validation_id", "digest"})
+        if self.digest != actual or self.validation_id != "validation_" + actual:
+            raise ValueError("Validation identity must match its immutable observation.")
+        return self
