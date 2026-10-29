@@ -81,7 +81,7 @@ def _parse_candidate(source):
     return ast.parse(source, feature_version=(3, 11))
 
 
-def _verify_candidate(parsed, edits, encoding):
+def _verify_candidate(parsed, edits, encoding, expected_digest=None):
     """Shared generation/validation checks. Candidate bytes exist only in memory."""
     raw = parsed.raw
     def fail(reason, spans, candidate, syntax, preservation, proposed=None, diagnostic=None):
@@ -103,6 +103,8 @@ def _verify_candidate(parsed, edits, encoding):
         source = proposed.decode(encoding)
     except (PatchInputError, UnicodeError):
         fail("candidate_failed", "valid", "failed", "not_checked", "not_checked")
+    if expected_digest is not None and hashlib.sha256(proposed).hexdigest() != expected_digest:
+        fail("candidate_digest_mismatch", "valid", "constructed", "not_checked", "not_checked", proposed)
     try:
         tree = _parse_candidate(source)
         if sum(1 for _ in ast.walk(tree)) > 100000:
@@ -129,7 +131,7 @@ def _verify_candidate(parsed, edits, encoding):
     return proposed
 
 
-def generate_file(parsed, nodes, decisions) -> FileProposal:
+def generate_file(parsed, nodes, decisions, *, expected_file: PatchFile | None = None) -> FileProposal:
     """Transform only requested, unambiguous model constants; all bytes stay in memory."""
     if len(nodes) > 16 or len(decisions) > 16:
         raise PatchInputError()
@@ -210,9 +212,15 @@ def generate_file(parsed, nodes, decisions) -> FileProposal:
         location = literal.lineno, literal.col_offset, literal.end_lineno, literal.end_col_offset
         edits.append((edit, replacement, token, location))
     edits.sort(key=lambda item: item[0].start_byte)
+    if expected_file is not None and (
+            expected_file.file_path != path or expected_file.original_digest != parsed.fingerprint.sha256
+            or expected_file.edits != tuple(item[0] for item in edits)):
+        raise PatchVerificationError(PatchFileValidation(
+            file_path=path, original_digest=parsed.fingerprint.sha256, spans="invalid", candidate="not_checked",
+            syntax="not_checked", ast_preservation="not_checked", reason="invalid_spans"))
     if not edits:
         return FileProposal(None, tuple(sorted(omissions, key=lambda item: item.node_id)))
-    proposed = _verify_candidate(parsed, edits, encoding)
+    proposed = _verify_candidate(parsed, edits, encoding, None if expected_file is None else expected_file.proposed_digest)
     metadata = PatchFile(file_path=path, original_digest=hashlib.sha256(raw).hexdigest(),
                          proposed_digest=hashlib.sha256(proposed).hexdigest(), edits=[item[0] for item in edits])
     diff = [f"--- a/{path}\n+++ b/{path}\n"]
