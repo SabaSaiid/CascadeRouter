@@ -12,7 +12,7 @@ test('scan uses actual request contract and preserves backend provenance', async
   const result = await api.scan('operator/path'); assert.equal(result.data_source, 'mock'); assert.match(provenance(result.data_source), /DEMO/);
 });
 test('partial empty scan cannot claim absence or full coverage', () => {
-  const scan = fixture('scan'); scan.nodes = []; scan.complete = scan.scan_complete = scan.graph_complete = false;
+  const scan = fixture('scan'); scan.nodes = []; scan.detected_framework = null; scan.complete = scan.scan_complete = scan.graph_complete = false;
   const view = scanSummary(scan); assert.match(view.empty, /undiscovered/); assert.match(view.coverage, /incomplete/); assert.match(view.graph, /Partial/);
 });
 test('stored analysis retrieval uses protected analysis route and binds identity', async () => {

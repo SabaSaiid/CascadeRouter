@@ -18,7 +18,7 @@ export default function App() {
   const [selected, setSelected] = useState<string>();
   const [health, healthOperation] = useOperation<Health>();
   const connection = useMemo(() => {
-    try { return { api: new ApiClient(new LocalTransport(import.meta.env.VITE_API_BASE_URL)) }; }
+    try { return { api: new ApiClient(new LocalTransport(import.meta.env?.VITE_API_BASE_URL)) }; }
     catch (error) { return { error: failure(error) }; }
   }, []);
   return <><a className="skip-link" href="#workbench">Skip to workbench</a>

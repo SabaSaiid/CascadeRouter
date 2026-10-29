@@ -1,3 +1,11 @@
+> **Current integration (Phase 4.9): offline local backend only.** The original
+> hackathon vision below is historical, not the implemented setup or safety
+> contract. There are no hosted provider calls, automatic source edits, or runtime
+> regression claims in this branch. Start with [local frontend setup](frontend/README.md),
+> [implemented flows](docs/frontend-integration.md), and
+> [static validation limitations](docs/patch-validation.md). Missing or unapproved
+> benchmark evidence remains unavailable; demonstration data is explicitly labeled.
+
 # CascadeRouter IDE
 
 ### *Autonomous FinOps & Latency Compiler for LLM Architectures*

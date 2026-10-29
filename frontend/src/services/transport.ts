@@ -66,7 +66,7 @@ export class LocalTransport {
       try { data = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
       catch { if (response.ok) throw new ApiFailure('malformed'); }
       if (!response.ok) {
-        const kind: FailureKind = response.status === 403 ? 'authorization' : response.status === 404 ? 'not_found' : response.status === 429 ? 'rate_limit'
+        const kind: FailureKind = [401, 403].includes(response.status) ? 'authorization' : response.status === 404 ? 'not_found' : response.status === 429 ? 'rate_limit'
           : response.status === 409 ? 'conflict' : response.status === 503 ? 'unavailable' : response.status >= 500 ? 'server' : 'validation';
         const obj = data !== null && typeof data === 'object' ? data as Record<string, unknown> : {};
         throw new ApiFailure(kind, response.status, typeof obj.code === 'string' ? obj.code : undefined, typeof obj.request_id === 'string' ? obj.request_id : undefined);

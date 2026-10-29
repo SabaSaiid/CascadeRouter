@@ -6,6 +6,8 @@ type Obj = Record<string, any>;
 const object = (value: unknown): value is Obj => value !== null && typeof value === 'object' && !Array.isArray(value);
 const unique = (values: readonly unknown[]) => new Set(values).size === values.length;
 const relative = (value: string) => !value.startsWith('/') && !value.includes('\\') && !value.includes(':') && !value.split('/').some(v => v === '..' || v === '.' || !v);
+const money = (value: unknown) => typeof value === 'string' && /^(?:0|[1-9][0-9]{0,23})(?:\.[0-9]{1,18})?$/.test(value);
+const rate = (value: unknown) => typeof value === 'string' && /^(?:0(?:\.[0-9]{1,18})?|1(?:\.0{1,18})?)$/.test(value);
 
 // This interprets only first-party generated schema data, never executable validators.
 function shape(value: unknown, schema: Obj, budget: { left: number }, depth = 0): boolean {
@@ -44,12 +46,19 @@ function shape(value: unknown, schema: Obj, budget: { left: number }, depth = 0)
   }
   if (schema.type === 'object' && schema.properties?.availability && schema.properties?.value
     && ((value as Obj).availability === 'available') !== ((value as Obj).value != null)) return false;
+  if (schema.type === 'object' && schema.properties?.amount_usd) {
+    const cost = value as Obj;
+    if (cost.availability === 'available' ? cost.amount_usd == null || cost.pricing_reference == null || cost.pricing_digest == null || cost.reason != null
+      : cost.amount_usd != null || cost.pricing_reference != null || cost.pricing_digest != null || cost.reason == null) return false;
+  }
   return true;
 }
 
 function evidence(value: unknown): boolean {
   if (Array.isArray(value)) return value.every(evidence);
   if (!object(value)) return true;
+  for (const key of ['amount_usd', 'total_usd', 'cost_total_usd', 'recorded_savings_usd']) if (value[key] != null && !money(value[key])) return false;
+  for (const key of ['quality_threshold', 'quality_pass_rate']) if (value[key] != null && !rate(value[key])) return false;
   if ('file_path' in value && !relative(value.file_path)) return false;
   if ('availability' in value && 'value' in value && (value.availability === 'available') !== (value.value != null)) return false;
   if ('availability' in value && ('amount_usd' in value || 'pricing_digest' in value) && (value.availability === 'available') !== (value.amount_usd != null)) return false;

@@ -10,7 +10,9 @@ test('missing measurement remains unavailable while a measured zero stays zero',
   assert.equal(population(), 'Unavailable'); assert.match(population(fixture('job').result.metrics.cost_usd), /USD/);
   const bad = fixture('job'); bad.measurements[0].latency_ms.value = -1; assert.throws(() => parseContract('Job', bad));
   const absent = fixture('job'); absent.measurements[0].input_tokens = { availability: 'available' }; assert.throws(() => parseContract('Job', absent));
+  const missingCost = fixture('job'); missingCost.measurements[0].calculated_cost = { availability: 'available' }; assert.throws(() => parseContract('Job', missingCost));
   const inconsistent = fixture('job'); inconsistent.result.metrics.evaluation_complete = false; assert.throws(() => parseContract('Job', inconsistent));
+  for (const amount of ['NaN','Infinity','-1','0.1234567890123456789']) { const invalid = fixture('job'); invalid.result.metrics.cost_usd.total_usd = amount; assert.throws(() => parseContract('Job',invalid)); }
 });
 test('same plan retries use one key; changed plan uses a new key', () => {
   const keys = new SubmissionKeys(); let n=0; const create=()=>String(++n);

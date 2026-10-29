@@ -22,7 +22,7 @@ test('success uses explicit local URL and disallows redirect/credentials', async
 for (const url of ['https://localhost:8000', 'http://example.invalid', 'http://127.0.0.1.evil.invalid', 'http://user:PRIVATE@localhost:8000', 'file:///tmp/api', 'http://localhost/path', 'http://localhost?key=PRIVATE']) {
   test('reject non-local or credential-bearing configuration ' + url.split(':')[0], () => assert.throws(() => localBase(url), e => e.kind === 'configuration' && !e.message.includes('PRIVATE')));
 }
-for (const [status, kind] of [[403, 'authorization'], [404, 'not_found'], [409, 'conflict'], [413, 'validation'], [422, 'validation'], [429, 'rate_limit'], [500, 'server'], [503, 'unavailable']]) {
+for (const [status, kind] of [[401, 'authorization'], [403, 'authorization'], [404, 'not_found'], [409, 'conflict'], [413, 'validation'], [422, 'validation'], [429, 'rate_limit'], [500, 'server'], [503, 'unavailable']]) {
   test(`HTTP ${status} stays an honest sanitized ${kind} failure`, async () => {
     const client = new LocalTransport(undefined, async () => json({ code: 'invalid_request', message: 'PRIVATE /internal/path', request_id: 'req_' + 'a'.repeat(32) }, status));
     await assert.rejects(client.request('/api/health', 'Health'), e => e.kind === kind && e.status === status && !e.message.includes('PRIVATE') && e.requestId.startsWith('req_'));

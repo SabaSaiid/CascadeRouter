@@ -7,6 +7,7 @@ import { OperationStatus } from '../OperationStatus.tsx';
 export function OptimizationEvidence({ value }: { value: Optimization }) {
   const r = value.result;
   return <><p className="evidence-warning">{provenance(r.provenance)}</p><p>Optimization: <strong>{r.status}</strong>; decisions {r.decisions_complete ? 'complete' : 'incomplete'}. Objective: {r.objective_version ?? 'all-checks-then-cost.v1'}. Quality threshold: {r.quality_threshold ?? 'unconfigured'}.</p>
+    <p>Backend observations and restrictions: {r.diagnostics?.join(', ') || 'none reported'}.</p>
     <p>Approval manifest: {r.approval_manifest_digest ? 'bound by backend' : 'unavailable'}. Recording dataset: {r.recording_dataset_digest ? 'bound by backend' : 'unavailable'}.</p>
     <p>Persisted optimization ID: <code>{value.optimization_id ?? 'unavailable — cannot create a production proposal'}</code></p>
     {r.decisions.length === 0 && <p>No decisions available. Configure approved recorded evidence; synthetic test runs cannot authorize production routing.</p>}

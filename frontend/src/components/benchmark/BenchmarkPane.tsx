@@ -25,7 +25,7 @@ export function BenchmarkPane({ api, demo, analysis, selected, onJob }: { api?: 
   const [baseline, setBaseline] = useState(''); const [candidates, setCandidates] = useState(''); const [cases, setCases] = useState(''); const [profile, setProfile] = useState(''); const [runId, setRunId] = useState('');
   const [accepted, submission] = useOperation<JobAccepted>(); const [state, retrieval] = useOperation<Job>();
   const keys = useMemo(() => new SubmissionKeys(), []); const job = state.data; const busy = accepted.status === 'loading' || state.status === 'loading';
-  const retrieve = (value: string, cancel = false) => { void retrieval.run(s => api!.run(value, s, cancel), false, true).then(result => { if (result) onJob(result); }); };
+  const retrieve = (value: string, cancel = false) => { onJob(undefined); void retrieval.run(s => api!.run(value, s, cancel), false, true).then(result => { if (result) onJob(result); }); };
   const start = () => {
     const request: BenchmarkRequest = { analysis_id: analysis!.analysis_id, node_ids: [selected!], baseline_model_id: baseline.trim(), candidate_model_ids: candidates.split(',').map(s => s.trim()).filter(Boolean), benchmark_case_set_id: cases.trim(), evaluation_profile_id: profile.trim() };
     retrieval.reset(); onJob(undefined);
