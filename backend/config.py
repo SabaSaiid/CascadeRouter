@@ -114,6 +114,8 @@ class Settings:
     daily_spend_cap_usd: float
     tavily_api_key: str = field(repr=False)
     allowed_scan_roots: list[Path] = field(default_factory=list)
+    allowed_hosts: list[str] = field(default_factory=lambda: ["localhost", "127.0.0.1", "[::1]"])
+    max_concurrent_runs: int = 2
     record_runs: bool = False
     recordings_dir: Path = REPO_ROOT / "recordings"
 
@@ -236,6 +238,8 @@ def load_settings(env: Env | None = None) -> Settings:
         daily_spend_cap_usd=_get_float(env, "DAILY_SPEND_CAP_USD", 10.0, minimum=0),
         tavily_api_key=_get_str(env, "TAVILY_API_KEY", ""),
         allowed_scan_roots=allowed_roots,
+        allowed_hosts=_get_list(env, "ALLOWED_HOSTS", ["localhost", "127.0.0.1", "[::1]"]),
+        max_concurrent_runs=_get_int(env, "MAX_CONCURRENT_RUNS", 2, minimum=1),
         record_runs=_get_bool(env, "RECORD_RUNS", False),
         recordings_dir=_resolve_dir(_get_str(env, "RECORDINGS_DIR", "recordings")),
     )
