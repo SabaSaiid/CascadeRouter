@@ -238,3 +238,148 @@ def test_resolve_scan_path_rejects_symlink_and_file(tmp_path):
         resolve_scan_path("f.py", roots, tmp_path)
     with pytest.raises(ScanPathError, match="outside"):
         resolve_scan_path(str(tmp_path.parent), roots, tmp_path)
+
+
+# ------------------------------------------------------------- P2 review regressions
+
+
+def test_deeply_nested_file_is_skipped_not_fatal(tmp_path):
+    _write(tmp_path, "ok.py", 'import openai\ndef f(c):\n    c.chat.completions.create(model="m", messages=[])\n')
+    (tmp_path / "deep.py").write_text("x = " + "+".join(["a"] * 3000) + "\n")
+    scan = scan_repository(tmp_path)
+    assert [c.node_id for c in scan.calls] == ["node_f"]
+    assert any("deep.py" in w for w in scan.warnings)
+
+
+def test_unreadable_file_is_skipped(tmp_path):
+    _write(tmp_path, "ok.py", 'import openai\ndef f(c):\n    c.chat.completions.create(model="m", messages=[])\n')
+    locked = tmp_path / "locked.py"
+    locked.write_text("x = 1\n")
+    locked.chmod(0)
+    try:
+        scan = scan_repository(tmp_path)
+    finally:
+        locked.chmod(0o644)
+    assert len(scan.calls) == 1
+    if os.geteuid() != 0:
+        assert any("locked.py" in w for w in scan.warnings)
+
+
+def test_utf8_bom_file_is_scanned(tmp_path):
+    (tmp_path / "bom.py").write_bytes(
+        "﻿import openai\ndef f(c):\n    return c.chat.completions.create(model='a', messages=[])\n".encode()
+    )
+    scan = scan_repository(tmp_path)
+    assert [c.node_id for c in scan.calls] == ["node_f"] and scan.warnings == []
+
+
+def test_fifo_is_ignored(tmp_path):
+    _write(tmp_path, "ok.py", 'import openai\ndef f(c):\n    c.chat.completions.create(model="m", messages=[])\n')
+    os.mkfifo(tmp_path / "pipe.py")
+    scan = scan_repository(tmp_path)  # must not block reading the FIFO
+    assert len(scan.calls) == 1 and scan.scanned_files_count == 1
+
+
+def test_total_size_budget(tmp_path, monkeypatch):
+    import backend.compiler.ast_scanner as mod
+
+    monkeypatch.setattr(mod, "MAX_TOTAL_BYTES", 30)
+    for i in range(3):
+        _write(tmp_path, f"m{i}.py", "x = 1  # padding\n")
+    scan = scan_repository(tmp_path)
+    assert scan.scanned_files_count == 1
+    assert "exceeds 20 MB" in scan.warnings[-1]
+
+
+def test_ast_node_budget(tmp_path, monkeypatch):
+    import backend.compiler.ast_scanner as mod
+
+    monkeypatch.setattr(mod, "MAX_AST_NODES_PER_FILE", 10)
+    _write(tmp_path, "big.py", "x = [" + ", ".join(str(i) for i in range(50)) + "]\n")
+    scan = scan_repository(tmp_path)
+    assert scan.scanned_files_count == 0 and "syntax tree too large" in scan.warnings[0]
+
+
+def test_shadowed_model_names(tmp_path):
+    _write(tmp_path, "s.py", '''
+        import openai
+        MODEL = "module-model"
+        def local(c):
+            MODEL = "local-model"
+            return c.chat.completions.create(model=MODEL, messages=[])
+        def param(c, MODEL="x"):
+            return c.chat.completions.create(model=MODEL, messages=[])
+        def reassigned(c, flag):
+            MODEL = "a" if flag else "b"
+            return c.chat.completions.create(model=MODEL, messages=[])
+        def uses_global(c):
+            global MODEL
+            return c.chat.completions.create(model=MODEL, messages=[])
+        def loop_var(c):
+            for MODEL in ("a", "b"):
+                c.chat.completions.create(model=MODEL, messages=[])
+    ''')
+    models = {c.node_id: c.current_model for c in scan_repository(tmp_path).calls}
+    assert models == {
+        "node_local": "local-model",
+        "node_param": DYNAMIC_MODEL,
+        "node_reassigned": DYNAMIC_MODEL,
+        "node_uses_global": "module-model",
+        "node_loop_var": DYNAMIC_MODEL,
+    }
+
+
+def test_decorator_and_default_calls_belong_to_outer_scope(tmp_path):
+    _write(tmp_path, "d.py", '''
+        import openai
+        def outer(c):
+            def inner(x=c.chat.completions.create(model="default", messages=[])):
+                return x
+            return inner
+    ''')
+    call = scan_repository(tmp_path).calls[0]
+    assert call.node_id == "node_outer" and call.function_name == "outer"
+    assert "default" in call.snippet and call.snippet.lstrip().startswith("def inner")
+
+
+def test_method_qualname(tmp_path):
+    _write(tmp_path, "m.py", '''
+        import openai
+        class Agent:
+            def ask(self):
+                return self.client.chat.completions.create(model="m", messages=[])
+    ''')
+    call = scan_repository(tmp_path).calls[0]
+    assert call.qualname == "Agent.ask" and call.function_name == "ask"
+
+
+def test_name_matched_schema_only_for_json_calls(tmp_path):
+    _write(tmp_path, "t.py", '''
+        import openai
+        TICKET_SCHEMA = {"type": "object", "required": ["id"]}
+        def classify_ticket(c):
+            return c.chat.completions.create(model="m", messages=[], response_format={"type": "json_object"})
+        def summarize_ticket(c):
+            return c.chat.completions.create(model="m", messages=[])
+    ''')
+    nodes = _by_id(scan_repository(tmp_path))
+    assert nodes["node_classify_ticket"].expected_schema == {"type": "object", "required": ["id"]}
+    assert nodes["node_summarize_ticket"].expected_schema is None
+    assert nodes["node_summarize_ticket"].json_required is False
+
+
+def test_lookalike_calls_without_openai_are_ignored(tmp_path):
+    _write(tmp_path, "x.py", '''
+        from unrelated import OpenAI
+        def f(c):
+            return c.chat.completions.create(model="not-openai")
+    ''')
+    scan = scan_repository(tmp_path)
+    assert scan.calls == [] and "No `openai` import" in scan.warnings[-1]
+
+
+def test_overlong_or_inaccessible_paths_rejected():
+    with pytest.raises(ScanPathError, match="too long"):
+        resolve_scan_path("a/" * 600, [REPO_ROOT], REPO_ROOT)
+    with pytest.raises(ScanPathError):
+        resolve_scan_path("x" * 1000, [REPO_ROOT], REPO_ROOT)
