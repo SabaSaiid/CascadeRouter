@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from fastapi import Depends
+
 from backend.config import Settings, get_settings
 from backend.guardrails import SpendCappedClient, SpendTracker
 from backend.services.llm import LLMClient, LLMError
@@ -22,9 +24,14 @@ def get_run_store() -> RunStore:
     return RunStore()
 
 
-@lru_cache(maxsize=1)
-def get_spend_tracker() -> SpendTracker:
-    return SpendTracker(get_settings().daily_spend_cap_usd)
+@lru_cache(maxsize=8)
+def _tracker_for_cap(cap_usd: float) -> SpendTracker:
+    return SpendTracker(cap_usd)
+
+
+def get_spend_tracker(settings: Settings = Depends(get_settings)) -> SpendTracker:
+    """One process-wide tracker per configured cap (honours explicit Settings)."""
+    return _tracker_for_cap(settings.daily_spend_cap_usd)
 
 
 def effective_mode(settings: Settings) -> str:

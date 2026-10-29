@@ -1,6 +1,8 @@
 import time
 
-from backend.config import load_settings
+import pytest
+
+from backend.config import REPO_ROOT, load_settings
 
 SAMPLE = "tests/fixtures/sample_repo"
 S = load_settings()
@@ -140,3 +142,50 @@ def test_recorded_mode_without_recordings_reports_failures(monkeypatch, store, r
     metric = next(iter(run["nodes"][0]["metrics_by_model"].values()))
     assert metric["status"] == "failed" and "no recording" in metric["validation_errors"][0]
     assert run["nodes"][0]["recommended_model_id"] is None
+
+
+def _live_app(store, runs, fake_llm, cap):
+    import dataclasses
+
+    from fastapi.testclient import TestClient
+
+    from backend.api.deps import get_llm_client_factory, get_run_store, get_scan_store
+    from backend.main import create_app
+
+    s = dataclasses.replace(load_settings(), daily_spend_cap_usd=cap)
+    app = create_app(s)
+    app.dependency_overrides[get_scan_store] = lambda: store
+    app.dependency_overrides[get_run_store] = lambda: runs
+    app.dependency_overrides[get_llm_client_factory] = lambda: (lambda settings, tracker: fake_llm)
+    return TestClient(app, base_url="http://localhost")
+
+
+def test_projected_cost_over_budget_is_refused(store, runs, fake_llm):
+    from backend.api.deps import _tracker_for_cap
+
+    _tracker_for_cap.cache_clear()
+    with _live_app(store, runs, fake_llm, cap=0.01) as c:  # 6 cases x 4 models x 2048 out > $0.01
+        ids = _scan(c)
+        r = c.post("/api/benchmark", json={"node_ids": ids})
+        assert r.status_code == 429 and "Projected worst-case cost" in r.json()["detail"]
+        assert fake_llm.calls == []
+
+
+def test_zero_cap_from_explicit_settings_is_honoured(store, runs, fake_llm):
+    from backend.api.deps import _tracker_for_cap
+
+    _tracker_for_cap.cache_clear()
+    with _live_app(store, runs, fake_llm, cap=0.0) as c:
+        ids = _scan(c)
+        r = c.post("/api/benchmark", json={"node_ids": ids})
+        assert r.status_code == 429 and r.json()["detail"] == "Daily spend cap reached"
+
+
+def test_projected_cost_helper(tmp_path):
+    from backend.api.routes import projected_output_cost
+
+    s = load_settings()
+    per_case = sum(m.output_price_per_m for m in s.models) * 2048 / 1e6
+    assert projected_output_cost(REPO_ROOT / SAMPLE, ["node_classify_customer_intent"], s) == pytest.approx(3 * per_case)
+    (tmp_path / "cascade_cases.yaml").write_text("bad: yaml: [")
+    assert projected_output_cost(tmp_path, ["n"], s) == 0.0

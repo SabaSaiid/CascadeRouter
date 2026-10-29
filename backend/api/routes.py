@@ -18,7 +18,10 @@ from backend.api.deps import (
     get_spend_tracker,
 )
 from backend.compiler.ast_scanner import ScanPathError, resolve_scan_path, scan_repository
+from backend.compiler.cases import CasesError, load_cases
 from backend.compiler.dag_builder import build_dag
+from backend.compiler.metrics import estimate_cost
+from backend.compiler.prompt_capture import DEFAULT_MAX_OUTPUT_TOKENS
 from backend.compiler.shadow_runner import BenchmarkRunner, RunExtras
 from backend.config import REPO_ROOT, Settings, get_settings
 from backend.guardrails import SpendTracker
@@ -131,8 +134,16 @@ async def start_benchmark(
         raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Too many benchmark runs in progress")
 
     mode = effective_mode(settings)
-    if mode == "live" and tracker.exhausted():
-        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Daily spend cap reached")
+    if mode == "live":
+        if tracker.exhausted():
+            raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Daily spend cap reached")
+        projected = projected_output_cost(scan.repo.root, body.node_ids, settings)
+        if projected > tracker.remaining_usd():
+            raise HTTPException(
+                status.HTTP_429_TOO_MANY_REQUESTS,
+                f"Projected worst-case cost ${projected:.4f} exceeds the remaining daily budget "
+                f"${tracker.remaining_usd():.4f}",
+            )
     try:
         client = client_factory(settings, tracker)
     except LLMError as exc:
@@ -153,6 +164,16 @@ async def start_benchmark(
     runs.put(stored)
     stored.task = asyncio.create_task(BenchmarkRunner(settings, client).run(run, extras, calls))
     return BenchmarkStarted(run_id=run.run_id)
+
+
+def projected_output_cost(repo_root, node_ids: list[str], settings: Settings) -> float:
+    """Worst-case output cost of a run: every case on every model emits max_tokens."""
+    try:
+        cases = load_cases(repo_root)
+    except CasesError:
+        return 0.0  # the run itself reports the invalid file without calling any model
+    per_case = sum(estimate_cost(m, 0, DEFAULT_MAX_OUTPUT_TOKENS) for m in settings.models)
+    return per_case * sum(len(cases.get(n, [])) for n in dict.fromkeys(node_ids))
 
 
 @router.get("/runs/{run_id}", response_model=BenchmarkRun)
