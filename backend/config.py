@@ -96,7 +96,7 @@ class ModelSpec:
 
 @dataclass(frozen=True)
 class Settings:
-    nebius_api_key: str
+    nebius_api_key: str = field(repr=False)
     nebius_base_url: str
     models: tuple[ModelSpec, ...]
     quality_threshold: float
@@ -112,7 +112,7 @@ class Settings:
     enable_rate_limiting: bool
     rate_limit_per_minute: int
     daily_spend_cap_usd: float
-    tavily_api_key: str
+    tavily_api_key: str = field(repr=False)
     allowed_scan_roots: list[Path] = field(default_factory=list)
     record_runs: bool = False
     recordings_dir: Path = REPO_ROOT / "recordings"
@@ -221,7 +221,7 @@ def load_settings(env: Env | None = None) -> Settings:
         benchmark_concurrency=_get_int(env, "BENCHMARK_CONCURRENCY", 4, minimum=1),
         benchmark_timeout_seconds=_get_float(env, "BENCHMARK_TIMEOUT_SECONDS", 45, minimum=1),
         regression_timeout_seconds=_get_float(env, "REGRESSION_TIMEOUT_SECONDS", 30, minimum=1),
-        host=_get_str(env, "HOST", "0.0.0.0"),
+        host=_get_str(env, "HOST", "127.0.0.1"),
         port=_get_int(env, "PORT", 8000, minimum=1),
         environment=_get_str(env, "ENVIRONMENT", "development"),
         log_level=log_level,
