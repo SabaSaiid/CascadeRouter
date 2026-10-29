@@ -29,6 +29,10 @@ from typing import Any, Optional
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S | re.I)
 _FENCE_RE = re.compile(r"```(?:json|JSON)?\s*\n?(.*?)```", re.S)
 
+# Upper bound on "{"/"[" start positions tried when JSON is embedded in prose;
+# keeps adversarial outputs (e.g. "[[[[...") from making extraction quadratic.
+MAX_DECODE_ATTEMPTS = 256
+
 _STRUCTURED_WEIGHTS = {"parse": 0.30, "required": 0.25, "types": 0.20, "reference": 0.25}
 _TEXT_WEIGHTS = {"non_empty": 0.20, "must_include": 0.50, "must_not_include": 0.15, "length": 0.15}
 
@@ -51,10 +55,19 @@ def strip_reasoning(text: str) -> str:
     return _THINK_RE.sub("", text).strip()
 
 
+def _reject_constant(name: str) -> Any:
+    raise ValueError(f"non-standard JSON constant {name}")
+
+
+# Strict decoder: NaN / Infinity / -Infinity are not valid JSON.
+_DECODER = json.JSONDecoder(parse_constant=_reject_constant)
+
+
 def extract_json(text: str) -> tuple[bool, Any]:
-    """Find the first JSON object/array in `text`.
+    """Find the first JSON object or array in `text`.
 
     Accepts bare JSON, ```json fenced blocks, and JSON preceded by prose.
+    Bare scalars (strings, numbers, null) are not accepted.
     Returns (found, value).
     """
     cleaned = strip_reasoning(text)
@@ -62,18 +75,23 @@ def extract_json(text: str) -> tuple[bool, Any]:
     candidates.extend(m.group(1).strip() for m in _FENCE_RE.finditer(cleaned))
     for candidate in candidates:
         try:
-            return True, json.loads(candidate)
-        except (json.JSONDecodeError, ValueError):
-            pass
+            value = _DECODER.decode(candidate)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(value, (dict, list)):
+            return True, value
 
-    decoder = json.JSONDecoder()
+    attempts = 0
     for idx, char in enumerate(cleaned):
         if char in "{[":
+            attempts += 1
+            if attempts > MAX_DECODE_ATTEMPTS:
+                break
             try:
-                value, _ = decoder.raw_decode(cleaned, idx)
-                return True, value
-            except json.JSONDecodeError:
+                value, _ = _DECODER.raw_decode(cleaned, idx)
+            except (ValueError, RecursionError):
                 continue
+            return True, value
     return False, None
 
 
@@ -90,9 +108,13 @@ def _matches_type(value: Any, expected: str) -> bool:
     if expected == "integer":
         if isinstance(value, bool):
             return False
-        return isinstance(value, int) or (isinstance(value, float) and value.is_integer())
+        return isinstance(value, int) or (
+            isinstance(value, float) and math.isfinite(value) and value.is_integer()
+        )
     if expected == "number":
-        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        if isinstance(value, bool):
+            return False
+        return isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
     if expected == "object":
         return isinstance(value, dict)
     if expected == "array":
@@ -112,8 +134,9 @@ def validate_schema(value: Any, schema: dict[str, Any], path: str = "$") -> list
             errors.append(f"{path}: expected {' or '.join(types)}, got {_type_name(value)}")
             return errors
 
-    if "enum" in schema and value not in schema["enum"]:
-        errors.append(f"{path}: {value!r} not in {schema['enum']}")
+    enum = schema.get("enum")
+    if isinstance(enum, (list, tuple)) and not any(_strict_equal(value, e) for e in enum):
+        errors.append(f"{path}: {value!r} not in {list(enum)}")
 
     if isinstance(value, dict):
         for key in schema.get("required", []):
@@ -130,11 +153,26 @@ def validate_schema(value: Any, schema: dict[str, Any], path: str = "$") -> list
     return errors
 
 
+def _strict_equal(a: Any, b: Any) -> bool:
+    """Equality that never treats booleans as numbers (True != 1)."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return isinstance(a, bool) and isinstance(b, bool) and a is b
+    if _is_num(a) and _is_num(b):
+        return a == b
+    return type(a) is type(b) and a == b
+
+
+def _is_num(v: Any) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
 def _type_name(value: Any) -> str:
     if value is None:
         return "null"
     if isinstance(value, bool):
         return "boolean"
+    if isinstance(value, float) and not math.isfinite(value):
+        return "non-finite number"
     if isinstance(value, (int, float)):
         return "number"
     if isinstance(value, str):
@@ -157,7 +195,12 @@ def _values_agree(actual: Any, expected: Any) -> bool:
     if isinstance(expected, bool) or isinstance(actual, bool):
         return actual is expected
     if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
-        return math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-9)
+        if isinstance(expected, int) and isinstance(actual, int):
+            return actual == expected
+        try:
+            return math.isclose(actual, expected, rel_tol=1e-6, abs_tol=1e-9)
+        except OverflowError:
+            return False
     if isinstance(expected, dict) and isinstance(actual, dict):
         return all(k in actual and _values_agree(actual[k], v) for k, v in expected.items())
     if isinstance(expected, list) and isinstance(actual, list):
@@ -209,8 +252,10 @@ def _evaluate_structured(
                 hard_ok = False
                 errors.append(f"Missing required fields: {', '.join(missing)}")
 
+        # Root-level required fields are scored by the "required" component above;
+        # nested ones remain ordinary schema violations.
         violations = [
-            e for e in validate_schema(parsed, schema) if "missing required field" not in e
+            e for e in validate_schema(parsed, schema) if not e.startswith("$: missing required field")
         ]
         checked = _count_checked_properties(parsed, schema)
         if checked == 0:
