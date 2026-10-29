@@ -84,7 +84,8 @@ def test_run_python_truncates_huge_output(tmp_path, monkeypatch):
     work.mkdir()
     (work / "s.py").write_text("print('x' * 1000)\n")
     r = run_python(["s.py"], cwd=work, timeout=30)
-    assert r.stdout.endswith("[output truncated]") and len(r.stdout) < 200
+    assert r.stdout.startswith("[output truncated]") and len(r.stdout) < 200
+    assert r.stdout.rstrip().endswith("x")
 
 
 def test_uses_backend_interpreter(tmp_path):
@@ -93,3 +94,44 @@ def test_uses_backend_interpreter(tmp_path):
     work.mkdir()
     (work / "s.py").write_text("import sys; print(sys.executable)\n")
     assert run_python(["s.py"], cwd=work, timeout=30).stdout.strip() == sys.executable
+
+
+def test_tail_is_kept_so_result_lines_survive(tmp_path, monkeypatch):
+    import backend.compiler.sandbox as sb
+
+    monkeypatch.setattr(sb, "MAX_OUTPUT_BYTES", 1000)
+    (tmp_path / "home").mkdir()
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "s.py").write_text("print('x' * 50000)\nprint('RESULT-LINE')\n")
+    assert run_python(["s.py"], cwd=work, timeout=30).stdout.rstrip().endswith("RESULT-LINE")
+
+
+def test_background_helper_does_not_cause_false_timeout_or_hang(tmp_path):
+    (tmp_path / "home").mkdir()
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "s.py").write_text(
+        "import subprocess, sys\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)\n"
+        "print('done', flush=True)\n"
+    )
+    start = time.monotonic()
+    r = run_python(["s.py"], cwd=work, timeout=10)
+    assert not r.timed_out and r.returncode == 0 and r.stdout.strip() == "done"
+    assert time.monotonic() - start < 8
+
+
+def test_detached_child_cannot_block_timeout(tmp_path):
+    (tmp_path / "home").mkdir()
+    work = tmp_path / "w"
+    work.mkdir()
+    (work / "s.py").write_text(
+        "import subprocess, sys, time\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)\n"
+        "time.sleep(30)\n"
+    )
+    start = time.monotonic()
+    r = run_python(["s.py"], cwd=work, timeout=1)
+    assert r.timed_out and time.monotonic() - start < 8
