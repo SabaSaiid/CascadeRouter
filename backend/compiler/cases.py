@@ -14,6 +14,7 @@ Nothing is ever invented: a node without cases is simply not benchmarked.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -83,6 +84,13 @@ def parse_cases(data: Any) -> dict[str, list[BenchmarkCase]]:
                 raise CasesError(f"{where}.vars: must be a mapping of argument name -> value")
             if "client" in variables:
                 raise CasesError(f"{where}.vars: 'client' is injected automatically")
+            for key in ("vars", "expected"):
+                try:
+                    json.dumps(raw.get(key), allow_nan=False)
+                except (TypeError, ValueError) as exc:
+                    raise CasesError(
+                        f"{where}.{key}: must contain only JSON values (quote dates and times): {exc}"
+                    ) from exc
             min_chars = _opt_int(raw.get("min_chars"), f"{where}.min_chars")
             max_chars = _opt_int(raw.get("max_chars"), f"{where}.max_chars")
             if min_chars is not None and max_chars is not None and min_chars > max_chars:

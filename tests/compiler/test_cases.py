@@ -71,3 +71,10 @@ def test_defaults():
 def test_parse_errors(data, msg):
     with pytest.raises(CasesError, match=msg):
         parse_cases(data)
+
+
+@pytest.mark.parametrize("raw", ["n:\n  - vars: {day: 2024-01-01}\n", "n:\n  - expected: {at: 2024-01-01 10:00:00}\n", "n:\n  - expected: .nan\n"])
+def test_non_json_yaml_values_rejected(tmp_path, raw):
+    (tmp_path / CASES_FILENAME).write_text(raw)
+    with pytest.raises(CasesError, match="JSON values"):
+        load_cases(tmp_path)
