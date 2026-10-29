@@ -42,6 +42,8 @@ function shape(value: unknown, schema: Obj, budget: { left: number }, depth = 0)
       if (rule !== true && !shape(v, rule, budget, depth + 1)) return false;
     }
   }
+  if (schema.type === 'object' && schema.properties?.availability && schema.properties?.value
+    && ((value as Obj).availability === 'available') !== ((value as Obj).value != null)) return false;
   return true;
 }
 
@@ -55,7 +57,17 @@ function evidence(value: unknown): boolean {
     if (value.availability === 'available' && (value.sample_count === 0 || value.reason != null)) return false;
     if (value.availability === 'unavailable' && [value.mean, value.minimum, value.maximum, value.total_tokens, value.total_usd].some(v => v != null)) return false;
     if (value.availability === 'available' && (value.unit === 'ms' ? [value.mean, value.minimum, value.maximum].some(v => v == null) : value[value.unit === 'USD' ? 'total_usd' : 'total_tokens'] == null)) return false;
+    if (value.availability === 'unavailable' && (value.reason == null || (value.reason === 'empty_population') !== (value.sample_count === 0))) return false;
   }
+  if ('planned_units' in value && 'evaluated_units' in value) {
+    if (value.processed_units > value.planned_units || value.valid_recorded_outputs > value.processed_units || value.evaluated_units > value.processed_units
+      || value.passed + value.failed + value.skipped + value.inconclusive + value.not_run !== value.processed_units
+      || value.processing_complete !== (value.processed_units === value.planned_units) || value.evaluation_complete !== (value.passed + value.failed === value.planned_units)) return false;
+    for (const [key, unit] of [['latency_ms', 'ms'], ['ttft_ms', 'ms'], ['input_tokens', 'tokens'], ['output_tokens', 'tokens'], ['cost_usd', 'USD']]) {
+      if (value[key].unit !== unit || value[key].sample_count > value.processed_units) return false;
+    }
+  }
+  if ('evaluation_status' in value && 'quality_score' in value && ['unavailable', 'not_run', 'skipped'].includes(value.evaluation_status) && value.quality_score != null) return false;
   return Object.values(value).every(evidence);
 }
 
@@ -72,6 +84,11 @@ function semantics(name: keyof ContractTypes, v: Obj): boolean {
     if (v.progress.completed_units !== v.measurements.length || v.progress.completed_units > v.progress.total_units) return false;
     if (v.status === 'complete' && (v.result == null || v.progress.completed_units !== v.progress.total_units)) return false;
     if (!v.measurements.every((m: Obj) => m.provenance === v.plan.provenance && v.plan.node_ids.includes(m.node_id))) return false;
+    const keys = v.measurements.map((m: Obj) => JSON.stringify([m.node_id, m.model_id, m.case_id]));
+    if (!unique(keys) || v.progress.total_units !== v.plan.node_ids.length * v.plan.models.length * v.plan.case_ids.length
+      || !v.measurements.every((m: Obj) => v.plan.models.some((model: Obj) => model.identifier === m.model_id) && v.plan.case_ids.includes(m.case_id))) return false;
+    if (['complete', 'cancelled', 'error', 'interrupted'].includes(v.status) !== (v.finished_at != null) || (v.status === 'complete') !== (v.result != null)) return false;
+    if (v.result && v.result.provenance !== v.plan.provenance) return false;
     if (v.result?.metrics && (v.result.metrics.processed_units !== v.measurements.length || v.result.metrics.processing_complete !== (v.progress.completed_units === v.progress.total_units))) return false;
   }
   if (name === 'Optimization') {
