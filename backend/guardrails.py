@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
 
 from backend.compiler.metrics import estimate_cost
 from backend.compiler.prompt_capture import DEFAULT_MAX_OUTPUT_TOKENS
@@ -144,40 +142,85 @@ class SpendCappedClient:
         return result
 
 
-def _client_key(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+async def _send_json(send: Callable, status: int, detail: str, headers: Optional[list] = None) -> None:
+    body = json.dumps({"detail": detail}).encode()
+    await send({
+        "type": "http.response.start",
+        "status": status,
+        "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())]
+        + (headers or []),
+    })
+    await send({"type": "http.response.body", "body": body})
 
 
-class GuardrailMiddleware(BaseHTTPMiddleware):
-    """Rejects oversized bodies (413) and rate-limited clients (429)."""
+class GuardrailMiddleware:
+    """Pure ASGI middleware: rate limit first (429), then bound the request body (413).
+
+    The body limit is enforced while the body streams in, so chunked requests
+    without Content-Length can never make the server buffer more than the limit.
+    """
 
     def __init__(self, app: Any, limiter: Optional[RateLimiter], max_body_bytes: int = MAX_BODY_BYTES):
-        super().__init__(app)
+        self.app = app
         self.limiter = limiter
         self.max_body_bytes = max_body_bytes
 
-    async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
-        length = request.headers.get("content-length")
-        if length is not None:
-            try:
-                too_big = int(length) > self.max_body_bytes
-            except ValueError:
-                return JSONResponse({"detail": "invalid Content-Length"}, status_code=400)
-            if too_big:
-                return JSONResponse({"detail": "request body too large"}, status_code=413)
-        elif request.method in ("POST", "PUT", "PATCH"):
-            body = await request.body()  # chunked body: bounded check after read
-            if len(body) > self.max_body_bytes:
-                return JSONResponse({"detail": "request body too large"}, status_code=413)
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        client = scope.get("client")
+        key = client[0] if client else "unknown"
         if (
             self.limiter is not None
-            and request.method != "OPTIONS"
-            and request.url.path not in EXEMPT_PATHS
-            and not self.limiter.allow(_client_key(request))
+            and scope.get("method") != "OPTIONS"
+            and scope.get("path") not in EXEMPT_PATHS
+            and not self.limiter.allow(key)
         ):
-            return JSONResponse(
-                {"detail": "rate limit exceeded; try again shortly"},
-                status_code=429,
-                headers={"Retry-After": "1"},
-            )
-        return await call_next(request)
+            await _send_json(send, 429, "rate limit exceeded; try again shortly", [(b"retry-after", b"1")])
+            return
+
+        headers = dict(scope.get("headers") or [])
+        length = headers.get(b"content-length")
+        if length is not None:
+            try:
+                declared = int(length)
+            except ValueError:
+                await _send_json(send, 400, "invalid Content-Length")
+                return
+            if declared > self.max_body_bytes:
+                await _send_json(send, 413, "request body too large")
+                return
+
+        received = 0
+        too_large = False
+
+        async def limited_receive() -> dict:
+            nonlocal received, too_large
+            if too_large:
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_body_bytes:
+                    # Stop reading; the app sees a disconnect and its response is replaced below.
+                    too_large = True
+                    return {"type": "http.disconnect"}
+            return message
+
+        started = False
+
+        async def guarded_send(message: dict) -> None:
+            nonlocal started
+            if not too_large:
+                started = started or message["type"] == "http.response.start"
+                await send(message)
+
+        try:
+            await self.app(scope, limited_receive, guarded_send)
+        except Exception:
+            if not too_large:
+                raise
+        if too_large and not started:
+            await _send_json(send, 413, "request body too large")

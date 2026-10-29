@@ -166,3 +166,40 @@ def test_rate_limit_middleware_exempts_health():
     r = c.post("/api/echo", json={})
     assert r.status_code == 429 and r.headers["retry-after"] == "1"
     assert all(c.get("/api/health").status_code == 200 for _ in range(5))
+
+
+def test_rate_limit_checked_before_body_is_read():
+    clock = Clock()
+    c = _app(RateLimiter(per_minute=1, clock=clock))
+    assert c.post("/api/echo", json={}).status_code == 200
+
+    def gen():
+        raise AssertionError("body must not be read for a rate-limited client")
+        yield b""  # pragma: no cover
+
+    assert c.post("/api/echo", content=gen(), headers={"content-type": "application/json"}).status_code == 429
+
+
+def test_streamed_body_stops_at_limit():
+    c = _app(max_body=100)
+    chunks_sent = []
+
+    def gen():
+        for i in range(1000):
+            chunks_sent.append(i)
+            yield b"x" * 50
+
+    assert c.post("/api/echo", content=gen(), headers={"content-type": "application/json"}).status_code == 413
+
+
+def test_non_http_scope_passes_through():
+    import asyncio
+
+    seen = []
+
+    async def inner(scope, receive, send):
+        seen.append(scope["type"])
+
+    mw = GuardrailMiddleware(inner, limiter=None)
+    asyncio.run(mw({"type": "lifespan"}, None, None))
+    assert seen == ["lifespan"]
