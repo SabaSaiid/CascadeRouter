@@ -25,7 +25,8 @@ async def test_writer_records_and_client_replays(tmp_path):
     files = list((tmp_path / "rec").glob("*.json"))
     assert len(files) == 1 and files[0].stem == request_key("m", MSGS, {"t": 0})
     payload = json.loads(files[0].read_text())
-    assert payload["model"] == "m" and payload["result"]["text"] == "hello" and payload["recorded_at"]
+    assert payload["model"] == "m" and payload["responses"][0]["result"]["text"] == "hello"
+    assert payload["responses"][0]["recorded_at"]
     assert not list((tmp_path / "rec").glob("*.tmp"))
 
     replay = RecordingClient(store)
@@ -84,3 +85,46 @@ def test_failed_write_leaves_no_temp_file(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         store.put(request_key("m", MSGS, {}), "m", RESULT)
     assert list(tmp_path.iterdir()) == []
+
+
+async def test_repeated_identical_requests_replay_in_order(tmp_path):
+    class Varying:
+        def __init__(self):
+            self.n = 0
+
+        async def complete(self, model, messages, params):
+            self.n += 1
+            return CompletionResult(f"answer {self.n}", 5, 1, True, 100.0 * self.n, None)
+
+    store = RecordingStore(tmp_path)
+    writer = RecordingWriter(Varying(), store)
+    for _ in range(2):
+        await writer.complete("m", MSGS, {})
+    assert store.count(request_key("m", MSGS, {})) == 2
+    replay = RecordingClient(store)
+    texts = [(await replay.complete("m", MSGS, {})).text for _ in range(3)]
+    assert texts == ["answer 1", "answer 2", "answer 2"]  # extra replays reuse the last real one
+    assert (await RecordingClient(store).complete("m", MSGS, {})).text == "answer 1"  # fresh run restarts
+
+
+def test_single_response_legacy_format_is_read(tmp_path):
+    key = request_key("m", MSGS, {})
+    (tmp_path / f"{key}.json").write_text(json.dumps({"model": "m", "recorded_at": "t", "result": RESULT.to_dict()}))
+    store = RecordingStore(tmp_path)
+    assert store.get(key) == RESULT and store.count(key) == 1
+
+
+def test_put_replaces_corrupt_file(tmp_path):
+    key = request_key("m", MSGS, {})
+    (tmp_path / f"{key}.json").write_text("{broken")
+    store = RecordingStore(tmp_path)
+    with pytest.raises(LLMError):
+        store.count(key)
+    store.put(key, "m", RESULT)
+    assert store.get(key) == RESULT
+
+
+def test_empty_response_list_is_missing(tmp_path):
+    key = request_key("m", MSGS, {})
+    (tmp_path / f"{key}.json").write_text(json.dumps({"model": "m", "responses": []}))
+    assert RecordingStore(tmp_path).get(key) is None
