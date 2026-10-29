@@ -120,7 +120,11 @@ node_classify_intent:
   - input: "I was double charged on my invoice"
     expected: {category: billing}
 ```
-If a node has no cases, we use one case built from its docstring, with the Ultra output as the reference.
+`vars` are the keyword arguments for the node's function. A `client` argument (or the module-level `client`) is injected automatically.
+
+**Prompt capture (exact prompts, no guessing):** for each case, the backend runs the node's function once in the same sandbox the regression runner uses: a subprocess with a scrubbed env, **no API key**, a timeout, and no network client. A capturing test double stands in for the client. It records the exact `messages` / `response_format` / `max_tokens` of the call and then aborts. The backend then sends those captured messages to each Nemotron tier itself. Untrusted code never sees credentials, and every benchmark uses the prompt the app really builds, f-strings and history included.
+
+If a node has no cases, it gets no benchmark. Its metrics are reported as `failed` with the error "no benchmark cases", and the optimizer keeps the baseline (`inconclusive`). We never invent inputs.
 
 ### 4.7 `shadow_runner.py` + `nebius_client.py` (Meenal)
 - `asyncio.Semaphore(BENCHMARK_CONCURRENCY)` and a per-call timeout of `BENCHMARK_TIMEOUT_SECONDS`. Each (node × model × case) is one task.
@@ -202,9 +206,9 @@ Definition of done for every phase: `pytest tests/ -q` is green with no network 
 ## 9. Status
 Working rules: small commits per step, no demo data in `backend/`, every module unit-tested, and `pytest` green before each commit.
 
-- [ ] P0 Scaffold
-- [ ] P1 Metrics + evaluator
-- [ ] P2 Sample repo + scanner
+- [x] P0 Scaffold
+- [x] P1 Metrics + evaluator
+- [x] P2 Sample repo + scanner (`/api/scan`)
 - [ ] P3 Benchmark
 - [ ] P4 Optimize
 - [ ] P5 Runtime + regression
