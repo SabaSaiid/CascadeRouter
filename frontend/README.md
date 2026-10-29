@@ -121,3 +121,10 @@ restart, authorization and evidence-parser coverage, and the
 [reproducibility investigation](../docs/phase410-reproducibility.md) for exact cache
 blockers and browser/Python 3.11 status. CI now retains separate frontend JUnit
 test counts and build status; unavailable reports never become passing counts.
+
+The current authoritative [release-gate register](../docs/release-gates.json)
+separates local test evidence from release requirements. Run the preflight profiles
+from the repository root as documented in [README.md](../README.md). The read-only
+`npm.cmd run check:cache --prefix frontend` command exits nonzero when any locked
+artifact is unverified; optional OS/CPU entries remain visible and it is not an
+installer or build check.

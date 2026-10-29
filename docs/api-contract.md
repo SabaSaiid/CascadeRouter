@@ -455,8 +455,8 @@ starts a loopback liveness-only app with scanning disabled. `start.sh` accepts
 `--backend-config ABSOLUTE_JSON`, calls this entry point without reload, requires
 preinstalled frontend dependencies and uses Bash 4.3+ `wait -n` to propagate the
 first service exit and stop its sibling. Cleanup preserves failure/signal status.
-It no longer creates `.env` or silently installs packages. No server was launched
-as part of in-process API validation.
+It no longer creates `.env` or silently installs packages. In-process API tests use TestClient/ASGI; later client acceptance tests additionally
+start an isolated real loopback server and verify shutdown/source preservation.
 
 ### Local test command
 
@@ -498,7 +498,7 @@ consistency, and runs all compiler/unit tests with failure propagation and a fre
 temporary base. Plugin autoload is disabled because current tests are synchronous;
 later asynchronous tests must explicitly enable their approved plugin. CI also
 uses the existing frontend lock with `npm ci` and propagates build failures. The
-existing Node 20 target is retained; the lock requires 20.19+ on that major.
+current CI target is Node 24, required for native TypeScript client acceptance.
 CI now uses `-ra --tb=short` so skip reasons and failed/error outcomes are visible,
 and writes a JUnit report outside pytest's disposable base directory. An always-run
 summary step reports the actual test-step outcome and JUnit counts, including when
