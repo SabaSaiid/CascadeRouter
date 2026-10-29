@@ -13,7 +13,9 @@ from backend.config import Settings, get_settings
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    settings = settings or get_settings()
+    """Build the app. An explicit `settings` object overrides env-based settings everywhere."""
+    explicit = settings is not None
+    settings = settings if settings is not None else get_settings()
     logging.basicConfig(level=settings.log_level)
 
     app = FastAPI(
@@ -29,7 +31,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["Content-Type"],
     )
     app.include_router(router)
+    if explicit:
+        app.dependency_overrides[get_settings] = lambda: settings
     return app
 
 
-app = create_app()
+def __getattr__(name: str) -> FastAPI:
+    """Lazily build `backend.main:app` for uvicorn, so importing this module
+    (e.g. in tests) never reads configuration as a side effect."""
+    if name == "app":
+        global app
+        app = create_app()
+        return app
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
