@@ -1,5 +1,6 @@
 """Narrow byte-preserving proposals; all optimization evidence stays test-only."""
 
+import ast
 import hashlib
 from pathlib import Path
 
@@ -110,3 +111,86 @@ def test_proposal_generator_has_no_io_network_execution_or_import_discovery():
             assert node.func.id not in {"open", "eval", "exec", "__import__"}
         if isinstance(node, ast.Import):
             assert not any(alias.name.split(".")[0] in {"subprocess", "requests", "httpx", "socket", "importlib", "openai", "nebius", "tavily"} for alias in node.names)
+
+
+def test_bom_mixed_newlines_and_multiple_edits_preserve_exact_proposed_bytes_and_ast(patch_environment, monkeypatch):
+    # Unlike upstream's git-apply regression, inspect the actual in-memory bytes
+    # behind literal-spans.v1. No patch is written or applied to the source.
+    raw = (b'\xef\xbb\xbf# coding: utf-8\r\nfrom openai import OpenAI\nclient = OpenAI()\r\n'
+           b'banner = "local/baseline"  # keep "local/baseline"\r\n'
+           + 'label = "\u4e2d\U0001f600\u2028"; first = client.chat.completions.create(\r\n'.encode("utf-8")
+           + b"\tmodel = 'local/baseline',\t messages=[])\n# unchanged \t \r\n"
+           + 'label2 = "\u00e9"; second = client.chat.completions.create(model="local/baseline", messages=[]) # tail'.encode("utf-8"))
+    expected = raw.replace(b"model = 'local/baseline'", b'model = "local/candidate"').replace(
+        b'model="local/baseline"', b'model="local/candidate"')
+    env = patch_environment
+    sample = env.build_patch(raw)
+    splice, observed = patch_generator._splice, []
+    def capture(original, replacements):
+        proposed = splice(original, replacements)
+        observed.append((original, proposed))
+        return proposed
+    monkeypatch.setattr(patch_generator, "_splice", capture)
+    first, second = sample.proposal(), sample.proposal()
+    assert first == second and first.manifest.provenance == "test" and first.manifest.status == "proposed"
+    assert first.manifest.patch_format == "literal-spans.v1" and first.review_diff.startswith("literal-spans.v1\n")
+    assert observed == [(raw, expected), (raw, expected)]
+    file = first.manifest.files[0]
+    assert len(file.edits) == 2
+    assert file.original_digest == hashlib.sha256(raw).hexdigest()
+    assert file.proposed_digest == hashlib.sha256(expected).hexdigest()
+    # Find spans independently in the raw bytes, including the original BOM,
+    # physical newlines and multibyte characters, rather than reusing AST offsets.
+    first_start = raw.index(b"model = 'local/baseline'") + len(b"model = ")
+    second_start = raw.index(b'model="local/baseline"') + len(b"model=")
+    assert [(edit.start_byte, edit.end_byte) for edit in file.edits] == [
+        (first_start, first_start + len(b"'local/baseline'")),
+        (second_start, second_start + len(b'"local/baseline"')),
+    ]
+    original_tree = ast.parse(raw.decode("utf-8-sig"), feature_version=(3, 11))
+    proposed_tree = ast.parse(observed[0][1].decode("utf-8-sig"), feature_version=(3, 11))
+    changed = 0
+    for node in ast.walk(original_tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "create":
+            literal = next(keyword.value for keyword in node.keywords if keyword.arg == "model")
+            assert isinstance(literal, ast.Constant) and literal.value == "local/baseline"
+            literal.value = "local/candidate"
+            changed += 1
+    assert changed == 2
+    assert ast.dump(proposed_tree, include_attributes=False) == ast.dump(original_tree, include_attributes=False)
+    assert (env.repository / "app.py").read_bytes() == raw
+
+
+@pytest.mark.parametrize("change", ["lf_to_crlf", "crlf_to_lf", "add_bom", "remove_bom", "comment_byte", "model_literal"])
+def test_newline_bom_or_literal_changes_invalidate_original_source_evidence(patch_environment, change):
+    raw = b'from openai import OpenAI\nclient=OpenAI()\n# keep-this\nr=client.chat.completions.create(model="local/baseline", messages=[])\n'
+    if change == "crlf_to_lf":
+        raw = raw.replace(b"\n", b"\r\n")
+    elif change == "remove_bom":
+        raw = b"\xef\xbb\xbf" + raw
+    env = patch_environment
+    sample = env.build_patch(raw)
+    original = sample.proposal()
+    assert original.manifest.status == "proposed" and original.manifest.provenance == "test"
+    changed = {"lf_to_crlf": lambda: raw.replace(b"\n", b"\r\n"),
+               "crlf_to_lf": lambda: raw.replace(b"\r\n", b"\n"),
+               "add_bom": lambda: b"\xef\xbb\xbf" + raw,
+               "remove_bom": lambda: raw[3:],
+               "comment_byte": lambda: raw.replace(b"keep-this", b"keep-that"),
+               "model_literal": lambda: raw.replace(b"local/baseline", b"local/modified")}[change]()
+    assert changed != raw
+    if change != "model_literal":
+        assert ast.dump(ast.parse(raw.decode("utf-8-sig")), include_attributes=False) == ast.dump(
+            ast.parse(changed.decode("utf-8-sig")), include_attributes=False)
+    # Simulate an external edit before generation, never a transformer write.
+    path = env.repository / "app.py"
+    path.write_bytes(changed)
+    with pytest.raises(ServiceError) as error:
+        sample.proposal(persist=True)
+    assert error.value.code == "source_conflict"
+    assert path.read_bytes() == changed
+    assert env.storage.get_source_manifest(sample.analysis.analysis_id) == sample.manifest
+    assert sample.manifest.files[0].sha256 == hashlib.sha256(raw).hexdigest()
+    with pytest.raises(ServiceError) as missing:
+        env.storage.get_patch(original.manifest.patch_id)
+    assert missing.value.code == "not_found"
