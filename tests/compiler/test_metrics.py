@@ -97,8 +97,16 @@ def test_aggregate_totals():
     assert t.avg_latency_reduction_pct == pytest.approx(expected_lat)
 
 
-def test_aggregate_totals_empty_and_zero_baseline():
+def test_aggregate_totals_undefined_is_none_not_zero():
     t = aggregate_totals([])
-    assert (t.total_baseline_cost_usd, t.total_cost_reduction_pct, t.avg_latency_reduction_pct) == (0, 0, 0)
-    t = aggregate_totals([(0, 0, 0, 0)])
-    assert t.total_cost_reduction_pct == 0 and t.avg_latency_reduction_pct == 0
+    assert t.total_baseline_cost_usd == 0
+    assert t.total_cost_reduction_pct is None and t.avg_latency_reduction_pct is None
+    t = aggregate_totals([(0.0, 0.5, 100, 50)])
+    assert t.total_cost_reduction_pct is None
+    assert t.avg_latency_reduction_pct == pytest.approx(50.0)
+
+
+@pytest.mark.parametrize("item", [(-1, 0, 1, 1), (1, math.nan, 1, 1), (1, 1, math.inf, 1)])
+def test_aggregate_totals_rejects_bad_values(item):
+    with pytest.raises(ValueError):
+        aggregate_totals([item])
