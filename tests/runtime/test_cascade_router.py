@@ -174,3 +174,21 @@ def test_events_are_bounded(router):
     for _ in range(1100):
         router.dispatch("node_text", c)
     assert len(router.stats.events) == 1000
+
+
+def test_async_escalation_on_error_and_degradation(router):
+    c = Client({"small": RuntimeError("503"), "big": '{"category": "z"}'}, is_async=True)
+    assert asyncio.run(router.dispatch_async("node_json", c)).choices[0].message.content == '{"category": "z"}'
+    c2 = Client({"small": "bad", "big": RuntimeError("down")}, is_async=True)
+    assert asyncio.run(router.dispatch_async("node_json", c2)).choices[0].message.content == "bad"
+    c3 = Client({"small": RuntimeError("a"), "big": KeyError("b")}, is_async=True)
+    with pytest.raises(KeyError):
+        asyncio.run(router.dispatch_async("node_json", c3))
+    c4 = Client({"small": "x", "big": "long answer"}, is_async=True)
+    out = asyncio.run(router.dispatch_async("node_text", c4, validator=lambda r: "long" in r.choices[0].message.content))
+    assert out.choices[0].message.content == "long answer"
+
+
+def test_fenced_json_without_object():
+    rule = NodeRule("p", None, enforce_json=True)
+    assert check_response(rule, resp("```\nno json here\n```")) == "response is not a JSON object"
