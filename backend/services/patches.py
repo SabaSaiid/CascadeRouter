@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import ast
+import hashlib
+import os
 import sys
+from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
-from backend.compiler.patch_generator import PatchBudgetExceeded, PatchInputError, assemble_proposal, generate_file
+from backend.compiler.patch_generator import PatchBudgetExceeded, PatchInputError, assemble_proposal, generate_file, _splice
 from backend.compiler.patch_validator import validate_file
 from backend.schemas import PatchAccepted, PatchRequest, PatchValidationReport, PatchValidationResult
 from .errors import ServiceError
@@ -204,3 +208,44 @@ class PatchService:
             raise ServiceError("source_conflict")
         check()
         return report
+
+    def apply(self, patch_id: str, check=lambda: None) -> dict[str, object]:
+        """Atomically applies a verified proposal to disk after creating a backup."""
+        proposal, analysis, record = self._validation_subject(patch_id, check)
+        applied_files = []
+        with self.access.authorize(analysis.repository_path):
+            repo_root = Path(analysis.repository_path)
+            for patch_file in proposal.manifest.files:
+                target_path = (repo_root / patch_file.file_path).resolve()
+                if not target_path.is_relative_to(repo_root) or not target_path.is_file():
+                    raise ServiceError("repository_forbidden")
+                raw = target_path.read_bytes()
+                current_digest = hashlib.sha256(raw).hexdigest()
+                if current_digest != patch_file.original_digest:
+                    raise ServiceError("source_conflict")
+                
+                replacements = [(e.start_byte, e.end_byte, f'"{e.proposed_model_id}"'.encode("utf-8")) for e in patch_file.edits]
+                proposed = _splice(raw, replacements)
+                try:
+                    ast.parse(proposed.decode("utf-8"))
+                except Exception:
+                    raise ServiceError("source_conflict")
+                
+                backup_path = target_path.with_suffix(target_path.suffix + ".bak")
+                backup_path.write_bytes(raw)
+                temp_path = target_path.with_suffix(target_path.suffix + ".tmp")
+                temp_path.write_bytes(proposed)
+                os.replace(temp_path, target_path)
+                
+                applied_files.append({
+                    "file_path": patch_file.file_path,
+                    "backup_path": str(backup_path),
+                    "edits_count": len(patch_file.edits),
+                })
+        check()
+        return {
+            "patch_id": patch_id,
+            "status": "applied",
+            "applied_at": datetime.now(timezone.utc).isoformat(),
+            "applied_files": applied_files,
+        }

@@ -554,7 +554,7 @@ class _RepositoryScan:
 
 @dataclass(frozen=True)
 class _Binding:
-    kind: Literal["module", "constructor", "client"]
+    kind: Literal["module", "constructor", "client", "litellm_call"]
     constructor: str | None = None
 
 
@@ -743,8 +743,11 @@ class _CallVisitor(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
-            self.bind(alias.asname or alias.name.split(".")[0],
-                      _Binding("module") if alias.name == "openai" else None)
+            base_name = alias.name.split(".")[0]
+            binding = None
+            if base_name in ("openai", "litellm"):
+                binding = _Binding("module", base_name)
+            self.bind(alias.asname or base_name, binding)
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         for alias in node.names:
@@ -755,6 +758,8 @@ class _CallVisitor(ast.NodeVisitor):
             binding = None
             if node.level == 0 and node.module == "openai" and alias.name in _CONSTRUCTORS:
                 binding = _Binding("constructor", alias.name)
+            elif node.level == 0 and node.module == "litellm" and alias.name in ("completion", "acompletion"):
+                binding = _Binding("litellm_call", alias.name)
             self.bind(alias.asname or alias.name, binding)
 
     def assign(self, target: ast.AST, binding: _Binding | None = None) -> None:
@@ -899,11 +904,21 @@ class _CallVisitor(ast.NodeVisitor):
             and isinstance(method.value.value, ast.Attribute) and method.value.value.attr == "chat"
         ):
             binding = self.resolve(method.value.value.value)
-            if binding and binding.kind == "client":
+            if binding and binding.kind in ("client", "module"):
                 self.record(node, binding)
+        elif (
+            isinstance(method, ast.Attribute) and method.attr in ("completion", "acompletion")
+        ):
+            binding = self.resolve(method.value)
+            if binding and binding.kind == "module" and binding.constructor == "litellm":
+                self.record(node, binding, signature=f"litellm.{method.attr}(...)")
+        elif isinstance(method, ast.Name):
+            binding = self.scope.lookup(method.id)
+            if binding and binding.kind == "litellm_call":
+                self.record(node, binding, signature=f"litellm.{binding.constructor or 'completion'}(...)")
         self.generic_visit(node)
 
-    def record(self, node: ast.Call, binding: _Binding) -> None:
+    def record(self, node: ast.Call, binding: _Binding, signature: str | None = None) -> None:
         keywords = {keyword.arg: keyword.value for keyword in node.keywords if keyword.arg}
         unpacked = any(keyword.arg is None for keyword in node.keywords)
         model = self.metadata(keywords.get("model"), unpacked)
@@ -929,7 +944,13 @@ class _CallVisitor(ast.NodeVisitor):
             model = ArgumentMetadata("unresolved")
         messages = self.metadata(keywords.get("messages"), unpacked)
         response_format = self.response_metadata(keywords.get("response_format"), unpacked)
-        signature = f"openai.{binding.constructor}.chat.completions.create(...)"
+        if signature is None:
+            if binding.kind == "client":
+                signature = f"openai.{binding.constructor}.chat.completions.create(...)"
+            elif binding.kind == "module":
+                signature = "openai.chat.completions.create(...)"
+            else:
+                signature = "openai.OpenAI.chat.completions.create(...)"
         identity = f"{self.path}\0{node.lineno}\0{node.col_offset}\0{signature}"
         self.call_nodes.append(node)
         self.nodes.append(ProvisionalLLMNode(

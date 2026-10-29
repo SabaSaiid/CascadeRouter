@@ -324,6 +324,9 @@ class LLMNode(SourceLocation):
     call_signature: Literal[
         "openai.OpenAI.chat.completions.create(...)",
         "openai.AsyncOpenAI.chat.completions.create(...)",
+        "openai.chat.completions.create(...)",
+        "litellm.completion(...)",
+        "litellm.acompletion(...)",
     ]
     function_name: Annotated[str, Field(min_length=1, max_length=256)] | None = None
     model_resolution: ResolutionState
@@ -406,7 +409,7 @@ class ScanResponse(APIModel):
     scanned_files_count: Count
     discovered_files_count: Count
     total_source_bytes_read: Count
-    detected_framework: Literal["OpenAI SDK"] | None
+    detected_framework: Literal["OpenAI SDK", "LiteLLM"] | None
     data_source: DataSource
     scan_complete: bool
     graph_complete: bool

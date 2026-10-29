@@ -1,7 +1,7 @@
 {
   "schema_version": "cascaderouter.source-inventory.v1",
   "version": null,
-  "source_commit": "9f4361cc1a744d5be9db071084975ae0760b26ea",
+  "source_commit": "d59f08d480e0a7d95f2c82f3b80549d6024db13e",
   "scope": "Selected tracked runtime/frontend/contract/build inputs; canonical Git blob bytes, not a built distribution or target-source snapshot",
   "artifacts": [
     {
@@ -21,8 +21,8 @@
     },
     {
       "path": "backend/api/patches.py",
-      "bytes": 2180,
-      "sha256": "f62230ed7bd86aac00655bc5356edf77caacae1f870c755119395bf891fa176e"
+      "bytes": 2809,
+      "sha256": "48ceab30debf79f3eb304877e14cd174ec830405d1ba53bf409a120241f6d9b3"
     },
     {
       "path": "backend/api/scan.py",
@@ -31,8 +31,8 @@
     },
     {
       "path": "backend/compiler/ast_scanner.py",
-      "bytes": 46145,
-      "sha256": "0fe5b4f80dbe4a9e6155a00a8106b3b472a1d60e59b1813af49bb95a21b37548"
+      "bytes": 47360,
+      "sha256": "6faa64287bb9038067a362ad7ac7493aa34ac3dddbc4ab378a3337694182f779"
     },
     {
       "path": "backend/compiler/dag_builder.py",
@@ -86,8 +86,8 @@
     },
     {
       "path": "backend/schemas.py",
-      "bytes": 92905,
-      "sha256": "f15ad8e904951cf574156a50148e39acd2f9a9cecd8fd495e3b9b1f5080a626c"
+      "bytes": 93034,
+      "sha256": "701400391bea2b93e188a40613be1e72903640017fb004abb938fc5588392f00"
     },
     {
       "path": "backend/services/benchmark_assets.py",
@@ -96,13 +96,18 @@
     },
     {
       "path": "backend/services/benchmark_cases.py",
-      "bytes": 9165,
-      "sha256": "0a81fd1ae5a1ccfdae0c5293db0d9fe18407b38b4d22aa4bde2e341063854e8b"
+      "bytes": 9364,
+      "sha256": "7496e7c1458921513968b4d2b9251fa189dcea334a8cd0641192141aa90193f4"
     },
     {
       "path": "backend/services/compiler_adapter.py",
-      "bytes": 3741,
-      "sha256": "dda9784fae2ca340ca6f81be35c0cd6313db79e80ff00de734713bc319c86d22"
+      "bytes": 3833,
+      "sha256": "960d54f78b3ab9aab4602d6c78291edf48e94c42472b8d5b42e36911c623c579"
+    },
+    {
+      "path": "backend/services/default_assets.py",
+      "bytes": 9025,
+      "sha256": "3f32708920fa38e7dc1a68827a131d383b26f350aad003dfe64f2a36a30759c5"
     },
     {
       "path": "backend/services/errors.py",
@@ -111,8 +116,13 @@
     },
     {
       "path": "backend/services/jobs.py",
-      "bytes": 15458,
-      "sha256": "64c403a9027754fa78cc52c7a2db8dff5184aef81d6489e19e1c6a298cc2415c"
+      "bytes": 15711,
+      "sha256": "e175ee6d12b1d3a90388f3cb65a86b3e33b7fc6b3a05577796ddeda33cd3ceb3"
+    },
+    {
+      "path": "backend/services/live_benchmark.py",
+      "bytes": 8473,
+      "sha256": "a26f30d21526c42bda1555ea718806ad04e35aadbcf1961d88d067e85d86c5d1"
     },
     {
       "path": "backend/services/offline_benchmark.py",
@@ -121,13 +131,13 @@
     },
     {
       "path": "backend/services/optimization.py",
-      "bytes": 6440,
-      "sha256": "ee6982f0590e6086e39db8324430aac79e0f1e791e2029525540d065cb7914ef"
+      "bytes": 6765,
+      "sha256": "d441025a5c2b240748bebf0f4ec9421abf05006c3428015731b33a45cc23739f"
     },
     {
       "path": "backend/services/patches.py",
-      "bytes": 11745,
-      "sha256": "0e3b7f72546d8ab17c9c82cc374b70df69aaa6abf425b93755c0f7186665193c"
+      "bytes": 13877,
+      "sha256": "160a326dd3adbaf96cf190bda681fba04aff16acb43502515f12b29dd89d3e2b"
     },
     {
       "path": "backend/services/repository_access.py",
@@ -211,8 +221,8 @@
     },
     {
       "path": "frontend/src/components/benchmark/BenchmarkPane.tsx",
-      "bytes": 7228,
-      "sha256": "7289434bc80b1c1c91dd540accbaa9b30cedf07e7fc25d4dcafef4fb88a013e3"
+      "bytes": 8330,
+      "sha256": "dc4ab3626c2a1814526b06f6e2b16e6ae147c10cb25ffa08dff7cbc20134e088"
     },
     {
       "path": "frontend/src/components/layout/Header.tsx",
@@ -226,8 +236,8 @@
     },
     {
       "path": "frontend/src/components/patches/PatchPane.tsx",
-      "bytes": 8621,
-      "sha256": "759f8941fa512d7759c3b53eec3b928f3ea526cd465d5297c112191d41b624fe"
+      "bytes": 10321,
+      "sha256": "734cdb3f42593cb4f5d16aedc9b2c734ae1737bb9ad819e3efdac13b93037ca3"
     },
     {
       "path": "frontend/src/components/repository/AgentGraph.tsx",
@@ -236,8 +246,8 @@
     },
     {
       "path": "frontend/src/components/repository/RepositoryPane.tsx",
-      "bytes": 4564,
-      "sha256": "17816e00b34393f049536d97212fa4a0aa9562c2985f10dd73807f51de84a148"
+      "bytes": 4840,
+      "sha256": "1ae382e7c419b86f23ebd45f3ccb28a7618342ac439b5b4a85dc389694fed0af"
     },
     {
       "path": "frontend/src/index.css",
@@ -251,8 +261,8 @@
     },
     {
       "path": "frontend/src/services/api.ts",
-      "bytes": 3247,
-      "sha256": "26e63f5d0ab04eb479afdd915e50f7bb17c8ddb10ab5c4c19351a99e47e47dd2"
+      "bytes": 3739,
+      "sha256": "b89b0fa0205e0bc2b963d23370b4e0d71ebf1f56aab30651ea4583637aa623f6"
     },
     {
       "path": "frontend/src/services/benchmark.ts",
@@ -266,8 +276,8 @@
     },
     {
       "path": "frontend/src/services/contracts.ts",
-      "bytes": 58394,
-      "sha256": "cf91e54d7da0382f93ca8c55e5f1d17342971a5552d41624d87fe3a269a44ac3"
+      "bytes": 58283,
+      "sha256": "1c006c4f1f1a31ecfd3a8d3cd0004dbcedcd1ed215c750e80404bad968b9d773"
     },
     {
       "path": "frontend/src/services/demo.ts",

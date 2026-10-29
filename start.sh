@@ -28,12 +28,14 @@ cd "$ROOT_DIR"
 
 # Configuration is explicit; never create or load a dotenv file.
 BACKEND_ARGS=()
+EXPLICIT_CONFIG=0
 if [ "$#" -gt 0 ]; then
     if [ "$#" -ne 2 ] || [ "$1" != "--backend-config" ]; then
         echo 'Usage: bash start.sh [--backend-config ABSOLUTE_NON_SECRET_JSON]'
         exit 2
     fi
     BACKEND_ARGS=(--config "$2")
+    EXPLICIT_CONFIG=1
 fi
 
 # Cleanup on exit
@@ -57,7 +59,6 @@ trap 'exit 143' TERM
 
 # 2. Check & Start Backend (if available)
 if [ -f "$ROOT_DIR/backend/main.py" ]; then
-    echo -e "${CYAN}[*] Starting FastAPI Backend on http://localhost:8000...${NC}"
     if [ -d "$ROOT_DIR/venv" ]; then
         source "$ROOT_DIR/venv/bin/activate"
     elif [ -d "$ROOT_DIR/.venv" ]; then
@@ -79,6 +80,14 @@ if [ -f "$ROOT_DIR/backend/main.py" ]; then
         echo -e "${YELLOW}[!] Install them using: pip install -r requirements.txt${NC}"
     fi
 
+    if [ "$EXPLICIT_CONFIG" -eq 0 ]; then
+        echo -e "${CYAN}[*] Auto-provisioning local benchmark registry, pricing & permitted roots...${NC}"
+        AUTO_CONFIG=$("$PYTHON_CMD" -B -m backend.services.default_assets "$ROOT_DIR")
+        BACKEND_ARGS=(--config "$AUTO_CONFIG")
+        echo -e "${GREEN}[✓] Local sandbox ready: $AUTO_CONFIG${NC}"
+    fi
+
+    echo -e "${CYAN}[*] Starting FastAPI Backend on http://localhost:8000...${NC}"
     "$PYTHON_CMD" -B -m backend.main "${BACKEND_ARGS[@]}" &
     BACKEND_PID=$!
     PIDS+=("$BACKEND_PID")

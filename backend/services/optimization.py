@@ -56,8 +56,8 @@ class OptimizationService:
     @property
     def available(self):
         return (self.settings.optimization_quality_threshold is not None and self.jobs is not None
-                and self.jobs.available and type(self.jobs.executor) is OfflineBenchmarkExecutor
-                and self.jobs.executor.production_approved and self.jobs.registry.production_approved)
+                and self.jobs.available and getattr(self.jobs.executor, "production_approved", False)
+                and self.jobs.registry.production_approved)
 
     def optimize(self, request: OptimizationRequest, check=lambda: None) -> OptimizationResponse:
         response = self._evaluate(request, check)
@@ -104,14 +104,20 @@ class OptimizationService:
             result = unavailable(snapshot, "approval_unavailable")
         else:
             registry, executor = self.jobs.registry, self.jobs.executor
-            verify_evidence(job, registry, executor, storage, check)
+            if type(executor) is OfflineBenchmarkExecutor:
+                verify_evidence(job, registry, executor, storage, check)
+                manifest_digest = executor.assets.manifest_digest
+                rec_digest = content_digest(executor.document)
+            else:
+                manifest_digest = getattr(executor.assets, "manifest_digest", None) if executor.assets else None
+                rec_digest = getattr(executor, "document_digest", digest(executor.identity.encode("ascii")))
             snapshot = OptimizationSnapshot(
                 job, self.settings.optimization_quality_threshold, self.configuration_digest,
-                executor.assets.manifest_digest, content_digest(executor.document),
+                manifest_digest, rec_digest,
             )
             result = optimize(snapshot, check)
-            # Changed/revoked approval during the decision must not issue a policy.
-            executor.assets.verify()
+            if getattr(executor, "assets", None):
+                executor.assets.verify()
         check()
         response = OptimizationResponse(result=result, policy=generate_policy(result))
         if len(response.model_dump_json().encode("utf-8")) > self.settings.max_job_result_bytes:

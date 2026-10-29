@@ -35,7 +35,15 @@ export function RepositoryPane({ api, demo, onAnalysis, selected, onSelect }: { 
   };
   return <section aria-labelledby="scan-title"><h2 id="scan-title">1. Repository analysis</h2>
     <p>Supply a path allowed by the backend. Scanning parses Python without importing or executing it. No scan starts automatically.</p>
-    <form onSubmit={e => { e.preventDefault(); submit(false); }}><label>Authorized repository path<input value={path} onChange={e => setPath(e.target.value)} required autoComplete="off" disabled={demo} /></label><button disabled={demo || !api || state.status === 'loading' || !path.trim()}>Scan repository</button></form>
+    <form onSubmit={e => { e.preventDefault(); submit(false); }}>
+      <label>Authorized repository path
+        <input value={path} onChange={e => setPath(e.target.value)} required autoComplete="off" disabled={demo} placeholder="e.g. . or /absolute/path/to/repo" />
+      </label>
+      <div className="control-row">
+        <button disabled={demo || !api || state.status === 'loading' || !path.trim()}>Scan repository</button>
+        <button type="button" disabled={demo || !api || state.status === 'loading'} onClick={() => setPath('.')}>Use Current Repo (.)</button>
+      </div>
+    </form>
     <form onSubmit={e => { e.preventDefault(); submit(true); }}><label>Stored analysis ID<input value={analysisId} onChange={e => setAnalysisId(e.target.value)} required pattern="analysis_[0-9a-f]{32}" disabled={demo} /></label><button disabled={demo || !api || state.status === 'loading'}>Retrieve analysis</button></form>
     <OperationStatus state={state} cancel={operation.cancel} />
     {!scan && state.status !== 'loading' && <p>No analysis result loaded. Supply a repository or retrieve a stored analysis; retry the form after correcting any reported error.</p>}

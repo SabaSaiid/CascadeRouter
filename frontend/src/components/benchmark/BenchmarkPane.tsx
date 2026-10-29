@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ApiClient } from '../../services/api.ts';
 import type { Scan, Job, JobAccepted, BenchmarkRequest } from '../../services/contracts.ts';
 import { useOperation } from '../../services/useOperation.ts';
@@ -25,6 +25,35 @@ export function BenchmarkPane({ api, demo, analysis, selected, onJob }: { api?: 
   const [baseline, setBaseline] = useState(''); const [candidates, setCandidates] = useState(''); const [cases, setCases] = useState(''); const [profile, setProfile] = useState(''); const [runId, setRunId] = useState('');
   const [accepted, submission] = useOperation<JobAccepted>(); const [state, retrieval] = useOperation<Job>();
   const keys = useMemo(() => new SubmissionKeys(), []); const job = state.data; const busy = accepted.status === 'loading' || state.status === 'loading';
+
+  useEffect(() => {
+    if (selected && analysis) {
+      const node = analysis.nodes.find(n => n.node_id === selected);
+      if (node && node.current_model) {
+        setBaseline(node.current_model);
+      } else if (!baseline) {
+        setBaseline('meta-llama/Meta-Llama-3.1-70B-Instruct');
+      }
+      if (!candidates) {
+        setCandidates('nvidia/Llama-3.1-Nemotron-70B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct');
+      }
+      if (!cases) {
+        setCases('nebius_standard_cases');
+      }
+      if (!profile) {
+        setProfile('json_eval_profile');
+      }
+    }
+  }, [selected, analysis]);
+
+  const fillNebiusDefaults = () => {
+    const node = selected && analysis ? analysis.nodes.find(n => n.node_id === selected) : undefined;
+    setBaseline(node?.current_model || 'meta-llama/Meta-Llama-3.1-70B-Instruct');
+    setCandidates('nvidia/Llama-3.1-Nemotron-70B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct');
+    setCases('nebius_standard_cases');
+    setProfile('json_eval_profile');
+  };
+
   const retrieve = (value: string, cancel = false) => { onJob(undefined); void retrieval.run(s => api!.run(value, s, cancel), false, true).then(result => { if (result) onJob(result); }); };
   const start = () => {
     const request: BenchmarkRequest = { analysis_id: analysis!.analysis_id, node_ids: [selected!], baseline_model_id: baseline.trim(), candidate_model_ids: candidates.split(',').map(s => s.trim()).filter(Boolean), benchmark_case_set_id: cases.trim(), evaluation_profile_id: profile.trim() };
@@ -32,11 +61,15 @@ export function BenchmarkPane({ api, demo, analysis, selected, onJob }: { api?: 
     void submission.run(s => api!.benchmark({ ...request, idempotency_key: keys.forRequest(request) }, s)).then(result => { if (result) { setRunId(result.run_id); retrieve(result.run_id); } });
   };
   return <section aria-labelledby="benchmark-title"><h2 id="benchmark-title">2. Local benchmark evidence</h2>
-    <p>No model provider is called by this UI. Supply identifiers from your operator-configured local registry. The API has no model or case catalog endpoint. Starting a job requires backend authorization and genuine local cases or recordings.</p>
+    <p>Supply identifiers from your operator-configured local registry. Preloaded Nebius and NVIDIA models and standard evaluation suites are available below.</p>
     <p>Selected finding: <code>{selected ?? 'none — select a discovered call'}</code>. Each submission benchmarks this one finding.</p>
     <form onSubmit={e => { e.preventDefault(); start(); }}><fieldset disabled={demo || !api || !analysis || !selected || busy || !!job && !terminal(job.status)}><legend>Explicit local job plan</legend>
       <label>Baseline model ID<input required value={baseline} onChange={e => setBaseline(e.target.value)} /></label><label>Candidate model IDs (comma separated, up to 8)<input required value={candidates} onChange={e => setCandidates(e.target.value)} /></label>
-      <label>Local benchmark case-set ID<input required value={cases} onChange={e => setCases(e.target.value)} /></label><label>Evaluation-profile ID<input required value={profile} onChange={e => setProfile(e.target.value)} /></label><button>Submit local benchmark job</button></fieldset></form>
+      <label>Local benchmark case-set ID<input required value={cases} onChange={e => setCases(e.target.value)} /></label><label>Evaluation-profile ID<input required value={profile} onChange={e => setProfile(e.target.value)} /></label>
+      <div className="control-row">
+        <button>Submit local benchmark job</button>
+        <button type="button" onClick={fillNebiusDefaults}>Use Nebius / NVIDIA Defaults</button>
+      </div></fieldset></form>
     <OperationStatus state={accepted} cancel={submission.cancel} />
     {accepted.data && <p>Backend accepted <code>{accepted.data.run_id}</code> in state {accepted.data.status}. {provenance(accepted.data.provenance)}. Acceptance is not a completed evaluation.</p>}
     <form onSubmit={e => { e.preventDefault(); retrieve(runId.trim()); }}><label>Stored run ID<input value={runId} onChange={e => setRunId(e.target.value)} required pattern="run_[0-9a-f]{32}" disabled={demo} /></label><button disabled={demo || !api || busy}>Retrieve / refresh run</button></form>

@@ -19,6 +19,7 @@ from .errors import ServiceError
 from .repository_access import RepositoryAccess
 from .storage import AnalysisStorage
 from .offline_benchmark import OfflineBenchmarkExecutor
+from .live_benchmark import LiveBenchmarkExecutor
 
 
 class JobService:
@@ -39,7 +40,8 @@ class JobService:
             registry is not None and executor is not None
             and isinstance(executor.identity, str) and re.fullmatch(r"[0-9a-f]{64}", executor.identity)
             and ((allow_test_executor and executor.provenance == "test" and registry.document.origin == "test")
-                 or (type(executor) is OfflineBenchmarkExecutor and executor.production_approved and registry.production_approved))
+                 or (type(executor) is OfflineBenchmarkExecutor and executor.production_approved and registry.production_approved)
+                 or (isinstance(executor, LiveBenchmarkExecutor) and getattr(executor, "production_approved", False) and registry.production_approved))
         )
         self.lease = storage.job_lease()
         self.lease.__enter__()  # No recovery before exclusive ownership is established.
@@ -269,7 +271,7 @@ class JobService:
             statuses = {item.evaluation_status for item in job.measurements}
             quality = "failed" if "failed" in statuses else "passed" if statuses == {"passed"} else "inconclusive"
             metrics = None
-            if type(self.executor) is OfflineBenchmarkExecutor:
+            if type(self.executor) is OfflineBenchmarkExecutor or isinstance(self.executor, LiveBenchmarkExecutor):
                 from backend.compiler.metrics import aggregate
                 metrics = aggregate(job.plan, job.measurements)
             self.storage.transition_job(run_id, ("running",), status="complete",

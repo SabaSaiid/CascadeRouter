@@ -46,3 +46,17 @@ async def get_validation(validation_id: PatchValidationId, request: Request):
     if request.query_params:
         raise ServiceError("invalid_request")
     return await _operation(request, lambda patches, check: patches.get_validation(validation_id, check))
+
+
+@router.post("/patches/{patch_id}/apply", status_code=200, responses=ERRORS)
+async def apply_patch(patch_id: PatchId, request: Request):
+    if request.query_params:
+        raise ServiceError("invalid_request")
+    scans, patches = request.app.state.scan_service, request.app.state.patch_service
+    if scans is None or patches is None:
+        raise ServiceError("capability_unavailable")
+    def work(check):
+        import json
+        return json.dumps(patches.apply(patch_id, check)).encode("utf-8")
+    payload = await scans._run(work, request.state.deadline)
+    return Response(payload, media_type="application/json")

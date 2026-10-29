@@ -40,4 +40,13 @@ export class ApiClient {
     const result = await this.transport.request(`/api/patch-validations/${id(value, 'validation', 64)}`, 'Validation', { signal });
     if (result.validation_id !== value) throw new ApiFailure('malformed'); return result;
   }
+  async applyPatch(value: string, signal?: AbortSignal) {
+    const res = await this.transport.fetcher(this.transport.base + `/api/patches/${id(value, 'patch', 32)}/apply`, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      signal,
+    });
+    if (!res.ok) throw new ApiFailure('server');
+    return (await res.json()) as { patch_id: string; status: string; applied_at: string; applied_files: { file_path: string; backup_path: string; edits_count: number }[] };
+  }
 }
