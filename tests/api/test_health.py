@@ -6,7 +6,7 @@ from backend.main import create_app
 
 
 def _client() -> TestClient:
-    return TestClient(create_app())
+    return TestClient(create_app(), base_url="http://localhost")
 
 
 def test_health_never_leaks_key(monkeypatch):
@@ -63,7 +63,7 @@ def test_explicit_settings_override_routes():
     from backend.config import load_settings
 
     s = dataclasses.replace(load_settings(), environment="production", data_source_mode="recorded")
-    body = TestClient(create_app(s)).get("/api/health").json()
+    body = TestClient(create_app(s), base_url="http://localhost").get("/api/health").json()
     assert (body["environment"], body["data_source"]) == ("production", "recorded")
 
 

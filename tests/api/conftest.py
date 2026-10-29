@@ -15,4 +15,4 @@ def store() -> ScanStore:
 def client(store) -> TestClient:
     app = create_app()
     app.dependency_overrides[get_scan_store] = lambda: store
-    return TestClient(app)
+    return TestClient(app, base_url="http://localhost")

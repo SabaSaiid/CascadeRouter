@@ -51,6 +51,6 @@ def test_scan_respects_allowed_roots(monkeypatch, store):
     monkeypatch.setenv("ALLOWED_SCAN_ROOTS", "tests/fixtures")
     app = create_app()
     app.dependency_overrides[get_scan_store] = lambda: store
-    c = TestClient(app)
+    c = TestClient(app, base_url="http://localhost")
     assert c.post("/api/scan", json={"repository_path": "tests/fixtures/sample_repo"}).status_code == 200
     assert c.post("/api/scan", json={"repository_path": "backend"}).status_code == 400
