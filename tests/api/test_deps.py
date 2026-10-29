@@ -33,3 +33,9 @@ def test_live_is_spend_capped_and_optionally_recorded(tmp_path):
     s = settings(data_source_mode="live", nebius_api_key="sk-x", recordings_dir=tmp_path)
     assert isinstance(build_llm_client(s, SpendTracker(1)), SpendCappedClient)
     assert isinstance(build_llm_client(dataclasses.replace(s, record_runs=True), SpendTracker(1)), RecordingWriter)
+
+
+def test_singletons_are_cached():
+    from backend.api.deps import get_run_store, get_scan_store
+
+    assert get_scan_store() is get_scan_store() and get_run_store() is get_run_store()
