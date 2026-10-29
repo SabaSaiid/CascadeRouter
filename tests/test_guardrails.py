@@ -70,10 +70,62 @@ async def test_spend_capped_client_records_real_cost_and_blocks():
     assert inner.calls == 1
 
 
-async def test_unknown_model_cost_not_tracked():
+async def test_unknown_model_is_refused_not_uncapped():
+    with pytest.raises(LLMError, match="not in the priced model catalog"):
+        await SpendCappedClient(Inner(), SpendTracker(1.0), S).complete("acme/other", [], {})
+
+
+def test_reserve_and_settle():
+    t = SpendTracker(1.0)
+    assert t.reserve(0.6) and not t.reserve(0.5)
+    assert t.remaining_usd() == pytest.approx(0.4)
+    t.settle(0.6, 0.1)
+    assert t.spent_usd == pytest.approx(0.1) and t.remaining_usd() == pytest.approx(0.9)
+    with pytest.raises(ValueError):
+        t.reserve(-1)
+
+
+def test_worst_case_cost_bounds():
+    from backend.guardrails import worst_case_cost
+
+    ultra = S.powerful_model
+    msgs = [{"role": "user", "content": "x" * 1000}]
+    assert worst_case_cost(ultra, msgs, {"max_tokens": 100}) == pytest.approx((1016 * 1.0 + 100 * 3.0) / 1e6)
+    assert worst_case_cost(ultra, msgs, {}) == pytest.approx((1016 * 1.0 + 2048 * 3.0) / 1e6)
+
+
+async def test_concurrent_calls_cannot_overshoot_cap():
+    import asyncio
+
+    class Slow:
+        async def complete(self, model, messages, params):
+            await asyncio.sleep(0.05)
+            return CompletionResult("x", 100, params["max_tokens"], True, 1.0, None)
+
+    ultra = S.powerful_model.id
+    params = {"max_tokens": 10_000}
+    one_call = (16 * 1.0 + 10_000 * 3.0) / 1e6
+    tracker = SpendTracker(one_call * 1.5)
+    client = SpendCappedClient(Slow(), tracker, S)
+    results = await asyncio.gather(*(client.complete(ultra, [{"role": "user", "content": ""}], params) for _ in range(4)),
+                                   return_exceptions=True)
+    assert sum(not isinstance(r, Exception) for r in results) == 1
+    assert tracker.spent_usd <= tracker.cap_usd
+
+
+async def test_cancelled_call_is_charged_its_reservation():
+    import asyncio
+
+    class Hang:
+        async def complete(self, model, messages, params):
+            await asyncio.sleep(10)
+
     tracker = SpendTracker(1.0)
-    await SpendCappedClient(Inner(), tracker, S).complete("acme/other", [], {})
-    assert tracker.spent_usd == 0
+    client = SpendCappedClient(Hang(), tracker, S)
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(client.complete(S.powerful_model.id, [], {"max_tokens": 1000}), 0.05)
+    assert tracker.spent_usd == pytest.approx(3000 / 1e6)
+    assert tracker.remaining_usd() == pytest.approx(1.0 - 3000 / 1e6)
 
 
 def _app(limiter=None, max_body=100):

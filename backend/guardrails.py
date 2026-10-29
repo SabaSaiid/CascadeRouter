@@ -12,7 +12,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from backend.compiler.metrics import estimate_cost
-from backend.config import Settings
+from backend.compiler.prompt_capture import DEFAULT_MAX_OUTPUT_TOKENS
+from backend.config import ModelSpec, Settings
 from backend.services.llm import CompletionResult, LLMClient, LLMError
 
 MAX_BODY_BYTES = 64 * 1024
@@ -47,13 +48,19 @@ class RateLimiter:
 
 
 class SpendTracker:
-    """Running USD spend on live calls, reset at UTC midnight."""
+    """USD spend on live calls, reset at UTC midnight.
+
+    Calls reserve a worst-case cost *before* they start (under the lock), so
+    concurrent calls can never jointly overshoot the cap; the reservation is
+    settled to the real cost afterwards.
+    """
 
     def __init__(self, cap_usd: float, today: Callable[[], str] | None = None):
         self.cap_usd = cap_usd
         self._today = today or (lambda: datetime.now(timezone.utc).date().isoformat())
         self._day = self._today()
         self._spent = 0.0
+        self._reserved = 0.0
         self._lock = threading.Lock()
 
     def _roll(self) -> None:
@@ -68,7 +75,9 @@ class SpendTracker:
             return self._spent
 
     def remaining_usd(self) -> float:
-        return max(0.0, self.cap_usd - self.spent_usd)
+        with self._lock:
+            self._roll()
+            return max(0.0, self.cap_usd - self._spent - self._reserved)
 
     def exhausted(self) -> bool:
         return self.remaining_usd() <= 0.0
@@ -80,9 +89,39 @@ class SpendTracker:
             self._roll()
             self._spent += amount
 
+    def reserve(self, amount: float) -> bool:
+        """Atomically reserve `amount`; False if it would exceed the cap."""
+        if amount < 0:
+            raise ValueError("reservation cannot be negative")
+        with self._lock:
+            self._roll()
+            if self._spent + self._reserved + amount > self.cap_usd:
+                return False
+            self._reserved += amount
+            return True
+
+    def settle(self, reserved: float, actual: float) -> None:
+        """Release a reservation and record what was actually spent."""
+        with self._lock:
+            self._roll()
+            self._reserved = max(0.0, self._reserved - reserved)
+            self._spent += max(0.0, actual)
+
+
+def worst_case_cost(spec: ModelSpec, messages: list[dict[str, Any]], params: dict[str, Any]) -> float:
+    """Upper bound for one call: every prompt character counted as a token, plus full max_tokens."""
+    prompt_chars = sum(len(str(m.get("content", ""))) for m in messages)
+    input_upper = prompt_chars + 16 * len(messages)
+    output_upper = params.get("max_tokens") or params.get("max_completion_tokens") or DEFAULT_MAX_OUTPUT_TOKENS
+    return estimate_cost(spec, input_upper, int(output_upper))
+
 
 class SpendCappedClient:
-    """Refuses live calls once the daily cap is reached; records the real cost of each call."""
+    """Reserves worst-case cost before each live call; settles to the real cost after.
+
+    A call that fails or is cancelled (e.g. by a timeout) is charged its full
+    reservation, because the provider may still have generated tokens.
+    """
 
     def __init__(self, inner: LLMClient, tracker: SpendTracker, settings: Settings):
         self._inner = inner
@@ -90,12 +129,18 @@ class SpendCappedClient:
         self._settings = settings
 
     async def complete(self, model: str, messages: list[dict[str, Any]], params: dict[str, Any]) -> CompletionResult:
-        if self._tracker.exhausted():
-            raise LLMError(f"{model}: daily spend cap of ${self._tracker.cap_usd:.2f} reached")
-        result = await self._inner.complete(model, messages, params)
         spec = self._settings.model_by_id(model)
-        if spec is not None:
-            self._tracker.add(estimate_cost(spec, result.input_tokens, result.output_tokens))
+        if spec is None:
+            raise LLMError(f"{model}: not in the priced model catalog; refusing an uncapped call")
+        reservation = worst_case_cost(spec, messages, params)
+        if not self._tracker.reserve(reservation):
+            raise LLMError(f"{model}: daily spend cap of ${self._tracker.cap_usd:.2f} reached")
+        try:
+            result = await self._inner.complete(model, messages, params)
+        except BaseException:
+            self._tracker.settle(reservation, reservation)
+            raise
+        self._tracker.settle(reservation, estimate_cost(spec, result.input_tokens, result.output_tokens))
         return result
 
 
