@@ -71,3 +71,53 @@ def test_relative_scan_roots_resolve_against_repo(monkeypatch, tmp_path):
     monkeypatch.setenv("ALLOWED_SCAN_ROOTS", f"tests/fixtures,{tmp_path}")
     s = load_settings()
     assert s.allowed_scan_roots == [(REPO_ROOT / "tests/fixtures").resolve(), Path(tmp_path).resolve()]
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("QUALITY_THRESHOLD", "nan"),
+        ("BENCHMARK_TIMEOUT_SECONDS", "inf"),
+        ("DAILY_SPEND_CAP_USD", "-inf"),
+        ("LOG_LEVEL", "verbose"),
+        ("ALLOWED_SCAN_ROOTS", ","),
+        ("PORT", "abc"),
+    ],
+)
+def test_more_invalid_values_raise(monkeypatch, key, value):
+    monkeypatch.setenv(key, value)
+    with pytest.raises(ConfigError):
+        load_settings()
+
+
+def test_log_level_is_case_insensitive(monkeypatch):
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    assert load_settings().log_level == "DEBUG"
+
+
+def test_scan_roots_expand_home(monkeypatch):
+    monkeypatch.setenv("ALLOWED_SCAN_ROOTS", "~/code")
+    assert load_settings().allowed_scan_roots == [(Path.home() / "code").resolve()]
+
+
+def test_load_settings_accepts_explicit_mapping():
+    s = load_settings({"ENVIRONMENT": "staging", "DATA_SOURCE_MODE": "recorded"})
+    assert (s.environment, s.data_source_mode) == ("staging", "recorded")
+
+
+def test_get_settings_uses_dotenv_without_mutating_environ(monkeypatch, tmp_path):
+    import os
+
+    import backend.config as config
+
+    env_file = tmp_path / ".env"
+    env_file.write_text('ENVIRONMENT="from-dotenv"\nLOG_LEVEL=debug\nNEBIUS_API_KEY=sk-file\n')
+    monkeypatch.setattr(config, "DOTENV_PATH", env_file)
+    monkeypatch.setenv("LOG_LEVEL", "warning")  # real env wins over .env
+    config.get_settings.cache_clear()
+    s = config.get_settings()
+    assert s.environment == "from-dotenv"
+    assert s.log_level == "WARNING"
+    assert s.nebius_api_key == "sk-file"
+    assert "ENVIRONMENT" not in os.environ and "NEBIUS_API_KEY" not in os.environ
+    assert config.get_settings() is s  # cached
