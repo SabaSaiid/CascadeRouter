@@ -104,3 +104,27 @@ def test_real_sandbox_regression_end_to_end():
     out = optimize_run(stored_run(synth_passes=True), 0.92, S)
     assert out.all_regressions_passed, [d.regression_log for d in out.decisions]
     assert all(d.recommended_model == LIGHT for d in out.decisions)
+
+
+def test_unpatchable_node_is_reported_not_verified(monkeypatch):
+    import backend.services.optimization as opt
+    from backend.compiler.patch_generator import PatchSet
+
+    def failing_patches(sources, calls):
+        return PatchSet(errors={c.node_id: "only <client>.chat.completions.create(...) calls can be patched" for c in calls})
+
+    monkeypatch.setattr(opt, "build_patches", failing_patches)
+    regression, calls = fake_regression()
+    out = optimize_run(stored_run(), 0.92, S, regression=regression)
+    assert calls == []
+    assert all(not d.regression_passed and d.regression_log.startswith("Patch could not be generated") for d in out.decisions)
+    assert not out.all_regressions_passed
+
+
+def test_nodes_missing_from_scan_are_skipped_and_repo_name_outside_root(tmp_path):
+    run = stored_run()
+    run.run.nodes[0].node_id = "node_gone"
+    run.extras.repo_root = tmp_path / "elsewhere"
+    out = optimize_run(run, 0.92, S, regression=fake_regression()[0])
+    assert "node_gone" not in {d.node_id for d in out.decisions} and len(out.decisions) == 2
+    assert "repository: elsewhere" in out.combined_policy_yaml
