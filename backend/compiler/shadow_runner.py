@@ -22,6 +22,20 @@ from backend.services.llm import CompletionResult, LLMClient, LLMError
 logger = logging.getLogger(__name__)
 
 NO_CASES_ERROR = "No benchmark cases for this node in cascade_cases.yaml"
+VACUOUS_CASE_ERROR = (
+    "case has no assertions (add expected, must_include, must_not_include or a length bound)"
+)
+
+
+def case_is_vacuous(call: DiscoveredCall, case: BenchmarkCase) -> bool:
+    """True when a case would accept any non-empty answer, which proves nothing."""
+    if case.expected is not None or case.must_include or case.must_not_include:
+        return False
+    if case.min_chars is not None or case.max_chars is not None:
+        return False
+    # A JSON schema with required fields or enums is itself an assertion.
+    schema = call.expected_schema or {}
+    return not (schema.get("required") or schema.get("properties"))
 
 
 @dataclass
@@ -142,9 +156,14 @@ class BenchmarkRunner:
         for i, call in enumerate(calls, start=1):
             cases = all_cases.get(call.node_id, [])
             run.current_step = f"Capturing prompts for {call.node_id} ({i}/{len(calls)})"
-            captures[call.node_id] = await asyncio.to_thread(
+            captured = await asyncio.to_thread(
                 self.capture, extras.repo_root, call, cases, settings.regression_timeout_seconds
             )
+            # Vacuous cases are never sent to a model: they would make any answer "pass".
+            captures[call.node_id] = [
+                CaptureResult(None, VACUOUS_CASE_ERROR) if case_is_vacuous(call, case) else cap
+                for case, cap in zip(cases, captured)
+            ]
 
         jobs = [
             (call, case_idx, spec)
