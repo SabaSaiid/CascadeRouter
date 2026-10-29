@@ -277,3 +277,30 @@ def test_extraction_attempts_are_bounded(monkeypatch):
     assert extract_json('[x [y {"a": 1}') == (False, None)
     monkeypatch.setattr(ev, "MAX_DECODE_ATTEMPTS", 3)
     assert extract_json('[x [y {"a": 1}') == (True, {"a": 1})
+
+
+# ---------------------------------------------------------------- answer selection
+
+
+def test_example_before_answer_grades_the_answer():
+    text = 'Example: {"a": 1}. Answer: {"category": "billing", "confidence": 0.9}'
+    r = evaluate(text, threshold=0.92, expected_schema=INTENT_SCHEMA, reference={"category": "billing"})
+    assert r.passes_validation and r.parsed_output["category"] == "billing"
+
+
+def test_without_schema_last_json_wins():
+    from backend.compiler.evaluator import json_candidates
+
+    assert json_candidates('{"a": 1} then {"b": 2}') == [{"a": 1}, {"b": 2}]
+    assert extract_json('{"a": 1} then {"b": 2}') == (True, {"b": 2})
+
+
+def test_multiple_fenced_blocks():
+    text = '```json\n{"draft": true}\n```\nFinal:\n```json\n{"category": "general", "confidence": 1}\n```'
+    assert extract_json(text, INTENT_SCHEMA) == (True, {"category": "general", "confidence": 1})
+
+
+def test_unclosed_think_hides_reasoning():
+    assert strip_reasoning('answer <think>{"category": "billing"') == "answer"
+    r = evaluate('<think>{"category": "billing", "confidence": 1}', threshold=0.5, expected_schema=INTENT_SCHEMA)
+    assert not r.passes_validation and "Output is not valid JSON" in r.validation_errors
