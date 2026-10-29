@@ -91,3 +91,17 @@ def test_log_for_falls_back_to_summary():
     r = RegressionResult(True, "3 passed in 0.1s", "", {"tests/t.py::test_other": "PASSED"})
     assert r.log_for("classify_intent") == "3 passed in 0.1s"
     assert r.log_for(None) == "3 passed in 0.1s"
+
+
+def test_xpass_and_noisy_passing_suite_count_as_passed(tmp_path):
+    root = _repo(tmp_path, """
+        import pytest
+        @pytest.mark.xfail(strict=False)
+        def test_unexpectedly_fine():
+            assert True
+        def test_noisy():
+            print("x" * 1_200_000)
+    """)
+    r = run_regression(root, PatchSet(), "nodes: {}\\n", timeout=60)
+    assert r.passed, (r.summary, r.outcomes)
+    assert r.outcomes["tests/test_app.py::test_unexpectedly_fine"] == "XPASS"

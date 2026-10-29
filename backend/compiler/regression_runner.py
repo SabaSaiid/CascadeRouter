@@ -29,6 +29,8 @@ _SUMMARY_RE = re.compile(
     re.M,
 )
 MAX_LOG_CHARS = 20_000
+# XPASS (non-strict xfail that passed) keeps pytest green, so it is not a regression.
+_OK_OUTCOMES = frozenset({"PASSED", "SKIPPED", "XFAIL", "XPASS"})
 
 
 @dataclass
@@ -82,9 +84,7 @@ def run_regression(
     outcomes, summary = parse_pytest_output(proc.stdout)
     if proc.returncode == _NO_TESTS:
         return RegressionResult(False, "no tests were collected; patch is unverified", log, outcomes)
-    passed = proc.returncode == 0 and bool(outcomes) and all(
-        o in ("PASSED", "SKIPPED", "XFAIL") for o in outcomes.values()
-    )
+    passed = proc.returncode == 0 and bool(outcomes) and all(o in _OK_OUTCOMES for o in outcomes.values())
     if not summary:
         summary = f"pytest exited with code {proc.returncode}"
     return RegressionResult(passed, summary, log, outcomes)
