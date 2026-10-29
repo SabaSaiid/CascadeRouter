@@ -102,6 +102,7 @@ def test_detects_variants_and_ignores_non_llm_calls(tmp_path):
 
 def test_duplicate_node_ids_are_suffixed(tmp_path):
     _write(tmp_path, "a.py", '''
+        import openai
         def f(c):
             c.chat.completions.create(model="x", messages=[])
             c.chat.completions.create(model="y", messages=[])
@@ -119,6 +120,7 @@ def test_duplicate_node_ids_are_suffixed(tmp_path):
 
 def test_inline_json_schema_response_format(tmp_path):
     _write(tmp_path, "s.py", '''
+        import openai
         def f(c):
             return c.chat.completions.create(
                 model="x", messages=[],
@@ -132,6 +134,7 @@ def test_inline_json_schema_response_format(tmp_path):
 
 def test_schema_referenced_in_function_wins_over_name_match(tmp_path):
     _write(tmp_path, "s.py", '''
+        import openai
         FOO_SCHEMA = {"type": "object", "required": ["foo"]}
         BAR_SCHEMA = {"type": "object", "required": ["bar"]}
         def foo_step(c):
@@ -143,6 +146,7 @@ def test_schema_referenced_in_function_wins_over_name_match(tmp_path):
 
 def test_no_schema_when_nothing_matches(tmp_path):
     _write(tmp_path, "s.py", '''
+        import openai
         OTHER_SCHEMA = {"type": "object"}
         def summarize(c):
             return c.chat.completions.create(model="x", messages=[{"role": "user", "content": "hi"}])
@@ -154,6 +158,7 @@ def test_no_schema_when_nothing_matches(tmp_path):
 def test_never_executes_target_code(tmp_path):
     marker = tmp_path / "executed"
     _write(tmp_path, "evil.py", f'''
+        import openai
         open({str(marker)!r}, "w").write("pwned")
         def f(c):
             c.chat.completions.create(model="x", messages=[])

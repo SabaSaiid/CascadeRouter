@@ -8,6 +8,7 @@ from backend.config import REPO_ROOT
 SAMPLE = REPO_ROOT / "tests" / "fixtures" / "sample_repo"
 
 STEPS = '''
+import openai
 def a(c, x):
     return c.chat.completions.create(model="m", messages=[])
 def b(c, x):
@@ -79,7 +80,7 @@ def test_unknown_or_single_function(tmp_path):
 
 
 def test_same_named_function_resolves_to_local_definition(tmp_path):
-    (tmp_path / "x.py").write_text('def a(c):\n    c.chat.completions.create(model="m")\n')
+    (tmp_path / "x.py").write_text('import openai\ndef a(c):\n    c.chat.completions.create(model="m")\n')
     (tmp_path / "y.py").write_text('def a(c):\n    c.chat.completions.create(model="m")\n'
                                    'def b(c):\n    c.chat.completions.create(model="m")\n'
                                    'def run(c):\n    a(c)\n    b(c)\n')

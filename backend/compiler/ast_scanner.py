@@ -46,6 +46,9 @@ FRAMEWORK_IMPORTS = {
     "anthropic": "Anthropic SDK",
 }
 
+# Packages whose clients expose the OpenAI `chat.completions.create` surface.
+OPENAI_COMPATIBLE = frozenset({"openai", "langchain_openai", "litellm", "together", "groq"})
+
 DYNAMIC_MODEL = "<dynamic>"
 UNSPECIFIED_MODEL = "<unspecified>"
 
@@ -504,6 +507,21 @@ def detect_frameworks(trees: dict[str, ast.Module]) -> str:
     return " / ".join(found) if found else "Unknown"
 
 
+def _repo_uses_openai_sdk(trees: dict[str, ast.Module]) -> bool:
+    """True if any module imports the OpenAI SDK (or an OpenAI-compatible wrapper).
+
+    Without it, `x.chat.completions.create(...)` is most likely an unrelated API.
+    """
+    for tree in trees.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(a.name.split(".")[0] in OPENAI_COMPATIBLE for a in node.names):
+                return True
+            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                if node.module.split(".")[0] in OPENAI_COMPATIBLE:
+                    return True
+    return False
+
+
 def _dedupe_ids(calls: list[DiscoveredCall]) -> None:
     # Reserve every natural id first so a suffix never steals another function's id
     # (e.g. the 2nd call in `f` must not become `node_f_2` when `f_2` exists).
@@ -549,6 +567,9 @@ def scan_repository(root: Path) -> RepoScan:
         sources[rel] = source
         calls.extend(module_calls)
 
+    if calls and not _repo_uses_openai_sdk(trees):
+        warnings.append("No `openai` import found; ignoring look-alike .create() calls")
+        calls = []
     _dedupe_ids(calls)
     for w in warnings:
         logger.warning("scan %s: %s", root, w)
