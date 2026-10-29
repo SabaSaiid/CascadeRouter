@@ -1,0 +1,24 @@
+# Benchmark cases for CascadeRouter: real inputs with hand-labelled expectations.
+# `vars` fill the user-side inputs of each node; `expected` / `must_include` drive the evaluator.
+node_classify_customer_intent:
+  - vars: {query: "I was charged twice for my subscription this month, please refund one charge."}
+    expected: {category: billing}
+  - vars: {query: "The desktop app crashes with error 0x80070005 every time I open a project."}
+    expected: {category: tech_support}
+  - vars: {query: "Do you have an office in Berlin I could visit?"}
+    expected: {category: general}
+
+node_extract_ticket_metadata:
+  - vars: {ticket: "Account ACC-48213 here. Since updating to Windows 11 23H2 the sync fails with code SYNC-503."}
+    expected: {account_id: ACC-48213, error_code: SYNC-503}
+  - vars: {ticket: "My account id is 77120. Running macOS 15.1. No error shown, it just hangs."}
+    expected: {account_id: "77120"}
+
+node_generate_support_resolution:
+  - vars:
+      ticket: "The desktop app crashes with error 0x80070005 every time I open a project."
+      intent: {category: tech_support}
+      metadata: {account_id: "", os_version: "", error_code: "0x80070005"}
+    must_include: ["1.", "2."]
+    min_chars: 80
+    max_chars: 4000
