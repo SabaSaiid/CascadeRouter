@@ -194,3 +194,12 @@ class PatchService:
                                               python_version=".".join(map(str, sys.version_info[:3])))
         check()
         return self.storage.save_validation(report)
+
+    def get_validation(self, validation_id, check=lambda: None):
+        """Read an immutable historical observation; do not refresh its checks."""
+        report = self.storage.get_validation(validation_id)
+        proposal, _, _ = self._validation_subject(report.result.patch_id, check)
+        if report.result.proposal_digest != proposal.digest:
+            raise ServiceError("source_conflict")
+        check()
+        return report

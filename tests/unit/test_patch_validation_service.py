@@ -126,3 +126,24 @@ def test_omitted_nodes_are_not_reported_as_fully_validated(patch_environment, pa
     assert result.status == ("partial" if partial else "unavailable") and not result.complete
     assert result.omitted_nodes == 1 and result.source_identity == "verified"
     assert result.reason == ("partial_proposal" if partial else "no_editable_files")
+
+
+def test_historical_report_read_checks_authority_without_refreshing_source(validation_environment, monkeypatch):
+    env = validation_environment
+    sample = env.build_patch()
+    proposal = sample.proposal(persist=True)
+    report = env.validation_report(sample, proposal)
+    env.storage.save_validation(report)
+    (env.repository / "app.py").write_bytes(sample.raw + b"# changed after observation\n")
+    authorized = []
+    def trusted_test_subject(patch_id, check):
+        assert patch_id == proposal.manifest.patch_id
+        authorized.append(patch_id)
+        check()
+        return proposal, sample.analysis, sample.record
+    # Unit-only authority stub, retaining test provenance. Production authority
+    # remains independently tested and rejects these synthetic artifacts.
+    monkeypatch.setattr(sample.service, "_validation_subject", trusted_test_subject)
+    monkeypatch.setattr("backend.services.patches.verify_sources", lambda *_args, **_kw: pytest.fail("History must not refresh checks."))
+    assert sample.service.get_validation(report.validation_id) == report
+    assert authorized == [proposal.manifest.patch_id] and report.result.provenance == "test"
