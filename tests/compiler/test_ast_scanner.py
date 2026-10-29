@@ -980,6 +980,31 @@ def test_graph_calls_inside_branches_remain_vertices_without_edges(tmp_path):
     assert "control_flow_boundary" in codes(graph)
 
 
+def test_graph_branch_join_preserves_only_independently_proven_edges(tmp_path):
+    scan, graph = scan_graph(tmp_path,
+        "seed = " + flow_call("fixture/seed") + "\n"
+        "before = " + flow_call("fixture/before", "seed") + "\n"
+        "if flag:\n    joined = " + flow_call("fixture/left", "seed") + "\n"
+        "else:\n    joined = " + flow_call("fixture/right", "seed") + "\n"
+        "after = " + flow_call("fixture/after", "[seed, joined]") + "\n"
+        "fresh = " + flow_call("fixture/fresh") + "\n"
+        "last = " + flow_call("fixture/last", "fresh") + "\n")
+
+    assert scan.complete and len(scan.nodes) == len(graph.node_ids) == 7
+    assert not graph.complete and "control_flow_boundary" in codes(graph)
+    assert edge_models(scan, graph) == {
+        ("fixture/seed", "fixture/before"), ("fixture/fresh", "fixture/last"),
+    }
+    assert graph.node_ids == tuple(node.node_id for node in scan.nodes)
+    nodes = {node.node_id: node for node in scan.nodes}
+    assert all(edge.kind == "data_dependency" and edge.evidence for edge in graph.edges)
+    for edge in graph.edges:
+        assert all(item.file_path == "app.py" and item.argument == "messages"
+                   and item.line_number == nodes[edge.to_node_id].line_number
+                   for item in edge.evidence)
+    assert graph.to_dict() == build_workflow_graph(str(tmp_path), scan).to_dict()
+
+
 @pytest.mark.parametrize("operation", [
     "alias, = [first]", "alias = wrapper(first)", "alias = f'{first}'",
     "alias = first + other", "alias = [value for value in first]",
