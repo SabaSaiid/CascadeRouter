@@ -1,138 +1,120 @@
-"""Turn a completed benchmark run into an OptimizeResult (decisions, policy, patch, regression)."""
+"""Authenticate retained offline evidence, then perform bounded pure optimization."""
 
 from __future__ import annotations
 
-import logging
-from dataclasses import dataclass
-from typing import Callable, Optional
+import threading
+from datetime import datetime, timezone
 
-from backend.compiler.ast_scanner import DiscoveredCall
-from backend.compiler.metrics import aggregate_totals
-from backend.compiler.patch_generator import build_patches, node_diff
-from backend.compiler.policy_generator import build_policy, dump_node_policy, dump_policy
-from backend.compiler.regression_runner import RegressionResult, run_regression
-from backend.compiler.router_optimizer import NodeDecision, decide_node
-from backend.config import REPO_ROOT, Settings
-from backend.schemas import OptimizationDecision, OptimizeResult
-from backend.store import StoredRun
-
-logger = logging.getLogger(__name__)
+from backend.compiler.metrics import aggregate
+from backend.compiler.policy_generator import generate_policy
+from backend.compiler.router_optimizer import OptimizationSnapshot, optimize, unavailable
+from backend.schemas import OptimizationRequest, OptimizationResponse, content_digest
+from .benchmark_cases import BenchmarkRegistry, digest
+from .errors import ServiceError
+from .offline_benchmark import OfflineBenchmarkExecutor
 
 
-class OptimizeError(ValueError):
-    """The run cannot be optimized (e.g. not complete)."""
+def verify_evidence(job, registry, executor, storage, check=lambda: None):
+    """Integrity validation is independent of authorization; service gates it first.
+
+    Re-evaluate captured data using the existing offline executor, never a target
+    application. This detects forged per-case flags, costs and aggregate values
+    even if the retained JSON still satisfies its structural schema.
+    """
+    if BenchmarkRegistry(registry.document).identity != registry.identity:
+        raise ServiceError("source_conflict")
+    fresh = OfflineBenchmarkExecutor(registry, executor.document, assets=executor.assets)
+    if fresh.identity != executor.identity:
+        raise ServiceError("source_conflict")
+    if tuple(next((model for model in registry.document.models if model.identifier == planned.identifier), None)
+             for planned in job.plan.models) != job.plan.models:
+        raise ServiceError("source_conflict")
+    check()
+    fresh.validate_plan(job.plan)
+    storage.verify_benchmark_versions(registry.version_records() + fresh.version_records())
+    retained = {item.unit_key(): item for item in job.measurements}
+    actual = []
+    # Historic jobs have elapsed deadlines. The current HTTP check, rather than
+    # the original execution deadline, bounds this read-only verification.
+    for item in fresh.execute(job.plan, threading.Event(), datetime.max.replace(tzinfo=timezone.utc)):
+        check()
+        if retained.get(item.unit_key()) != item:
+            raise ServiceError("source_conflict")
+        actual.append(item)
+    if len(actual) != len(retained) or job.result is None or aggregate(job.plan, tuple(actual)) != job.result.metrics:
+        raise ServiceError("source_conflict")
+    check()
 
 
-@dataclass
-class _NodeContext:
-    call: DiscoveredCall
-    decision: NodeDecision
+class OptimizationService:
+    def __init__(self, settings, scans, jobs):
+        self.settings, self.scans, self.jobs = settings, scans, jobs
+        self.configuration_digest = digest(("zero-cost.optimizer.v1:" + (
+            "unconfigured" if settings.optimization_quality_threshold is None else format(settings.optimization_quality_threshold, "f")
+        )).encode("ascii"))
 
+    @property
+    def available(self):
+        return (self.settings.optimization_quality_threshold is not None and self.jobs is not None
+                and self.jobs.available and type(self.jobs.executor) is OfflineBenchmarkExecutor
+                and self.jobs.executor.production_approved and self.jobs.registry.production_approved)
 
-def _display_repo(stored: StoredRun) -> str:
-    root = stored.extras.repo_root
-    try:
-        return root.relative_to(REPO_ROOT).as_posix() or "."
-    except ValueError:
-        return root.name
+    def optimize(self, request: OptimizationRequest, check=lambda: None) -> OptimizationResponse:
+        response = self._evaluate(request, check)
+        check()
+        return self.scans.storage.save_optimization(response)
 
+    def revalidate(self, record, check=lambda: None):
+        response = record.response
+        plan = response.result.plan
+        if response.result.provenance != "recorded":
+            raise ServiceError("capability_unavailable")
+        request = OptimizationRequest(analysis_id=plan.analysis_id, run_id=response.result.run_id,
+                                      case_set=plan.case_set, evaluation_profile=plan.evaluation_profile)
+        fresh = self._evaluate(request, check)
+        if fresh.result.status == "unavailable":
+            raise ServiceError("capability_unavailable")
+        if fresh.model_dump(exclude={"optimization_id"}) != response.model_dump(exclude={"optimization_id"}):
+            raise ServiceError("source_conflict")
+        check()
 
-def optimize_run(
-    stored: StoredRun,
-    threshold: float,
-    settings: Settings,
-    regression: Optional[Callable[..., RegressionResult]] = None,
-) -> OptimizeResult:
-    """Pure orchestration; `regression` is injectable for tests (defaults to the sandbox)."""
-    run = stored.run
-    if run.status != "complete":
-        raise OptimizeError(f"benchmark run is {run.status}; wait until it is complete")
-    regression = regression or run_regression
-
-    calls = {c.node_id: c for c in stored.scan.repo.calls}
-    nodes = {n.node_id: n for n in stored.scan.result.nodes}
-    contexts: list[_NodeContext] = []
-    for result in run.nodes:
-        call, node = calls.get(result.node_id), nodes.get(result.node_id)
-        if call is None or node is None:
-            continue
-        decision = decide_node(node, result, threshold, settings, stored.extras.hard_ok.get(result.node_id))
-        contexts.append(_NodeContext(call, decision))
-
-    totals = aggregate_totals(
-        (c.decision.baseline_cost_usd, c.decision.optimized_cost_usd,
-         c.decision.baseline_latency_ms, c.decision.optimized_latency_ms)
-        for c in contexts
-    )
-    policy = build_policy(
-        ((c.decision, c.call.expected_schema, c.call.json_required) for c in contexts),
-        threshold=threshold,
-        repository=_display_repo(stored),
-        run_id=run.run_id,
-        data_source=run.data_source,
-        total_cost_reduction_pct=(
-            round(totals.total_cost_reduction_pct, 2) if totals.total_cost_reduction_pct is not None else None
-        ),
-    )
-    policy_text = dump_policy(policy)
-
-    optimized = [c.call for c in contexts if c.decision.status == "optimized"]
-    sources = stored.scan.repo.sources
-    bom_files = stored.scan.repo.bom_files
-    patches = build_patches(sources, optimized, bom_files)
-
-    regression_result: Optional[RegressionResult] = None
-    if patches.files:
-        regression_result = regression(
-            stored.extras.repo_root, patches, policy_text, settings.regression_timeout_seconds
-        )
-
-    decisions: list[OptimizationDecision] = []
-    for ctx in contexts:
-        d = ctx.decision
-        patch_error = patches.errors.get(d.node_id)
-        if d.status != "optimized":
-            diff, passed, log = "", True, f"No code change: {d.reason}"
-        elif patch_error:
-            diff, passed, log = "", False, f"Patch could not be generated: {patch_error}"
+    def _evaluate(self, request: OptimizationRequest, check=lambda: None) -> OptimizationResponse:
+        request = OptimizationRequest.model_validate(request)
+        storage = self.scans.storage
+        analysis = storage.get(request.analysis_id)
+        self.scans.access.select(analysis.repository_path)
+        job = storage.get_job(request.run_id)
+        plan = job.plan
+        if (plan.analysis_id != analysis.analysis_id or not analysis.complete or analysis.data_source != "live"
+                or plan.analysis_digest != digest(analysis.model_dump_json().encode("utf-8"))
+                or not set(plan.node_ids) <= {node.node_id for node in analysis.nodes}
+                or plan.case_set != request.case_set or plan.evaluation_profile != request.evaluation_profile):
+            raise ServiceError("source_conflict")
+        if len(plan.unit_keys()) > self.settings.max_benchmark_units:
+            raise ServiceError("capacity_exceeded")
+        snapshot = OptimizationSnapshot(job, self.settings.optimization_quality_threshold, self.configuration_digest)
+        check()
+        if plan.provenance == "test":
+            result = unavailable(snapshot, "test_evidence")
+        elif job.status != "complete":
+            result = unavailable(snapshot, "benchmark_incomplete")
+        elif self.settings.optimization_quality_threshold is None:
+            result = unavailable(snapshot, "threshold_unconfigured")
+        elif not self.available:
+            result = unavailable(snapshot, "approval_unavailable")
         else:
-            diff = node_diff(sources, ctx.call, bom_files) or ""
-            assert regression_result is not None
-            passed = regression_result.passed
-            log = regression_result.log_for(ctx.call.function_name)
-        decisions.append(
-            OptimizationDecision(
-                node_id=d.node_id,
-                baseline_model=d.baseline_model,
-                recommended_model=d.recommended_model,
-                fallback_model=d.fallback_model,
-                baseline_cost_usd=d.baseline_cost_usd,
-                optimized_cost_usd=d.optimized_cost_usd,
-                cost_reduction_pct=d.cost_reduction_pct,
-                baseline_latency_ms=d.baseline_latency_ms,
-                optimized_latency_ms=d.optimized_latency_ms,
-                latency_reduction_pct=d.latency_reduction_pct,
-                quality_score=d.quality_score,
-                status=d.status,
-                policy_yaml=dump_node_policy(d.node_id, policy["nodes"][d.node_id]),
-                patch_diff=diff,
-                regression_passed=passed,
-                regression_log=log,
+            registry, executor = self.jobs.registry, self.jobs.executor
+            verify_evidence(job, registry, executor, storage, check)
+            snapshot = OptimizationSnapshot(
+                job, self.settings.optimization_quality_threshold, self.configuration_digest,
+                executor.assets.manifest_digest, content_digest(executor.document),
             )
-        )
-
-    all_passed = all(d.regression_passed for d in decisions) and (
-        regression_result is None or regression_result.passed
-    )
-    return OptimizeResult(
-        decisions=decisions,
-        total_baseline_cost_usd=totals.total_baseline_cost_usd,
-        total_optimized_cost_usd=totals.total_optimized_cost_usd,
-        # The contract requires numbers; an undefined reduction (nothing measured) is 0.
-        total_cost_reduction_pct=round(totals.total_cost_reduction_pct or 0.0, 2),
-        avg_latency_reduction_pct=round(totals.avg_latency_reduction_pct or 0.0, 2),
-        combined_policy_yaml=policy_text,
-        combined_patch_diff=patches.combined_diff(),
-        all_regressions_passed=all_passed,
-        data_source=run.data_source,
-    )
+            result = optimize(snapshot, check)
+            # Changed/revoked approval during the decision must not issue a policy.
+            executor.assets.verify()
+        check()
+        response = OptimizationResponse(result=result, policy=generate_policy(result))
+        if len(response.model_dump_json().encode("utf-8")) > self.settings.max_job_result_bytes:
+            raise ServiceError("capacity_exceeded")
+        check()
+        return response

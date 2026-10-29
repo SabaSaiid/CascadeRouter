@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import { setTimeout } from 'node:timers/promises';
+import { acceptance } from './client.mjs';
+import { population } from '../../src/services/benchmark.ts';
+await acceptance(async ({ api, input, status, mark }) => {
+  mark('retained analysis'); const analysis = await api.analysis(input.request.analysis_id); status(200);
+  assert.ok(analysis.nodes.some(n => n.node_id === input.request.node_ids[0]));
+  mark('test job acceptance'); const accepted = await api.benchmark(input.request); status(202); assert.equal(accepted.provenance, 'test');
+  const repeated = await api.benchmark(input.request); status(202); assert.equal(repeated.run_id, accepted.run_id);
+  mark('durable completion'); let job; const deadline = Date.now() + 5000;
+  do { job = await api.run(accepted.run_id); status(200); if (job.status === 'complete') break; await setTimeout(50); } while (Date.now() < deadline);
+  assert.equal(job.status, 'complete'); assert.equal(job.plan.provenance, 'test'); assert.equal(job.result.provenance, 'test');
+  assert.equal(job.result.evaluation_status, input.evaluation); assert.equal(job.result.metrics.evaluation_complete, true);
+  assert.equal(job.result.metrics.processed_units, job.progress.total_units);
+  for (const name of ['latency_ms','ttft_ms','input_tokens','output_tokens','cost_usd']) assert.match(population(job.result.metrics[name]), /^Unavailable/);
+  assert.ok(job.measurements.every(m => m.provenance === 'test' && m.quality_score == null && m.cost_usd.value == null));
+  mark('terminal cancellation'); assert.deepEqual(await api.run(job.run_id, undefined, true), job); status(200);
+  mark('test evidence restriction'); const optimization = await api.optimize({ analysis_id: analysis.analysis_id, run_id: job.run_id, case_set: job.plan.case_set, evaluation_profile: job.plan.evaluation_profile }); status(200);
+  assert.equal(optimization.result.status, 'unavailable'); assert.deepEqual(optimization.result.diagnostics, ['test_evidence']);
+  assert.equal(optimization.policy.status, 'unavailable'); assert.equal(optimization.policy.yaml_content, null);
+  assert.ok(optimization.result.decisions.every(d => d.selected_model_id == null && d.recorded_savings_usd == null));
+  return { job, optimization };
+});

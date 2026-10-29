@@ -1,0 +1,14 @@
+[
+  {"name":"summary contradicts evaluated units","edits":[[["result","evaluation_status"],"failed"]]},
+  {"name":"metrics relabel test evidence","edits":[[["result","metrics","provenance"],"recorded"]]},
+  {"name":"outcome counts contradict measurements","edits":[[["result","metrics","passed"],3],[["result","metrics","failed"],1]]},
+  {"name":"output coverage contradicts retained units","edits":[[["result","metrics","valid_recorded_outputs"],0]]},
+  {"name":"evaluation coverage contradicts executed checks","edits":[[["result","metrics","evaluated_units"],0]]},
+  {"name":"planned case count contradicts plan","edits":[[["result","metrics","planned_cases"],1]]},
+  {"name":"updated time predates creation","edits":[[["updated_at"],"2020-01-01T00:00:00Z"]]},
+  {"name":"deadline predates creation","edits":[[["deadline_at"],"2020-01-01T00:00:00Z"]]},
+  {"name":"queued state falsely claims processed units","edits":[[["status"],"queued"],[["result"],null],[["finished_at"],null]]},
+  {"name":"failed state lacks controlled failure","edits":[[["status"],"error"],[["result"],null]]},
+  {"name":"complete state carries execution failure","edits":[[["error"],{"code":"executor_failed","message":"The local benchmark executor failed."}]]},
+  {"name":"unit evaluation contradicts its checked outcome","edits":[[["measurements",0,"evaluation"],{"status":"failed","reason":"mismatch","checks_ran":["exact"],"validation_status":"failed"}]]}
+]

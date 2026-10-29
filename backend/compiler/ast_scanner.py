@@ -1,591 +1,1065 @@
-"""Static discovery of LLM call sites using only Python's `ast` module.
+"""Bounded, source-only discovery of OpenAI chat-completions call sites.
 
-Target code is parsed, never imported or executed.
+This module's dataclasses are a PROVISIONAL SCANNER INTERFACE, not the shared
+backend API schema. No graph is inferred. Only source syntax is inspected:
+imports, constructors, annotations, prompts and schemas are never executed.
+
+Provenance is local and conservative. Straight-line imports/assignments are
+tracked; conditional bindings, global/nonlocal declarations, instance fields,
+comprehensions, wrappers and cross-file resolution are unsupported. Captured
+bindings must have a single syntactic binding site in the enclosing scope.
+Static call sites do not imply runtime reachability or runtime type guarantees.
 """
 
 from __future__ import annotations
 
 import ast
-import logging
+import hashlib
+import io
 import os
+import re
 import stat
-from dataclasses import dataclass, field
+import tokenize
+from collections import Counter
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Callable, Iterator, Literal
 
-from backend.schemas import LLMNode
+if os.name == "nt":
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
 
-logger = logging.getLogger(__name__)
 
-SKIP_DIRS = frozenset(
-    {
-        ".git", ".hg", ".svn", "venv", ".venv", "env", "node_modules", "__pycache__",
-        "site-packages", "build", "dist", ".tox", ".mypy_cache", ".pytest_cache",
-        "tests", "test",
-    }
+EXCLUDED_DIRECTORIES = frozenset(
+    {".git", ".venv", "venv", "node_modules", "__pycache__", "build", "dist"}
 )
-MAX_FILE_BYTES = 2 * 1024 * 1024
-MAX_FILES = 500
-MAX_PATH_CHARS = 1024
-# Total source bytes and AST size per scan, so one request cannot exhaust memory.
-MAX_TOTAL_BYTES = 20 * 1024 * 1024
-MAX_AST_NODES_PER_FILE = 200_000
-
-# Attribute chains (suffixes) that denote an LLM invocation.
-LLM_CALL_SUFFIXES = (
-    ("chat", "completions", "create"),
-    ("completions", "create"),
-    ("responses", "create"),
+_CONSTRUCTORS = frozenset({"OpenAI", "AsyncOpenAI"})
+_SCHEMA_TYPES = frozenset(
+    {"object", "array", "string", "number", "integer", "boolean", "null"}
+)
+_MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,255}\Z", re.ASCII)
+_CREDENTIAL_PREFIXES = (
+    "sk-", "sk_", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_",
+    "xoxb-", "xoxp-", "xoxa-", "aiza",
 )
 
-FRAMEWORK_IMPORTS = {
-    "openai": "OpenAI SDK",
-    "langchain": "LangChain",
-    "langchain_openai": "LangChain",
-    "litellm": "LiteLLM",
-    "anthropic": "Anthropic SDK",
-}
 
-# Packages whose clients expose the OpenAI `chat.completions.create` surface.
-OPENAI_COMPATIBLE = frozenset({"openai", "langchain_openai", "litellm", "together", "groq"})
+@dataclass(frozen=True)
+class ScannerOptions:
+    max_files: int = 500
+    max_file_bytes: int = 1024 * 1024
+    max_total_bytes: int = 25 * 1024 * 1024
+    max_directory_entries: int = 50_000
+    max_directory_depth: int = 64
+    max_ast_nodes: int = 100_000
+    max_metadata_nodes: int = 256
 
-DYNAMIC_MODEL = "<dynamic>"
-UNSPECIFIED_MODEL = "<unspecified>"
-
-
-class ScanPathError(ValueError):
-    """The requested repository path is missing or outside the allowed roots."""
+    def __post_init__(self) -> None:
+        for name, value in asdict(self).items():
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
 
 
-@dataclass
-class DiscoveredCall:
-    """Everything the later compiler stages need about one call site."""
+@dataclass(frozen=True)
+class ArgumentMetadata:
+    """References are syntax, not resolved values; literal prompts stay redacted.
 
+    ``value`` is populated only for a literal model ID or a deliberately limited
+    response-format summary. Schema descriptions, enums, defaults, examples and
+    arbitrary response-format keys are not copied into results.
+    Literal model export accepts at most 256 ASCII identifier characters and
+    rejects recognizable credential prefixes; other strings stay unresolved.
+    """
+
+    kind: Literal["missing", "literal", "reference", "unresolved"]
+    reference: str | None = None
+    references: tuple[str, ...] = ()
+    value: str | dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class ProvisionalLLMNode:
     node_id: str
-    file_path: str  # posix path relative to the scanned root
-    line_number: int  # first line of the enclosing statement
-    end_line_number: int
-    call_line: int
-    call_col: int
-    call_end_line: int
-    call_end_col: int
-    current_model: str
-    model_is_literal: bool
+    file_path: str
+    line_number: int
+    column_number: int  # Zero-based UTF-8 byte offset, following Python's AST.
     call_signature: str
-    function_name: Optional[str]
-    docstring: Optional[str]
-    prompt_reference: Optional[str]
-    expected_schema: Optional[dict[str, Any]]
-    json_required: bool
-    max_tokens: Optional[int]
-    snippet: str
-    kwargs: list[str] = field(default_factory=list)
-    qualname: Optional[str] = None  # e.g. "Agent.classify" (internal, for the DAG)
-
-    def to_llm_node(self) -> LLMNode:
-        return LLMNode(
-            node_id=self.node_id,
-            file_path=self.file_path,
-            line_number=self.line_number,
-            current_model=self.current_model,
-            call_signature=self.call_signature,
-            prompt_reference=self.prompt_reference,
-            expected_schema=self.expected_schema,
-            function_name=self.function_name,
-            docstring=self.docstring,
-            snippet=self.snippet,
-        )
+    current_model: str | None
+    model: ArgumentMetadata
+    messages: ArgumentMetadata
+    response_format: ArgumentMetadata
+    function_name: str | None
 
 
-@dataclass
-class RepoScan:
-    root: Path
-    calls: list[DiscoveredCall]
-    trees: dict[str, ast.Module]  # relative path -> parsed module
-    sources: dict[str, str]
+@dataclass(frozen=True)
+class ScanDiagnostic:
+    code: str
+    message: str
+    file_path: str | None = None
+    line_number: int | None = None
+
+
+@dataclass(frozen=True)
+class SourceFingerprint:
+    """Provisional source-version evidence; contains no source text."""
+
+    file_path: str
+    sha256: str
+
+
+@dataclass(frozen=True)
+class ProvisionalScanResult:
+    repository_path: str
+    nodes: tuple[ProvisionalLLMNode, ...]
+    discovered_files_count: int
     scanned_files_count: int
-    detected_framework: str
-    warnings: list[str] = field(default_factory=list)
-    bom_files: set[str] = field(default_factory=set)  # sources that start with a UTF-8 BOM on disk
+    total_source_bytes_read: int
+    diagnostics: tuple[ScanDiagnostic, ...]
+    complete: bool  # Coverage within the documented supported analysis subset.
+    source_fingerprints: tuple[SourceFingerprint, ...] = ()
+    source_options: ScannerOptions = field(default_factory=ScannerOptions)
+
+    def to_dict(self) -> dict[str, object]:
+        """Return a deterministic, JSON-compatible copy, without a timestamp."""
+        def lists(value: object) -> object:
+            if isinstance(value, dict):
+                return {key: lists(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [lists(item) for item in value]
+            return value
+
+        return {key: lists(value) for key, value in asdict(self).items()}
 
 
-# --------------------------------------------------------------------------- #
-# Path safety                                                                  #
-# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class _SourceVersion:
+    file_path: str
+    sha256: str
+    device: int
+    inode: int
+    size: int
+    mtime_ns: int
+    ctime_ns: int
 
 
-def resolve_scan_path(raw: str, allowed_roots: list[Path], base: Path) -> Path:
-    """Resolve a user-supplied path and ensure it is a directory under an allowed root."""
-    if not raw or "\x00" in raw or len(raw) > MAX_PATH_CHARS:
-        raise ScanPathError("repository_path is empty, too long or invalid")
+_source_observer: ContextVar[Callable[[_SourceVersion], None] | None] = ContextVar("source_observer", default=None)
+
+
+@contextmanager
+def _capture_source_versions(observer: Callable[[_SourceVersion], None]):
+    """Private host hook: metadata from the actual guarded reads, never a rescan."""
+    token = _source_observer.set(observer)
     try:
-        candidate = Path(raw).expanduser()
-        if not candidate.is_absolute():
-            candidate = base / candidate
-        if candidate.is_symlink():
-            raise ScanPathError("repository_path must not be a symlink")
-        resolved = candidate.resolve()
-        if not any(resolved == root or root in resolved.parents for root in allowed_roots):
-            raise ScanPathError("repository_path is outside the allowed scan roots")
-        if not resolved.is_dir():
-            raise ScanPathError("repository_path does not exist or is not a directory")
-    except (OSError, RuntimeError) as exc:  # ENAMETOOLONG, ELOOP, permission errors
-        raise ScanPathError("repository_path cannot be accessed") from exc
-    return resolved
+        yield
+    finally:
+        _source_observer.reset(token)
 
 
-def iter_python_files(root: Path, warnings: list[str]) -> list[Path]:
-    files: list[Path] = []
-    total_bytes = 0
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = sorted(
-            d for d in dirnames
-            if d not in SKIP_DIRS and not d.startswith(".") and not (Path(dirpath) / d).is_symlink()
+@dataclass(frozen=True)
+class _ParsedSource:
+    """Ephemeral compiler hook data. ASTs never enter serialized scan results."""
+
+    fingerprint: SourceFingerprint
+    tree: ast.Module
+    nodes: tuple[ProvisionalLLMNode, ...]
+    calls: tuple[ast.Call, ...]
+    raw: bytes = field(default=b"", repr=False)
+    version: _SourceVersion | None = None
+
+
+class _RepositoryIdentityChanged(Exception):
+    """The service-authorized root changed; never downgrade to partial coverage."""
+
+
+_expected_repository: ContextVar[tuple[Path, tuple[int, int]] | None] = ContextVar(
+    "expected_repository", default=None,
+)
+
+
+@contextmanager
+def _require_repository_identity(path: Path, identity: tuple[int, int]) -> Iterator[None]:
+    """Private service boundary, shared by the scan and guarded graph reread."""
+    token = _expected_repository.set((path, identity))
+    try:
+        yield
+    finally:
+        _expected_repository.reset(token)
+
+
+def _is_link(info: os.stat_result) -> bool:
+    # Windows junctions/reparse points are not necessarily S_ISLNK on Python 3.11.
+    return stat.S_ISLNK(info.st_mode) or bool(
+        getattr(info, "st_file_attributes", 0)
+        & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    )
+
+
+def _normal_windows_path(path: str) -> Path:
+    if path[:8].casefold() == "\\\\?\\unc\\":
+        path = "\\\\" + path[8:]
+    elif path.startswith("\\\\?\\"):
+        path = path[4:]
+    return Path(path)
+
+
+def _windows_handle_path(handle: int) -> Path:
+    """Inspect the opened object, not a path an attacker can swap back."""
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    final_path = kernel.GetFinalPathNameByHandleW
+    final_path.argtypes = [wintypes.HANDLE, wintypes.LPWSTR, wintypes.DWORD, wintypes.DWORD]
+    final_path.restype = wintypes.DWORD
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = final_path(handle, buffer, len(buffer), 0)
+    if not length or length >= len(buffer):
+        raise OSError("Opened-path verification failed.")
+    return _normal_windows_path(buffer.value)
+
+
+def _pin_windows_directory(path: Path, root: Path, stack: ExitStack) -> None:
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    create = kernel.CreateFileW
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    close = kernel.CloseHandle
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+    # No DELETE sharing: pin every ancestor against rename/junction replacement.
+    # OPEN_REPARSE_POINT opens a final link itself instead of following it.
+    # FILE_LIST_DIRECTORY is necessary: metadata-only (zero-access) handles do
+    # not enforce the sharing restriction against directory renames on Windows.
+    handle = create(str(path), 1, 1, None, 3, 0x02000000 | 0x00200000, None)
+    if handle == wintypes.HANDLE(-1).value:
+        raise OSError("Could not pin a source directory.")
+    stack.callback(close, handle)
+    actual = _windows_handle_path(handle)
+    if actual != _normal_windows_path(str(path)) or not actual.is_relative_to(_normal_windows_path(str(root))):
+        raise OSError("Directory containment changed.")
+    info = path.lstat()
+    if _is_link(info) or not stat.S_ISDIR(info.st_mode):
+        raise OSError("Directory is a link or is not a directory.")
+
+
+@contextmanager
+def _directory_access(
+    root: Path, directory: Path, root_identity: tuple[int, int],
+) -> Iterator[int | None]:
+    """Pin Windows ancestors, or use component-wise no-follow POSIX descriptors.
+
+    Windows sharing locks prevent the inspected directory path being redirected
+    while scandir/reads run. POSIX descriptors keep lookup anchored to the chosen
+    directory even if its pathname is concurrently renamed.
+    """
+    parts = directory.relative_to(root).parts
+    with ExitStack() as stack:
+        if os.name == "nt":
+            current = root
+            _pin_windows_directory(current, root, stack)
+            info = current.lstat()
+            if (info.st_dev, info.st_ino) != root_identity:
+                raise OSError("Repository identity changed.")
+            for part in parts:
+                current = current / part
+                _pin_windows_directory(current, root, stack)
+            yield None
+        else:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            descriptor = os.open(root, flags)
+            stack.callback(os.close, descriptor)
+            info = os.fstat(descriptor)
+            if (info.st_dev, info.st_ino) != root_identity:
+                raise OSError("Repository identity changed.")
+            for part in parts:
+                descriptor = os.open(part, flags, dir_fd=descriptor)
+                stack.callback(os.close, descriptor)
+            yield descriptor
+
+
+class _RepositoryScan:
+    def __init__(
+        self, repository_path: str, options: ScannerOptions,
+        on_source: Callable[[_ParsedSource], None] | None = None,
+    ) -> None:
+        self.options = options
+        self.on_source = on_source
+        self.fingerprints: list[SourceFingerprint] = []
+        self.root = Path(repository_path).absolute()
+        self.nodes: list[ProvisionalLLMNode] = []
+        self.diagnostics: list[ScanDiagnostic] = []
+        self.discovered = 0
+        self.scanned = 0
+        self.bytes_read = 0
+        self.entries_seen = 0
+        self.root_identity: tuple[int, int] = (0, 0)
+
+    def report(
+        self, code: str, message: str, path: Path | None = None,
+        line_number: int | None = None,
+    ) -> None:
+        relative = path.relative_to(self.root).as_posix() if path else None
+        self.diagnostics.append(ScanDiagnostic(code, message, relative, line_number))
+
+    def run(self) -> ProvisionalScanResult:
+        try:
+            root_info = self.root.lstat()
+            expected = _expected_repository.get()
+            if expected is not None and (
+                self.root != expected[0] or _is_link(root_info)
+                or (root_info.st_dev, root_info.st_ino) != expected[1]
+            ):
+                raise _RepositoryIdentityChanged()
+            if _is_link(root_info):
+                self.report("link_skipped", "The selected root is a link or reparse point.")
+            elif not stat.S_ISDIR(root_info.st_mode):
+                self.report("invalid_root", "Select an existing repository directory.")
+            else:
+                self.root = self.root.resolve(strict=True)
+                if expected is not None and self.root != expected[0]:
+                    raise _RepositoryIdentityChanged()
+                self.root_identity = (root_info.st_dev, root_info.st_ino)
+                self.walk()
+        except (OSError, ValueError, RuntimeError):
+            self.report("root_error", "Could not safely inspect the repository root.")
+        diagnostics = tuple(sorted(
+            self.diagnostics,
+            key=lambda item: (item.file_path or "", item.line_number or 0, item.code),
+        ))
+        return ProvisionalScanResult(
+            self.root.as_posix(),
+            tuple(sorted(self.nodes, key=lambda node: (
+                node.file_path, node.line_number, node.column_number, node.node_id,
+            ))),
+            self.discovered, self.scanned, self.bytes_read, diagnostics,
+            not diagnostics,
+            tuple(sorted(self.fingerprints, key=lambda item: item.file_path)),
+            self.options,
         )
-        for name in sorted(filenames):
-            if not name.endswith(".py") or name.startswith("test_") or name.endswith("_test.py"):
+
+    def inspect(self, path: Path, directory_fd: int | None = None) -> tuple[Path, os.stat_result] | None:
+        try:
+            info = (
+                path.lstat() if directory_fd is None
+                else os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+            )
+            if _is_link(info):
+                self.report("link_skipped", "Skipped a link or reparse point.", path)
+                return None
+            resolved = path.resolve(strict=True)
+            if not resolved.is_relative_to(self.root):
+                self.report("outside_root", "Skipped a path outside the repository root.", path)
+                return None
+            return resolved, info
+        except (OSError, ValueError, RuntimeError):
+            self.report("path_error", "Could not safely inspect this path; it may have disappeared.", path)
+            return None
+
+    def walk(self) -> None:
+        pending = [self.root]
+        while pending:
+            directory = pending.pop()
+            # Ancestors must be pinned for each directory. Bound relative depth
+            # so a directory-only tree cannot amplify this into quadratic work.
+            if len(directory.relative_to(self.root).parts) > self.options.max_directory_depth:
+                self.report("directory_depth_limit", "Directory depth limit reached; deeper coverage is incomplete.", directory)
                 continue
-            path = Path(dirpath) / name
-            rel = path.relative_to(root).as_posix()
             try:
-                info = path.lstat()
+                with _directory_access(self.root, directory, self.root_identity) as directory_fd:
+                    # Skip an over-budget directory in full rather than depend
+                    # on a filesystem's unspecified enumeration order.
+                    entries: list[os.DirEntry[str]] = []
+                    with os.scandir(directory if directory_fd is None else directory_fd) as iterator:
+                        for entry in iterator:
+                            self.entries_seen += 1
+                            if self.entries_seen > self.options.max_directory_entries:
+                                self.report("directory_entry_limit", "Directory-entry limit reached; remaining coverage is incomplete.", directory)
+                                return
+                            entries.append(entry)
+                    children: list[Path] = []
+                    for entry in sorted(entries, key=lambda item: item.name):
+                        path = directory / entry.name
+                        inspected = self.inspect(path, directory_fd)
+                        if inspected is None:
+                            continue
+                        resolved, info = inspected
+                        if stat.S_ISDIR(info.st_mode):
+                            if entry.name.casefold() not in EXCLUDED_DIRECTORIES:
+                                children.append(path)
+                        elif stat.S_ISREG(info.st_mode) and path.suffix.lower() == ".py":
+                            if self.discovered >= self.options.max_files:
+                                self.report("file_count_limit", "Python-file discovery limit reached; remaining coverage is incomplete.", path)
+                                return
+                            self.discovered += 1
+                            self.scan_file(path, resolved, info, directory_fd)
+                    pending.extend(reversed(children))
             except OSError:
-                warnings.append(f"Skipped {rel}: cannot stat")
+                self.report("directory_error", "Could not safely pin or enumerate this directory.", directory)
                 continue
-            if not stat.S_ISREG(info.st_mode):
-                continue  # symlinks, FIFOs, sockets, devices
-            if info.st_size > MAX_FILE_BYTES:
-                warnings.append(f"Skipped {rel}: larger than 2 MB")
-                continue
-            total_bytes += info.st_size
-            if total_bytes > MAX_TOTAL_BYTES:
-                warnings.append("Stopped: repository exceeds 20 MB of Python source")
-                return files
-            files.append(path)
-            if len(files) >= MAX_FILES:
-                warnings.append(f"Stopped after {MAX_FILES} files")
-                return files
-    return files
+
+    def scan_file(
+        self, path: Path, resolved: Path, expected: os.stat_result,
+        directory_fd: int | None = None,
+    ) -> None:
+        remaining = self.options.max_total_bytes - self.bytes_read
+        if expected.st_size > self.options.max_file_bytes:
+            self.report("file_size_limit", "Source file exceeds the per-file byte limit.", path)
+            return
+        if expected.st_size > remaining or remaining == 0:
+            self.report("total_bytes_limit", "Source file skipped because the aggregate byte budget is exhausted.", path)
+            return
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+            flags |= getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            descriptor = (
+                os.open(resolved, flags) if directory_fd is None
+                else os.open(path.name, flags, dir_fd=directory_fd)
+            )
+            with os.fdopen(descriptor, "rb", buffering=0) as stream:
+                opened = os.fstat(stream.fileno())
+                handle_inside = True
+                if os.name == "nt":
+                    actual = _windows_handle_path(msvcrt.get_osfhandle(stream.fileno()))
+                    handle_inside = actual.is_relative_to(_normal_windows_path(str(self.root)))
+                # Check identity and containment again before reading. This also
+                # rejects a file replaced with a device, FIFO or a link target.
+                if (
+                    not stat.S_ISREG(opened.st_mode)
+                    or not handle_inside
+                    or _is_link(opened)
+                    or (opened.st_dev, opened.st_ino) != (expected.st_dev, expected.st_ino)
+                    or resolved.resolve(strict=True) != resolved
+                    or self.root.resolve(strict=True) != self.root
+                ):
+                    self.report("file_changed", "Source identity or containment changed before reading.", path)
+                    return
+                if opened.st_size > self.options.max_file_bytes:
+                    self.report("file_size_limit", "Source file exceeds the per-file byte limit.", path)
+                    return
+                if opened.st_size > remaining:
+                    self.report("total_bytes_limit", "Source file exceeds the remaining aggregate byte budget.", path)
+                    return
+                raw = stream.read(min(self.options.max_file_bytes, remaining, opened.st_size + 1))
+                self.bytes_read += len(raw)
+                after = os.fstat(stream.fileno())
+                if (
+                    len(raw) != opened.st_size or after.st_size != opened.st_size
+                    or after.st_mtime_ns != opened.st_mtime_ns
+                    or after.st_ctime_ns != opened.st_ctime_ns
+                ):
+                    self.report("file_changed", "Source changed while reading; analysis was skipped.", path)
+                    return
+                current = path.lstat() if directory_fd is None else os.stat(path.name, dir_fd=directory_fd, follow_symlinks=False)
+                if (_is_link(current) or (current.st_dev, current.st_ino) != (opened.st_dev, opened.st_ino)
+                        or (current.st_size, current.st_mtime_ns) != (opened.st_size, opened.st_mtime_ns)
+                        # Windows path stat and handle stat can expose different
+                        # ctime semantics after a write. Compare ctime across
+                        # handle reads above, and across path/handle on POSIX.
+                        or (os.name != "nt" and current.st_ctime_ns != opened.st_ctime_ns)
+                        or resolved.resolve(strict=True) != resolved):
+                    self.report("file_changed", "Source identity changed while reading; analysis was skipped.", path)
+                    return
+        except (OSError, ValueError, RuntimeError):
+            self.report("read_error", "Could not safely read this source file; it may be unreadable or missing.", path)
+            return
+        if b"\x00" in raw:
+            self.report("binary_source", "NUL bytes found; this is not valid Python source.", path)
+            return
+        try:
+            encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+            source = raw.decode(encoding)
+        except (SyntaxError, UnicodeError, LookupError):
+            self.report("encoding_error", "Invalid or unsupported Python source encoding.", path)
+            return
+        try:
+            tree = ast.parse(
+                source, filename=path.relative_to(self.root).as_posix(),
+                feature_version=(3, 11),
+            )
+            for count, _ in enumerate(ast.walk(tree), 1):
+                if count > self.options.max_ast_nodes:
+                    self.report("ast_node_limit", "AST node limit reached; analysis was skipped.", path)
+                    return
+            has_sdk_import = any(
+                (isinstance(item, ast.Import) and any(alias.name == "openai" for alias in item.names))
+                or (isinstance(item, ast.ImportFrom) and item.level == 0 and item.module == "openai")
+                for item in ast.walk(tree)
+            )
+            if has_sdk_import and self.local_sdk_shadow(path):
+                self.report(
+                    "sdk_import_ambiguous",
+                    "Local openai paths exist or could not be inspected; SDK provenance is unsupported.",
+                    path,
+                )
+                self.scanned += 1
+                self.record_source(path, raw, tree, (), info=opened)
+                return
+            visitor = _CallVisitor(path.relative_to(self.root).as_posix(), tree, self.options)
+            visitor.visit(tree)
+        except SyntaxError as error:
+            # SyntaxError messages/text can contain source literals. Export only
+            # a fixed message and the location, never the exception's text.
+            self.report("syntax_error", "Invalid Python syntax.", path, error.lineno)
+            return
+        except UnicodeError:
+            self.report("encoding_error", "Decoded source cannot be represented as valid Python text.", path)
+            return
+        except (RecursionError, MemoryError):
+            self.report("analysis_resource_limit", "Parser or visitor resource limit reached.", path)
+            return
+        self.nodes.extend(visitor.nodes)
+        self.diagnostics.extend(visitor.diagnostics)
+        self.scanned += 1
+        self.record_source(path, raw, tree, tuple(visitor.nodes), tuple(visitor.call_nodes), info=opened)
+
+    def record_source(
+        self, path: Path, raw: bytes, tree: ast.Module,
+        nodes: tuple[ProvisionalLLMNode, ...],
+        calls: tuple[ast.Call, ...] = (),
+        *, info: os.stat_result | None = None,
+    ) -> None:
+        fingerprint = SourceFingerprint(
+            path.relative_to(self.root).as_posix(), hashlib.sha256(raw).hexdigest(),
+        )
+        self.fingerprints.append(fingerprint)
+        version = None if info is None else _SourceVersion(
+            fingerprint.file_path, fingerprint.sha256, info.st_dev, info.st_ino,
+            info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+        )
+        observer = _source_observer.get()
+        if observer is not None and version is not None:
+            observer(version)
+        if self.on_source is not None:
+            self.on_source(_ParsedSource(fingerprint, tree, nodes, calls, raw, version))
+
+    def local_sdk_shadow(self, path: Path) -> bool:
+        # An absolute import is not sufficient SDK evidence if a local module or
+        # package can satisfy it. Inspect metadata only, without following links.
+        directory = path.parent
+        while directory.is_relative_to(self.root):
+            for name in ("openai.py", "openai"):
+                try:
+                    (directory / name).lstat()
+                except FileNotFoundError:
+                    continue
+                except OSError:
+                    return True
+                return True
+            if directory == self.root:
+                break
+            directory = directory.parent
+        return False
 
 
-# --------------------------------------------------------------------------- #
-# AST helpers                                                                  #
-# --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class _Binding:
+    kind: Literal["module", "constructor", "client"]
+    constructor: str | None = None
 
 
-def attribute_chain(node: ast.AST) -> list[str]:
-    """`a.b.c.d` -> ['a', 'b', 'c', 'd']; anything non-trivial in the chain -> ['?', ...]."""
-    parts: list[str] = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if isinstance(node, ast.Name):
-        parts.append(node.id)
-    else:
-        parts.append("?")
-    return list(reversed(parts))
+class _Bindings(ast.NodeVisitor):
+    """Collect lexical locals without descending into deferred/nested scopes."""
+
+    def __init__(self) -> None:
+        self.counts: Counter[str] = Counter()
+        self.wildcard = False
+
+    def visit_Name(self, node: ast.Name) -> None:
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            self.counts[node.id] += 1
+
+    def visit_Attribute(self, node: ast.Attribute | ast.Subscript) -> None:
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            base = node.value
+            while isinstance(base, (ast.Attribute, ast.Subscript)):
+                base = base.value
+            if isinstance(base, ast.Name):
+                self.counts[base.id] += 1
+        self.generic_visit(node)
+
+    visit_Subscript = visit_Attribute
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self.counts[alias.asname or alias.name.split(".")[0]] += 1
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for alias in node.names:
+            if alias.name == "*":
+                self.wildcard = True
+            self.counts[alias.asname or alias.name] += 1
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self.counts[node.name] += 1
+        for expression in _definition_expressions(node):
+            self.visit(expression)
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self.counts[node.name] += 1
+        for expression in [*node.decorator_list, *node.bases, *node.keywords]:
+            self.visit(expression)
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        for expression in [*node.args.defaults, *node.args.kw_defaults]:
+            if expression is not None:
+                self.visit(expression)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:
+        if node.name:
+            self.counts[node.name] += 1
+        self.generic_visit(node)
+
+    def visit_MatchAs(self, node: ast.MatchAs) -> None:
+        if node.name:
+            self.counts[node.name] += 1
+        self.generic_visit(node)
+
+    visit_MatchStar = visit_MatchAs
+
+    def visit_MatchMapping(self, node: ast.MatchMapping) -> None:
+        if node.rest:
+            self.counts[node.rest] += 1
+        self.generic_visit(node)
 
 
-def is_llm_call(call: ast.Call) -> bool:
-    chain = attribute_chain(call.func)
-    return any(len(chain) > len(s) and tuple(chain[-len(s):]) == s for s in LLM_CALL_SUFFIXES)
+def _definition_expressions(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.AST]:
+    arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+    if node.args.vararg:
+        arguments.append(node.args.vararg)
+    if node.args.kwarg:
+        arguments.append(node.args.kwarg)
+    return [expression for expression in [
+        *node.decorator_list, *node.args.defaults, *node.args.kw_defaults,
+        node.returns, *(argument.annotation for argument in arguments),
+    ] if expression is not None]
 
 
-def module_constants(tree: ast.Module) -> tuple[dict[str, str], dict[str, Any]]:
-    """Top-level string constants and literal-evaluable dict constants."""
-    strings: dict[str, str] = {}
-    literals: dict[str, Any] = {}
-    for stmt in tree.body:
-        targets: list[ast.expr] = []
-        value: Optional[ast.expr] = None
-        if isinstance(stmt, ast.Assign):
-            targets, value = stmt.targets, stmt.value
-        elif isinstance(stmt, ast.AnnAssign) and stmt.value is not None:
-            targets, value = [stmt.target], stmt.value
-        if value is None:
-            continue
-        for target in targets:
-            if not isinstance(target, ast.Name):
-                continue
-            try:
-                evaluated = ast.literal_eval(value)
-            except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
-                continue
-            if isinstance(evaluated, str):
-                strings[target.id] = evaluated
-            elif isinstance(evaluated, dict):
-                literals[target.id] = evaluated
-    return strings, literals
+def _mutated_aliases(tree: ast.AST) -> set[str]:
+    """Reject provenance whose syntactic alias group has attribute mutations.
+
+    Grouping names across scopes deliberately over-approximates mutation. Losing
+    a detection is preferable to confirming a client after an alias changed its
+    SDK methods. It does not attempt arbitrary heap or interprocedural analysis.
+    """
+    neighbors: dict[str, set[str]] = {}
+    mutated: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            base = node.value
+            while isinstance(base, (ast.Attribute, ast.Subscript)):
+                base = base.value
+            if isinstance(base, ast.Name):
+                mutated.add(base.id)
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names = [target.id for target in targets if isinstance(target, ast.Name)]
+            if isinstance(node.value, ast.Name):
+                names.append(node.value.id)
+            if names:
+                anchor = names[0]
+                for name in names[1:]:
+                    neighbors.setdefault(anchor, set()).add(name)
+                    neighbors.setdefault(name, set()).add(anchor)
+    pending = list(mutated)
+    while pending:
+        for alias in neighbors.get(pending.pop(), ()):
+            if alias not in mutated:
+                mutated.add(alias)
+                pending.append(alias)
+    return mutated
 
 
-def _local_assignments(func: Optional[ast.AST]) -> dict[str, list[ast.expr]]:
-    assigned: dict[str, list[ast.expr]] = {}
-    if func is None:
-        return assigned
-    for node in ast.walk(func):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name):
-                    assigned.setdefault(target.id, []).append(node.value)
-        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.value:
-            assigned.setdefault(node.target.id, []).append(node.value)
-    return assigned
+class _Scope:
+    def __init__(
+        self, parent: _Scope | None, tree: ast.AST, kind: str,
+    ) -> None:
+        collector = _Bindings()
+        # FunctionDef itself binds its name in the *parent*, not in its body.
+        if isinstance(tree, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            for statement in tree.body:
+                collector.visit(statement)
+        else:
+            collector.visit(tree)
+        self.parent = parent
+        self.kind = kind
+        self.unstable = {
+            name for name, count in collector.counts.items()
+            if count != 1 or collector.wildcard
+        }
+        self.bindings: dict[str, _Binding | None] = (
+            dict.fromkeys(collector.counts) if kind == "function" else {}
+        )
+        self.wildcard = False
 
-
-def _names_in(expr: ast.AST) -> list[str]:
-    names = [n for n in ast.walk(expr) if isinstance(n, ast.Name)]
-    names.sort(key=lambda n: (n.lineno, n.col_offset))
-    return [n.id for n in names]
-
-
-def find_prompt_reference(
-    messages: Optional[ast.expr],
-    func: Optional[ast.AST],
-    string_constants: dict[str, str],
-    max_depth: int = 3,
-) -> Optional[str]:
-    """First module-level string constant reachable from `messages` via local assignments."""
-    if messages is None:
-        return None
-    locals_ = _local_assignments(func)
-    seen: set[str] = set()
-    frontier = _names_in(messages)
-    for _ in range(max_depth + 1):
-        next_frontier: list[str] = []
-        for name in frontier:
-            if name in seen:
-                continue
-            seen.add(name)
-            if name in string_constants:
-                return name
-            for value in locals_.get(name, []):
-                next_frontier.extend(_names_in(value))
-        frontier = next_frontier
-        if not frontier:
-            break
-    return None
-
-
-def _tokens(name: Optional[str]) -> set[str]:
-    if not name:
-        return set()
-    return {t for t in name.lower().split("_") if t and t not in {"schema", "prompt", "system", "template"}}
-
-
-def _requests_json(response_format: Any) -> bool:
-    return isinstance(response_format, dict) and response_format.get("type") in ("json_object", "json_schema")
-
-
-def find_expected_schema(
-    func: Optional[ast.AST],
-    response_format: Any,
-    schema_constants: dict[str, Any],
-    prompt_reference: Optional[str],
-    function_name: Optional[str],
-) -> Optional[dict[str, Any]]:
-    # 1. Inline `response_format={"type": "json_schema", "json_schema": {"schema": {...}}}`.
-    if isinstance(response_format, dict) and response_format.get("type") == "json_schema":
-        inner = response_format.get("json_schema")
-        if isinstance(inner, dict) and isinstance(inner.get("schema"), dict):
-            return inner["schema"]
-
-    candidates = {k: v for k, v in schema_constants.items() if k.upper().endswith("SCHEMA")}
-    if not candidates:
-        return None
-
-    # 2. A *_SCHEMA constant referenced inside the enclosing function.
-    if func is not None:
-        for name in _names_in(func):
-            if name in candidates:
-                return candidates[name]
-
-    # 3. Best token overlap with the prompt constant / function name — only for
-    #    calls that explicitly request JSON, so free-text calls never get a schema.
-    if not _requests_json(response_format):
-        return None
-    wanted = _tokens(prompt_reference) | _tokens(function_name)
-    best_name, best_score = None, 0
-    for name in sorted(candidates):
-        score = len(_tokens(name) & wanted)
-        if score > best_score:
-            best_name, best_score = name, score
-    return candidates[best_name] if best_name else None
-
-
-# --------------------------------------------------------------------------- #
-# Visitor                                                                      #
-# --------------------------------------------------------------------------- #
+    def lookup(self, name: str, captured: bool = False) -> _Binding | None:
+        if captured and name in self.unstable:
+            return None
+        if name in self.bindings:
+            return self.bindings[name]
+        if self.wildcard or self.parent is None:
+            return None
+        return self.parent.lookup(name, captured=True)
 
 
 class _CallVisitor(ast.NodeVisitor):
-    """Collects (call, enclosing function, enclosing statement, qualname) tuples.
+    def __init__(self, path: str, tree: ast.Module, options: ScannerOptions) -> None:
+        self.path = path
+        self.options = options
+        self.scope = _Scope(None, tree, "module")
+        self.nodes: list[ProvisionalLLMNode] = []
+        self.diagnostics: list[ScanDiagnostic] = []
+        self.functions: list[str] = []
+        self.call_nodes: list[ast.Call] = []
+        self.limited_metadata: set[ast.AST] = set()
+        self.uncertain = 0
+        # Refuse even apparently simple provenance involving global/nonlocal
+        # names: deferred calls can otherwise observe a different binding.
+        self.external_names = {
+            name for item in ast.walk(tree)
+            if isinstance(item, (ast.Global, ast.Nonlocal)) for name in item.names
+        }
+        self.external_names.update(_mutated_aliases(tree))
 
-    Decorators, default values and annotations are evaluated in the *outer*
-    scope, so calls there are not credited to the function being defined.
-    """
+    def bind(self, name: str, binding: _Binding | None) -> None:
+        self.scope.bindings[name] = (
+            None if self.uncertain or name in self.external_names else binding
+        )
 
-    def __init__(self) -> None:
-        self.func_stack: list[ast.AST] = []
-        self.qual_stack: list[str] = []
-        self.stmt_stack: list[ast.stmt] = []
-        self.found: list[tuple[ast.Call, Optional[ast.AST], ast.stmt, Optional[str]]] = []
+    def resolve(self, node: ast.AST) -> _Binding | None:
+        if isinstance(node, ast.Name):
+            return self.scope.lookup(node.id)
+        if isinstance(node, ast.Attribute) and node.attr in _CONSTRUCTORS:
+            base = self.resolve(node.value)
+            if base and base.kind == "module":
+                return _Binding("constructor", node.attr)
+        if isinstance(node, ast.Call):
+            constructor = self.resolve(node.func)
+            if constructor and constructor.kind == "constructor":
+                return _Binding("client", constructor.constructor)
+        return None
 
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-        self._visit_function(node)
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self.bind(alias.asname or alias.name.split(".")[0],
+                      _Binding("module") if alias.name == "openai" else None)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        self._visit_function(node)
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        for alias in node.names:
+            if alias.name == "*":
+                self.scope.bindings = dict.fromkeys(self.scope.bindings)
+                self.scope.wildcard = True
+                continue
+            binding = None
+            if node.level == 0 and node.module == "openai" and alias.name in _CONSTRUCTORS:
+                binding = _Binding("constructor", alias.name)
+            self.bind(alias.asname or alias.name, binding)
 
-    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
-        self.stmt_stack.append(node)
-        for expr in node.decorator_list:
-            self.visit(expr)
-        self.visit(node.args)
-        if node.returns is not None:
-            self.visit(node.returns)
-        self.stmt_stack.pop()
-        self.func_stack.append(node)
-        self.qual_stack.append(node.name)
-        for stmt in node.body:
-            self.visit(stmt)
-        self.qual_stack.pop()
-        self.func_stack.pop()
+    def assign(self, target: ast.AST, binding: _Binding | None = None) -> None:
+        if isinstance(target, ast.Name):
+            self.bind(target.id, binding)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                self.assign(element)
+        elif isinstance(target, ast.Starred):
+            self.assign(target.value)
+        elif isinstance(target, (ast.Attribute, ast.Subscript)):
+            base = target.value
+            while isinstance(base, (ast.Attribute, ast.Subscript)):
+                base = base.value
+            if isinstance(base, ast.Name):
+                self.bind(base.id, None)
+
+    def visit_target(self, target: ast.AST) -> None:
+        # Assignment targets can contain calls and walrus expressions. Visit
+        # their evaluated parts without treating a stored Name as a read.
+        if isinstance(target, (ast.Tuple, ast.List)):
+            for element in target.elts:
+                self.visit_target(element)
+        elif isinstance(target, ast.Starred):
+            self.visit_target(target.value)
+        elif isinstance(target, ast.Attribute):
+            self.visit(target.value)
+        elif isinstance(target, ast.Subscript):
+            self.visit(target.value)
+            self.visit(target.slice)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        self.visit(node.value)
+        binding = self.resolve(node.value)
+        for target in node.targets:
+            self.visit_target(target)
+            self.assign(target, binding)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if node.value is not None:
+            self.visit(node.value)
+            self.visit_target(node.target)
+            self.assign(node.target, self.resolve(node.value))
+        else:
+            self.visit_target(node.target)
+            self.assign(node.target)
+        self.visit(node.annotation)
+
+    def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
+        self.visit(node.value)
+        self.assign(node.target, self.resolve(node.value))
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        self.visit_target(node.target)
+        self.assign(node.target)
+        self.visit(node.value)
+
+    def visit_Delete(self, node: ast.Delete) -> None:
+        for target in node.targets:
+            self.visit_target(target)
+            self.assign(target)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        for expression in _definition_expressions(node):
+            self.visit(expression)
+        self.bind(node.name, None)
+        outer, uncertain = self.scope, self.uncertain
+        parent = outer
+        while parent.kind == "class" and parent.parent is not None:
+            parent = parent.parent
+        self.scope = _Scope(parent, node, "function")
+        for argument in [
+            *node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs,
+            *([node.args.vararg] if node.args.vararg else []),
+            *([node.args.kwarg] if node.args.kwarg else []),
+        ]:
+            self.scope.bindings[argument.arg] = None
+            self.scope.unstable.add(argument.arg)
+        self.functions.append(node.name)
+        self.uncertain = 0
+        for statement in node.body:
+            self.visit(statement)
+        self.functions.pop()
+        self.scope, self.uncertain = outer, uncertain
+
+    visit_AsyncFunctionDef = visit_FunctionDef
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        # Lambdas and comprehensions are deliberately outside this first subset.
+        for expression in [*node.args.defaults, *node.args.kw_defaults]:
+            if expression is not None:
+                self.visit(expression)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        self.stmt_stack.append(node)
-        for expr in [*node.decorator_list, *node.bases, *(k.value for k in node.keywords)]:
-            self.visit(expr)
-        self.stmt_stack.pop()
-        self.qual_stack.append(node.name)
-        for stmt in node.body:
-            self.visit(stmt)
-        self.qual_stack.pop()
+        for expression in [*node.decorator_list, *node.bases, *node.keywords]:
+            self.visit(expression)
+        outer = self.scope
+        self.scope = _Scope(outer, node, "class")
+        for statement in node.body:
+            self.visit(statement)
+        self.scope = outer
+        self.bind(node.name, None)
 
-    def generic_visit(self, node: ast.AST) -> None:
-        is_stmt = isinstance(node, ast.stmt)
-        if is_stmt:
-            self.stmt_stack.append(node)
-        if isinstance(node, ast.Call) and is_llm_call(node):
-            func = self.func_stack[-1] if self.func_stack else None
-            qualname = ".".join(self.qual_stack) if func is not None else None
-            self.found.append((node, func, self.stmt_stack[-1], qualname))
-        super().generic_visit(node)
-        if is_stmt:
-            self.stmt_stack.pop()
+    def uncertain_block(self, node: ast.AST) -> None:
+        collector = _Bindings()
+        collector.visit(node)
+        for name in collector.counts:
+            self.bind(name, None)
+        self.uncertain += 1
+        self.generic_visit(node)
+        self.uncertain -= 1
+        for name in collector.counts:
+            self.bind(name, None)
 
+    visit_If = uncertain_block
+    visit_For = uncertain_block
+    visit_AsyncFor = uncertain_block
+    visit_While = uncertain_block
+    visit_With = uncertain_block
+    visit_AsyncWith = uncertain_block
+    visit_Try = uncertain_block
+    visit_TryStar = uncertain_block
+    visit_Match = uncertain_block
+    visit_IfExp = uncertain_block
+    visit_BoolOp = uncertain_block
 
-def _local_binding(func: Optional[ast.AST], name: str) -> Optional[str]:
-    """Value of `name` if the enclosing function binds it locally.
+    def visit_ListComp(self, node: ast.AST) -> None:
+        collector = _Bindings()
+        collector.visit(node)
+        for name in collector.counts:
+            self.bind(name, None)
 
-    Returns the string when it is a single literal assignment, DYNAMIC_MODEL for
-    parameters or any other local binding, and None when `name` is not local.
-    """
-    if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return None
-    args = func.args
-    params = [*args.posonlyargs, *args.args, *args.kwonlyargs, args.vararg, args.kwarg]
-    if any(p is not None and p.arg == name for p in params):
-        return DYNAMIC_MODEL
-    for node in ast.walk(func):
-        if isinstance(node, ast.Global) and name in node.names:
-            return None
-    values = _local_assignments(func).get(name)
-    if values is None:
-        bound = any(
-            isinstance(n, ast.Name) and n.id == name and isinstance(n.ctx, ast.Store) for n in ast.walk(func)
+    visit_SetComp = visit_ListComp
+    visit_DictComp = visit_ListComp
+    visit_GeneratorExp = visit_ListComp
+
+    def visit_Call(self, node: ast.Call) -> None:
+        method = node.func
+        if (
+            isinstance(method, ast.Attribute) and method.attr == "create"
+            and isinstance(method.value, ast.Attribute) and method.value.attr == "completions"
+            and isinstance(method.value.value, ast.Attribute) and method.value.value.attr == "chat"
+        ):
+            binding = self.resolve(method.value.value.value)
+            if binding and binding.kind == "client":
+                self.record(node, binding)
+        self.generic_visit(node)
+
+    def record(self, node: ast.Call, binding: _Binding) -> None:
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords if keyword.arg}
+        unpacked = any(keyword.arg is None for keyword in node.keywords)
+        model = self.metadata(keywords.get("model"), unpacked)
+        model_node = keywords.get("model")
+        current_model = None
+        if isinstance(model_node, ast.Constant) and isinstance(model_node.value, str):
+            value = model_node.value
+            if (
+                _MODEL_ID.fullmatch(value)
+                and not value.casefold().startswith(_CREDENTIAL_PREFIXES)
+                and not re.fullmatch(r"(?:AKIA|ASIA)[A-Z0-9]{16}", value)
+            ):
+                current_model = value
+                model = ArgumentMetadata("literal", value=current_model)
+            else:
+                model = ArgumentMetadata("unresolved")
+                self.diagnostics.append(ScanDiagnostic(
+                    "model_literal_redacted",
+                    "Model literal is outside the safe identifier subset or resembles a credential; its value was omitted.",
+                    self.path, node.lineno,
+                ))
+        elif model.kind == "literal":
+            model = ArgumentMetadata("unresolved")
+        messages = self.metadata(keywords.get("messages"), unpacked)
+        response_format = self.response_metadata(keywords.get("response_format"), unpacked)
+        signature = f"openai.{binding.constructor}.chat.completions.create(...)"
+        identity = f"{self.path}\0{node.lineno}\0{node.col_offset}\0{signature}"
+        self.call_nodes.append(node)
+        self.nodes.append(ProvisionalLLMNode(
+            "llm_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24],
+            self.path, node.lineno, node.col_offset, signature, current_model,
+            model, messages, response_format,
+            ".".join(self.functions)[:256] if self.functions else None,
+        ))
+
+    def metadata(self, node: ast.AST | None, unpacked: bool = False) -> ArgumentMetadata:
+        if node is None:
+            return ArgumentMetadata("unresolved" if unpacked else "missing")
+        reference = _reference(node)
+        references: set[str] = set()
+        literal = True
+        for count, item in enumerate(ast.walk(node), 1):
+            if count > self.options.max_metadata_nodes:
+                if node not in self.limited_metadata:
+                    self.limited_metadata.add(node)
+                    self.diagnostics.append(ScanDiagnostic(
+                        "metadata_limit",
+                        "Argument metadata limit reached; value and references remain unresolved.",
+                        self.path, getattr(node, "lineno", None),
+                    ))
+                return ArgumentMetadata("unresolved")
+            if isinstance(item, (ast.Name, ast.Attribute)):
+                name = _reference(item)
+                if name:
+                    references.add(name)
+            if not isinstance(item, (ast.Constant, ast.List, ast.Tuple, ast.Dict, ast.Load)):
+                literal = False
+        kind: Literal["literal", "reference", "unresolved"] = (
+            "reference" if reference else "literal" if literal else "unresolved"
         )
-        return DYNAMIC_MODEL if bound else None
-    if len(values) == 1 and isinstance(values[0], ast.Constant) and isinstance(values[0].value, str):
-        return values[0].value
-    return DYNAMIC_MODEL
+        return ArgumentMetadata(kind, reference, tuple(sorted(references))[:32])
 
-
-def _kwarg(call: ast.Call, name: str) -> Optional[ast.expr]:
-    for kw in call.keywords:
-        if kw.arg == name:
-            return kw.value
-    return None
-
-
-def _literal(expr: Optional[ast.expr]) -> Any:
-    if expr is None:
-        return None
-    try:
-        return ast.literal_eval(expr)
-    except (ValueError, SyntaxError, TypeError, MemoryError, RecursionError):
-        return None
-
-
-def _call_signature(call: ast.Call) -> str:
-    func = ".".join(attribute_chain(call.func))
-    parts = ["..." for _ in call.args]
-    for kw in call.keywords:
-        if kw.arg is None:
-            parts.append("**...")
-        elif kw.arg == "messages":
-            parts.append("messages=[...]")
-        else:
-            parts.append(f"{kw.arg}=...")
-    return f"{func}({', '.join(parts)})"
-
-
-def scan_module(
-    tree: ast.Module, source: str, rel_path: str
-) -> list[DiscoveredCall]:
-    string_constants, literal_constants = module_constants(tree)
-    visitor = _CallVisitor()
-    visitor.visit(tree)
-
-    calls: list[DiscoveredCall] = []
-    for call, func, stmt, qualname in visitor.found:
-        model_expr = _kwarg(call, "model")
-        local_model = _local_binding(func, model_expr.id) if isinstance(model_expr, ast.Name) else None
-        if isinstance(model_expr, ast.Constant) and isinstance(model_expr.value, str):
-            model, literal = model_expr.value, True
-        elif local_model is not None:
-            model, literal = local_model, False
-        elif isinstance(model_expr, ast.Name) and model_expr.id in string_constants:
-            model, literal = string_constants[model_expr.id], False
-        elif model_expr is None:
-            model, literal = UNSPECIFIED_MODEL, False
-        else:
-            model, literal = DYNAMIC_MODEL, False
-
-        function_name = getattr(func, "name", None)
-        docstring = ast.get_docstring(func) if isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)) else None
-        prompt_ref = find_prompt_reference(
-            _kwarg(call, "messages") or _kwarg(call, "input"), func, string_constants
-        )
-        response_format = _literal(_kwarg(call, "response_format"))
-        schema = find_expected_schema(func, response_format, literal_constants, prompt_ref, function_name)
-        json_required = schema is not None or _requests_json(response_format)
-        max_tokens = _literal(_kwarg(call, "max_tokens"))
-        if not isinstance(max_tokens, int) or isinstance(max_tokens, bool):
-            max_tokens = None
-
-        snippet = ast.get_source_segment(source, stmt) or ast.get_source_segment(source, call) or ""
-        base_id = f"node_{function_name}" if function_name else f"node_{Path(rel_path).stem}_l{stmt.lineno}"
-        calls.append(
-            DiscoveredCall(
-                node_id=base_id,
-                file_path=rel_path,
-                line_number=stmt.lineno,
-                end_line_number=stmt.end_lineno or stmt.lineno,
-                call_line=call.lineno,
-                call_col=call.col_offset,
-                call_end_line=call.end_lineno or call.lineno,
-                call_end_col=call.end_col_offset or 0,
-                current_model=model,
-                model_is_literal=literal,
-                call_signature=_call_signature(call),
-                function_name=function_name,
-                docstring=docstring,
-                prompt_reference=prompt_ref,
-                expected_schema=schema,
-                json_required=json_required,
-                max_tokens=max_tokens,
-                snippet=snippet,
-                kwargs=[kw.arg for kw in call.keywords if kw.arg],
-                qualname=qualname,
+    def response_metadata(self, node: ast.AST | None, unpacked: bool) -> ArgumentMetadata:
+        metadata = self.metadata(node, unpacked)
+        if not isinstance(node, ast.Dict) or node in self.limited_metadata:
+            return metadata
+        envelope = _dict_items(node)
+        format_type = _string(envelope.get("type"))
+        if format_type not in {"json_object", "json_schema", "text"}:
+            return metadata
+        summary: dict[str, object] = {"type": format_type}
+        if format_type == "json_schema":
+            definition_node = envelope.get("json_schema")
+            definition = _dict_items(definition_node)
+            definition_known = (
+                isinstance(definition_node, ast.Dict)
+                and len(definition) == len(definition_node.keys)
             )
-        )
-    return calls
+            strict = definition.get("strict")
+            if isinstance(strict, ast.Constant) and isinstance(strict.value, bool):
+                summary["strict"] = strict.value
+            schema_node = definition.get("schema")
+            schema_info = self.metadata(
+                schema_node, unpacked=definition_node is not None and not definition_known,
+            )
+            shape: dict[str, object] = {"kind": schema_info.kind}
+            if schema_info.reference:
+                shape["reference"] = schema_info.reference
+            definition_reference = (
+                _reference(definition_node) if definition_node is not None else None
+            )
+            if definition_reference:
+                shape["definition_reference"] = definition_reference
+            schema = _dict_items(schema_node)
+            schema_type = _string(schema.get("type"))
+            if schema_type in _SCHEMA_TYPES:
+                shape["type"] = schema_type
+            properties = schema.get("properties")
+            if isinstance(properties, ast.Dict) and len(_dict_items(properties)) == len(properties.keys):
+                shape["property_count"] = len(properties.keys)
+            required = schema.get("required")
+            if isinstance(required, ast.List) and all(_string(item) is not None for item in required.elts):
+                shape["required_count"] = len(required.elts)
+            summary["schema"] = shape
+        return ArgumentMetadata(metadata.kind, metadata.reference, metadata.references, summary)
 
 
-def detect_frameworks(trees: dict[str, ast.Module]) -> str:
-    found: list[str] = []
-    for tree in trees.values():
-        for node in ast.walk(tree):
-            modules: list[str] = []
-            if isinstance(node, ast.Import):
-                modules = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-                modules = [node.module]
-            for module in modules:
-                label = FRAMEWORK_IMPORTS.get(module.split(".")[0])
-                if label and label not in found:
-                    found.append(label)
-    return " / ".join(found) if found else "Unknown"
+def _reference(node: ast.AST) -> str | None:
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        if len(parts) > 16:
+            return None
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return None
+    reference = ".".join([node.id, *reversed(parts)])
+    return reference if len(reference) <= 256 else None
 
 
-def _repo_uses_openai_sdk(trees: dict[str, ast.Module]) -> bool:
-    """True if any module imports the OpenAI SDK (or an OpenAI-compatible wrapper).
+def _dict_items(node: ast.AST | None) -> dict[str, ast.AST]:
+    if not isinstance(node, ast.Dict):
+        return {}
+    # Unpacking/duplicate keys could override the apparent literal metadata.
+    keys = [_string(key) for key in node.keys]
+    if any(key is None for key in keys) or len(set(keys)) != len(keys):
+        return {}
+    return {key: value for key, value in zip(keys, node.values) if key is not None}
 
-    Without it, `x.chat.completions.create(...)` is most likely an unrelated API.
+
+def _string(node: ast.AST | None) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def scan_repository(
+    repository_path: str, *, options: ScannerOptions | None = None,
+) -> ProvisionalScanResult:
+    """Scan Python source without importing or executing the selected repository.
+
+    Limits count discovered regular .py files and all raw source bytes actually
+    read, including invalid files. Excluded directories are outside coverage.
+    ``complete`` is false when any diagnostic reports skipped/incomplete work;
+    true does not promise support for dynamic Python or other SDKs/frameworks.
+    Source grammar is explicitly limited to Python 3.11 across host versions.
+    This provisional result has no graph edges, snippets, or prompt literals.
     """
-    for tree in trees.values():
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import) and any(a.name.split(".")[0] in OPENAI_COMPATIBLE for a in node.names):
-                return True
-            if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                if node.module.split(".")[0] in OPENAI_COMPATIBLE:
-                    return True
-    return False
+    return _scan_repository_with_sources(repository_path, options or ScannerOptions())
 
 
-def _dedupe_ids(calls: list[DiscoveredCall]) -> None:
-    # Reserve every natural id first so a suffix never steals another function's id
-    # (e.g. the 2nd call in `f` must not become `node_f_2` when `f_2` exists).
-    reserved = {call.node_id for call in calls}
-    taken: set[str] = set()
-    for call in calls:
-        base = call.node_id
-        if base not in taken:
-            taken.add(base)
-            continue
-        n = 2
-        while f"{base}__{n}" in taken or f"{base}__{n}" in reserved:
-            n += 1
-        call.node_id = f"{base}__{n}"
-        taken.add(call.node_id)
+def _scan_repository_with_sources(
+    repository_path: str, options: ScannerOptions,
+    on_source: Callable[[_ParsedSource], None] | None = None,
+) -> ProvisionalScanResult:
+    """Internal compiler hook sharing every scanner I/O/parse safety check.
 
-
-def scan_repository(root: Path) -> RepoScan:
-    """Parse every Python file under `root` and collect LLM call sites."""
-    warnings: list[str] = []
-    files = iter_python_files(root, warnings)
-    trees: dict[str, ast.Module] = {}
-    sources: dict[str, str] = {}
-    bom_files: set[str] = set()
-    calls: list[DiscoveredCall] = []
-
-    for path in files:
-        rel = path.relative_to(root).as_posix()
-        try:
-            # Raw bytes: keep CRLF exactly (diffs must apply to the real file); a BOM is
-            # stripped for parsing and remembered so patches can restore it.
-            source = path.read_bytes().decode("utf-8")
-            if source.startswith("\ufeff"):
-                source = source[1:]
-                bom_files.add(rel)
-            tree = ast.parse(source, filename=rel)
-            if sum(1 for _ in ast.walk(tree)) > MAX_AST_NODES_PER_FILE:
-                warnings.append(f"Skipped {rel}: syntax tree too large")
-                continue
-            module_calls = scan_module(tree, source, rel)
-        except (SyntaxError, UnicodeDecodeError, ValueError, OSError) as exc:
-            warnings.append(f"Skipped {rel}: {exc.__class__.__name__}")
-            continue
-        except (RecursionError, MemoryError):
-            warnings.append(f"Skipped {rel}: too deeply nested to analyse")
-            continue
-        trees[rel] = tree
-        sources[rel] = source
-        calls.extend(module_calls)
-
-    if calls and not _repo_uses_openai_sdk(trees):
-        warnings.append("No `openai` import found; ignoring look-alike .create() calls")
-        calls = []
-    _dedupe_ids(calls)
-    for w in warnings:
-        logger.warning("scan %s: %s", root, w)
-    return RepoScan(
-        root=root,
-        calls=calls,
-        trees=trees,
-        sources=sources,
-        scanned_files_count=len(trees),
-        detected_framework=detect_frameworks(trees),
-        warnings=warnings,
-        bom_files=bom_files & set(sources),
-    )
+    Callbacks receive only successfully analyzed snapshots while directory pins
+    remain held. They are trusted compiler code, never functions from the target.
+    """
+    return _RepositoryScan(repository_path, options, on_source).run()

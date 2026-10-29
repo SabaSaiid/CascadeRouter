@@ -1,0 +1,8 @@
+{
+  "patch_id": "patch_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "status": "proposed",
+  "changed_nodes": 1,
+  "omitted_nodes": 0,
+  "complete_for_requested_nodes": true,
+  "status_url": "/api/patches/patch_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}

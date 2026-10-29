@@ -1,0 +1,86 @@
+{
+  "result": {
+    "schema_version": "cascaderouter.optimization.v1",
+    "objective_version": "all-checks-then-cost.v1",
+    "configuration_version": "zero-cost.optimizer.v1",
+    "configuration_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "run_id": "run_9282aefccc1c48fba41ce9abd0ef762f",
+    "benchmark_digest": "d51e740e62587822605587c9379dde6f76a55a673d5428e0905dda3a6a2181d7",
+    "plan": {
+      "schema_version": "cascaderouter.benchmark.v1",
+      "analysis_id": "analysis_5dca3dad3cee4697b67de955d385d92f",
+      "analysis_schema_version": "cascaderouter.scan.v1",
+      "analysis_digest": "c59419b2a1f8659b866ca4cdfbd3738b8f31ae8171169e83cd31cf47ddcb4237",
+      "node_ids": [
+        "llm_4d6f1d6629a81593fae3739f"
+      ],
+      "models": [
+        {
+          "identifier": "local/baseline",
+          "version": "v1"
+        },
+        {
+          "identifier": "local/candidate",
+          "version": "v1"
+        }
+      ],
+      "case_set": {
+        "identifier": "cases",
+        "version": "v1"
+      },
+      "case_ids": [
+        "case-one",
+        "case-two"
+      ],
+      "evaluation_profile": {
+        "identifier": "profile",
+        "version": "v1"
+      },
+      "registry_digest": "863390a850efdedf8325d50326d9b63237f962a702df2c81844046b52d2afb65",
+      "configuration_version": "zero-cost.jobs.v1",
+      "configuration_digest": "dbb8023b293add83c490ed4cda87b02928cb7c2305d1ba14c83372f6bd293adb",
+      "execution_digest": "5e9fd59a6e382e2efe90a2be616c588fdc592a71fdc8678289ace63bbc04f2bd",
+      "provenance": "test",
+      "case_set_digest": "40dbfd689fb286b9c1250babcf5a4b98f7646bdaa0a27c8d6b99a297ecd3b938",
+      "evaluation_profile_digest": "090c8f81bf71faad2dd86468d39b36ac78fdd749c88163904487f6bb3c6777fa"
+    },
+    "approval_manifest_digest": null,
+    "recording_dataset_digest": null,
+    "quality_threshold": "0.92",
+    "provenance": "test",
+    "status": "unavailable",
+    "decisions": [
+      {
+        "analysis_id": "analysis_5dca3dad3cee4697b67de955d385d92f",
+        "node_id": "llm_4d6f1d6629a81593fae3739f",
+        "provenance": "test",
+        "status": "unavailable",
+        "reason": "test_evidence",
+        "baseline_model_id": "local/baseline",
+        "selected_model_id": null,
+        "differs_from_baseline": false,
+        "quality_threshold": "0.92",
+        "candidates": [],
+        "recorded_savings_usd": null
+      }
+    ],
+    "nodes_considered": 1,
+    "nodes_eligible": 0,
+    "nodes_recommended": 0,
+    "nodes_retained": 0,
+    "nodes_inconclusive": 0,
+    "nodes_unavailable": 1,
+    "decisions_complete": false,
+    "diagnostics": [
+      "test_evidence"
+    ]
+  },
+  "policy": {
+    "status": "unavailable",
+    "reason": "no_eligible_routes",
+    "route_count": 0,
+    "yaml_content": null,
+    "digest": null
+  },
+  "optimization_id": null
+}

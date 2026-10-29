@@ -1,147 +1,40 @@
-import { useState, useEffect } from 'react';
-import type {
-  BenchmarkRun,
-  DataSourceMode,
-  OptimizeResult,
-  ScanResult,
-} from './types';
-import { api } from './services/api';
-import { Header } from './components/layout/Header';
-import { RepositoryPane } from './components/repository/RepositoryPane';
-import { BenchmarkPane } from './components/benchmark/BenchmarkPane';
-import { OptimizationPane } from './components/optimization/OptimizationPane';
+import { useMemo, useState } from 'react';
+import { ApiClient } from './services/api.ts';
+import { LocalTransport, failure } from './services/transport.ts';
+import { useOperation } from './services/useOperation.ts';
+import type { Health, Scan, Job, Optimization } from './services/contracts.ts';
+import { Header } from './components/layout/Header.tsx';
+import { OperationStatus } from './components/OperationStatus.tsx';
+import { RepositoryPane } from './components/repository/RepositoryPane.tsx';
+import { BenchmarkPane } from './components/benchmark/BenchmarkPane.tsx';
+import { OptimizationPane } from './components/optimization/OptimizationPane.tsx';
+import { PatchPane } from './components/patches/PatchPane.tsx';
 
 export default function App() {
-  const [dataSourceMode, setDataSourceMode] = useState<DataSourceMode>(api.getMode());
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null);
-  const [benchmarkRun, setBenchmarkRun] = useState<BenchmarkRun | null>(null);
-  const [optimizeResult, setOptimizeResult] = useState<OptimizeResult | null>(null);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-
-  const [isScanning, setIsScanning] = useState(false);
-  const [isBenchmarking, setIsBenchmarking] = useState(false);
-  const [isOptimizing, setIsOptimizing] = useState(false);
-
-  // Initialize initial scan & benchmark so the workbench opens loaded and beautiful
-  useEffect(() => {
-    handleScan('tests/fixtures/sample_repo', true);
+  const [demo, setDemo] = useState(false);
+  const [analysis, setAnalysis] = useState<Scan>();
+  const [job, setJob] = useState<Job>();
+  const [optimization, setOptimization] = useState<Optimization>();
+  const [selected, setSelected] = useState<string>();
+  const [health, healthOperation] = useOperation<Health>();
+  const connection = useMemo(() => {
+    try { return { api: new ApiClient(new LocalTransport(import.meta.env?.VITE_API_BASE_URL)) }; }
+    catch (error) { return { error: failure(error) }; }
   }, []);
-
-  const handleModeChange = (mode: DataSourceMode) => {
-    setDataSourceMode(mode);
-    api.setMode(mode);
-  };
-
-  const handleScan = async (repoPath: string, autoChain = false) => {
-    setIsScanning(true);
-    try {
-      const res = await api.scanRepository(repoPath);
-      setScanResult(res);
-      if (res.nodes.length > 0) {
-        setSelectedNodeId(res.nodes[0].node_id);
-      }
-      if (autoChain) {
-        // Auto-load benchmark & optimize mock states for immediate demonstration
-        const run = await api.pollBenchmarkRun('run_nebius_bench_7894', 100);
-        setBenchmarkRun(run);
-        const opt = await api.runOptimization('run_nebius_bench_7894', 0.92);
-        setOptimizeResult(opt);
-      }
-    } catch (err) {
-      console.error('Scan error:', err);
-    } finally {
-      setIsScanning(false);
-    }
-  };
-
-  const handleBenchmark = async () => {
-    if (!scanResult || scanResult.nodes.length === 0) return;
-    setIsBenchmarking(true);
-    try {
-      const runId = await api.startBenchmark(scanResult.nodes.map((n) => n.node_id));
-      // Simulate stepped progress
-      const run = await api.pollBenchmarkRun(runId, 100);
-      setBenchmarkRun(run);
-    } catch (err) {
-      console.error('Benchmark error:', err);
-    } finally {
-      setIsBenchmarking(false);
-    }
-  };
-
-  const handleOptimize = async () => {
-    if (!benchmarkRun) return;
-    setIsOptimizing(true);
-    try {
-      const opt = await api.runOptimization(benchmarkRun.run_id, 0.92);
-      setOptimizeResult(opt);
-    } catch (err) {
-      console.error('Optimization error:', err);
-    } finally {
-      setIsOptimizing(false);
-    }
-  };
-
-  // Derive per-node recommended models for RepositoryPane chips
-  const recommendedModels: Record<string, string> = {};
-  if (benchmarkRun) {
-    for (const nodeBench of benchmarkRun.nodes) {
-      if (nodeBench.recommended_model_id) {
-        recommendedModels[nodeBench.node_id] = nodeBench.recommended_model_id;
-      }
-    }
-  }
-
-  // Compute total spend from optimizeResult (data-driven, not hard-coded)
-  const totalSpendUsd = optimizeResult?.total_baseline_cost_usd;
-
-  return (
-    <div className="flex flex-col h-screen w-screen bg-[var(--cr-canvas)] text-[var(--cr-text)] overflow-hidden">
-      {/* Top IDE Header */}
-      <Header
-        dataSourceMode={dataSourceMode}
-        onModeChange={handleModeChange}
-        onScan={() => handleScan('tests/fixtures/sample_repo')}
-        onBenchmark={handleBenchmark}
-        onOptimize={handleOptimize}
-        isScanning={isScanning}
-        isBenchmarking={isBenchmarking}
-        isOptimizing={isOptimizing}
-        hasScanResults={!!scanResult && scanResult.nodes.length > 0}
-        hasBenchmarkResults={!!benchmarkRun && benchmarkRun.nodes.length > 0}
-        totalSpendUsd={totalSpendUsd}
-      />
-
-      {/* Main 3-pane workbench */}
-      <main className="flex-1 flex overflow-hidden divide-x divide-[var(--cr-line)]">
-        {/* Left pane */}
-        <RepositoryPane
-          scanResult={scanResult}
-          onScan={(path) => handleScan(path)}
-          isScanning={isScanning}
-          selectedNodeId={selectedNodeId}
-          onSelectNode={setSelectedNodeId}
-          recommendedModels={recommendedModels}
-        />
-
-        {/* Centre pane */}
-        <BenchmarkPane
-          benchmarkRun={benchmarkRun}
-          scanResult={scanResult}
-          onRunBenchmark={handleBenchmark}
-          isBenchmarking={isBenchmarking}
-          selectedNodeId={selectedNodeId}
-          onSelectNode={setSelectedNodeId}
-        />
-
-        {/* Right pane */}
-        <OptimizationPane
-          optimizeResult={optimizeResult}
-          onOptimize={handleOptimize}
-          isOptimizing={isOptimizing}
-          selectedNodeId={selectedNodeId}
-        />
-      </main>
-    </div>
-  );
+  return <><a className="skip-link" href="#workbench">Skip to workbench</a>
+    <Header demo={demo} onModeChange={() => { healthOperation.reset(); setAnalysis(undefined); setJob(undefined); setOptimization(undefined); setSelected(undefined); setDemo(!demo); }} />
+    <main id="workbench" className="workbench" key={demo ? 'demo' : 'local'}>
+      <section aria-labelledby="connection-title"><h2 id="connection-title">Backend connection</h2>
+        <p>Only an explicitly configured loopback HTTP service is contacted. Repository access remains controlled by the backend.</p>
+        {connection.error && <p role="alert">{connection.error.message}</p>}
+        <button disabled={demo || !connection.api || health.status === 'loading'} onClick={() => healthOperation.run(s => connection.api!.health(s))}>Check local service</button>
+        <OperationStatus state={health} cancel={healthOperation.cancel} />
+        {health.data && <dl><dt>Scan capability</dt><dd>{health.data.scan_available ? 'available' : 'unavailable'}</dd><dt>Configuration required</dt><dd>{String(health.data.configuration_required)}</dd><dt>Benchmark capability</dt><dd>{health.data.benchmark_available ? 'available' : 'unavailable'} — {health.data.benchmark_provenance ?? 'no evidence configured'}</dd><dt>Benchmark restriction</dt><dd>{health.data.benchmark_unavailable_reason ?? 'none reported'}</dd></dl>}
+      </section>
+      <RepositoryPane api={connection.api} demo={demo} onAnalysis={scan => { setAnalysis(scan); setJob(undefined); setOptimization(undefined); setSelected(scan?.nodes[0]?.node_id); }} selected={selected} onSelect={setSelected} />
+      <BenchmarkPane key={analysis?.analysis_id ?? 'no-analysis'} api={connection.api} demo={demo} analysis={analysis} selected={selected} onJob={value => { if (value?.run_id !== job?.run_id || !value) setOptimization(undefined); setJob(value); }} />
+      <OptimizationPane key={job?.run_id ?? 'no-run'} api={connection.api} demo={demo} analysis={analysis} job={job} onOptimization={setOptimization} />
+      <PatchPane key={`${analysis?.analysis_id ?? 'independent'}:${optimization?.optimization_id ?? 'no-optimization'}`} api={connection.api} demo={demo} analysis={analysis} optimization={optimization} />
+    </main>
+  </>;
 }

@@ -1,0 +1,11 @@
+{
+  "schema_version": "cascaderouter.scan.v1",
+  "status": "ok",
+  "scan_available": true,
+  "analysis_retrieval_available": true,
+  "configuration_required": false,
+  "benchmark_available": true,
+  "benchmark_provenance": "test",
+  "benchmark_unavailable_reason": null,
+  "optimization_available": false
+}

@@ -10,6 +10,9 @@ jobs:
   backend-tests:
     name: Backend Tests & Quality Checks
     runs-on: ubuntu-latest
+    env:
+      BACKEND_JUNIT_PATH: ${{ runner.temp }}/cascaderouter-junit-${{ github.run_id }}-${{ github.run_attempt }}.xml
+      CASCADEROUTER_REQUIRE_NODE_ACCEPTANCE: "1"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -22,34 +25,61 @@ jobs:
 
       - name: Install Backend Dependencies
         run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f backend/requirements.txt ]; then pip install -r backend/requirements.txt; fi
+          python -m pip install -r requirements.txt
+          python -m pip check
+
+      - name: Set up Node.js 24 for local client contract test
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Verify Required Backend and Client Prerequisites
+        run: python -B -m scripts.release_preflight --profile ci-backend
 
       - name: Run Backend Unit & Integration Tests
+        id: backend_tests
         env:
-          NEBIUS_API_KEY: ""
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          PYTEST_ADDOPTS: ""
         run: |
-          python -m pytest tests/ -q --ignore=tests/fixtures/ --cov=backend --cov-report=term-missing --cov-fail-under=95
+          python -B -m pytest -p no:cacheprovider tests/ -v -ra --tb=short --ignore=tests/fixtures/ --junitxml "$BACKEND_JUNIT_PATH" --basetemp "${RUNNER_TEMP}/cascaderouter-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+      - name: Summarize Backend Test Results
+        if: always()
+        env:
+          BACKEND_TEST_OUTCOME: ${{ steps.backend_tests.outcome }}
+        run: |
+          python scripts/summarize_tests.py --label Backend --report "$BACKEND_JUNIT_PATH" --outcome "$BACKEND_TEST_OUTCOME" --output "$GITHUB_STEP_SUMMARY"
 
   frontend-check:
-    name: Frontend Typecheck & Build
+    name: Frontend Tests, Typecheck & Build
     runs-on: ubuntu-latest
+    env:
+      FRONTEND_JUNIT_PATH: ${{ runner.temp }}/cascaderouter-frontend-${{ github.run_id }}-${{ github.run_attempt }}.xml
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 20
+      - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
 
-      - name: Check Frontend (if present)
-        run: |
-          if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
-            cd frontend
-            npm ci || npm install
-            npm run build || true
-          else
-            echo "Frontend directory not initialized yet. Skipping step."
-          fi
+      - name: Install Frontend Dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run Frontend Contract and Render Tests
+        id: frontend_tests
+        working-directory: frontend
+        run: node --test --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$FRONTEND_JUNIT_PATH" tests/*.test.mjs
+
+      - name: Build Frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Summarize Frontend Test Results
+        if: always()
+        env:
+          FRONTEND_TEST_OUTCOME: ${{ steps.frontend_tests.outcome }}
+        run: python3 scripts/summarize_tests.py --label Frontend --report "$FRONTEND_JUNIT_PATH" --outcome "$FRONTEND_TEST_OUTCOME" --output "$GITHUB_STEP_SUMMARY"

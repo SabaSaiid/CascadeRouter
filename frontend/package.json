@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "node scripts/typecheck.mjs",
+    "check:cache": "node scripts/check_cache.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

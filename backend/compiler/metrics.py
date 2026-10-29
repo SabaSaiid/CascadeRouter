@@ -1,129 +1,88 @@
-"""FinOps cost and latency calculations.
-
-Cost = (tokens_in / 1e6) * price_in + (tokens_out / 1e6) * price_out
-Savings % = (baseline - optimized) / baseline * 100
-"""
+"""Evidence-only populations and exact decimal cost; no estimates or comparisons."""
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import Iterable, Sequence
+from decimal import Decimal, localcontext
 
-from backend.config import ModelSpec
-
-TOKENS_PER_MILLION = 1_000_000
-# Rough chars-per-token ratio used only when the API omits `usage`.
-CHARS_PER_TOKEN = 4
+from backend.schemas import (
+    BenchmarkMeasurement, BenchmarkPlan, CostCalculation, MetricPopulation, OfflineMetrics,
+    PinnedPricing, RecordingEvidence, VersionedReference,
+)
 
 
-def estimate_cost(spec: ModelSpec, input_tokens: int, output_tokens: int) -> float:
-    """Exact USD cost of one call given token counts and catalog prices."""
-    if input_tokens < 0 or output_tokens < 0:
-        raise ValueError("token counts must be non-negative")
-    return (
-        input_tokens / TOKENS_PER_MILLION * spec.input_price_per_m
-        + output_tokens / TOKENS_PER_MILLION * spec.output_price_per_m
-    )
+def calculate_cost(evidence: RecordingEvidence, pricing: PinnedPricing | None) -> CostCalculation:
+    evidence = RecordingEvidence.model_validate(evidence)
+    if evidence.input_tokens is None or evidence.output_tokens is None:
+        return CostCalculation(availability="unavailable", reason="missing_usage")
+    if pricing is None:
+        return CostCalculation(availability="unavailable", reason="missing_pricing")
+    pricing = PinnedPricing.model_validate(pricing)
+    if evidence.pricing_reference != VersionedReference(identifier=pricing.identifier, version=pricing.version):
+        return CostCalculation(availability="unavailable", reason="missing_pricing")
+    if evidence.captured_at < pricing.effective_at:
+        return CostCalculation(availability="unavailable", reason="pricing_not_effective")
+    with localcontext() as context:
+        context.prec = 80
+        amount = (Decimal(evidence.input_tokens) * pricing.input_usd_per_million
+                  + Decimal(evidence.output_tokens) * pricing.output_usd_per_million) / Decimal(1000000)
+    return CostCalculation(availability="available", amount_usd=amount,
+                           pricing_reference=evidence.pricing_reference, pricing_digest=pricing.digest)
 
 
-def estimate_tokens(text: str) -> int:
-    """Heuristic token count for text when the provider gives no usage data."""
-    if not text:
-        return 0
-    return max(1, math.ceil(len(text) / CHARS_PER_TOKEN))
-
-
-def reduction_pct(baseline: float | None, optimized: float | None) -> float | None:
-    """Percentage reduction from baseline to optimized.
-
-    Returns None when either value is missing or the baseline is not positive,
-    so callers never display a fabricated 0%.
-    """
-    if baseline is None or optimized is None:
-        return None
-    if not math.isfinite(baseline) or not math.isfinite(optimized) or baseline <= 0:
-        return None
-    return (baseline - optimized) / baseline * 100.0
-
-
-def cost_savings_pct(baseline_cost: float | None, optimized_cost: float | None) -> float | None:
-    return reduction_pct(baseline_cost, optimized_cost)
-
-
-def latency_reduction_pct(baseline_ms: float | None, optimized_ms: float | None) -> float | None:
-    return reduction_pct(baseline_ms, optimized_ms)
-
-
-def percentile(values: Sequence[float], p: float) -> float:
-    """Linear-interpolated percentile (same as numpy's default), p in [0, 100]."""
+def _latency(values):
     if not values:
-        raise ValueError("percentile of empty sequence")
-    if not 0 <= p <= 100:
-        raise ValueError("p must be within [0, 100]")
-    ordered = sorted(values)
-    if len(ordered) == 1:
-        return float(ordered[0])
-    rank = (len(ordered) - 1) * p / 100.0
-    lo = math.floor(rank)
-    hi = math.ceil(rank)
-    if lo == hi:
-        return float(ordered[lo])
-    return ordered[lo] + (ordered[hi] - ordered[lo]) * (rank - lo)
+        return MetricPopulation(availability="unavailable", unit="ms", sample_count=0, reason="empty_population")
+    try:
+        mean = values[0] if min(values) == max(values) else math.fsum(values) / len(values)
+        if mean == 0 and any(value > 0 for value in values):
+            raise ArithmeticError()
+    except (ArithmeticError, OverflowError):
+        return MetricPopulation(availability="unavailable", unit="ms", sample_count=len(values), reason="arithmetic_limit")
+    return MetricPopulation(availability="available", unit="ms", sample_count=len(values),
+                            minimum=min(values), maximum=max(values), mean=mean)
 
 
-@dataclass(frozen=True)
-class LatencySummary:
-    median_ms: float
-    p95_ms: float
-    mean_ms: float
-    samples: int
+def _tokens(values):
+    if not values:
+        return MetricPopulation(availability="unavailable", unit="tokens", sample_count=0, reason="empty_population")
+    total = sum(values)
+    if total > 2**53 - 1:
+        return MetricPopulation(availability="unavailable", unit="tokens", sample_count=len(values), reason="arithmetic_limit")
+    return MetricPopulation(availability="available", unit="tokens", sample_count=len(values), total_tokens=total)
 
 
-def summarize_latencies(values: Iterable[float]) -> LatencySummary:
-    samples = [float(v) for v in values]
-    if not samples:
-        raise ValueError("no latency samples")
-    if any(v < 0 or not math.isfinite(v) for v in samples):
-        raise ValueError("latency samples must be finite and non-negative")
-    return LatencySummary(
-        median_ms=percentile(samples, 50),
-        p95_ms=percentile(samples, 95),
-        mean_ms=sum(samples) / len(samples),
-        samples=len(samples),
-    )
-
-
-@dataclass(frozen=True)
-class DecisionTotals:
-    total_baseline_cost_usd: float
-    total_optimized_cost_usd: float
-    # None when undefined (no positive baseline) - never a fabricated 0%.
-    total_cost_reduction_pct: float | None
-    avg_latency_reduction_pct: float | None
-
-
-def aggregate_totals(
-    decisions: Iterable[tuple[float, float, float, float]],
-) -> DecisionTotals:
-    """Totals across nodes.
-
-    Each item is (baseline_cost, optimized_cost, baseline_latency_ms, optimized_latency_ms).
-    Cost reduction is computed over summed costs; latency reduction is the mean of
-    per-node reductions for nodes with a defined baseline.
-    """
-    items = list(decisions)
-    for item in items:
-        if any(not math.isfinite(v) or v < 0 for v in item):
-            raise ValueError(f"costs and latencies must be finite and non-negative, got {item}")
-    total_base = sum(d[0] for d in items)
-    total_opt = sum(d[1] for d in items)
-    latency_pcts = [
-        pct for pct in (latency_reduction_pct(d[2], d[3]) for d in items) if pct is not None
-    ]
-    return DecisionTotals(
-        total_baseline_cost_usd=total_base,
-        total_optimized_cost_usd=total_opt,
-        total_cost_reduction_pct=reduction_pct(total_base, total_opt),
-        avg_latency_reduction_pct=sum(latency_pcts) / len(latency_pcts) if latency_pcts else None,
+def aggregate(plan: BenchmarkPlan, measurements: tuple[BenchmarkMeasurement, ...]) -> OfflineMetrics:
+    plan = BenchmarkPlan.model_validate(plan)
+    if type(measurements) not in (list, tuple) or len(measurements) > 1024:
+        raise ValueError("The aggregate input exceeds the unit budget.")
+    records = tuple(BenchmarkMeasurement.model_validate(item) for item in measurements)
+    if any(item.evaluation is None or item.recording_id is None or item.evidence_digest is None or item.output_available is None for item in records):
+        raise ValueError("Offline aggregates require evaluated, integrity-identified records.")
+    keys = [item.unit_key() for item in records]
+    if len(keys) != len(set(keys)) or not set(keys) <= set(plan.unit_keys()) or any(item.provenance != plan.provenance for item in records):
+        raise ValueError("Measurements do not belong to the plan.")
+    counts = {name: 0 for name in ("passed", "failed", "skipped", "inconclusive", "not_run")}
+    for item in records:
+        counts["not_run" if item.evaluation_status == "unavailable" else item.evaluation_status] += 1
+    costs = [item.calculated_cost.amount_usd for item in records
+             if item.calculated_cost is not None and item.calculated_cost.availability == "available"]
+    if costs:
+        with localcontext() as context:
+            context.prec = 80
+            total = sum(costs, Decimal(0))
+        cost_population = MetricPopulation(availability="available", unit="USD", sample_count=len(costs), total_usd=total)
+    else:
+        cost_population = MetricPopulation(availability="unavailable", unit="USD", sample_count=0, reason="empty_population")
+    return OfflineMetrics(
+        provenance=plan.provenance, planned_cases=len(plan.case_ids), planned_units=len(plan.unit_keys()),
+        processed_units=len(records), valid_recorded_outputs=sum(item.output_available is True for item in records),
+        evaluated_units=sum(item.evaluation is not None and bool(item.evaluation.checks_ran) for item in records),
+        processing_complete=len(records) == len(plan.unit_keys()),
+        evaluation_complete=counts["passed"] + counts["failed"] == len(plan.unit_keys()),
+        latency_ms=_latency([item.latency_ms.value for item in records if item.latency_ms.availability == "available"]),
+        ttft_ms=_latency([item.ttft_ms.value for item in records if item.ttft_ms is not None and item.ttft_ms.availability == "available"]),
+        input_tokens=_tokens([item.input_tokens.value for item in records if item.input_tokens.availability == "available"]),
+        output_tokens=_tokens([item.output_tokens.value for item in records if item.output_tokens.availability == "available"]),
+        cost_usd=cost_population, **counts,
     )

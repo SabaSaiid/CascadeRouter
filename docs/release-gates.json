@@ -1,0 +1,565 @@
+{
+  "schema_version": "cascaderouter.release-gates.v1",
+  "version": null,
+  "baseline_commit": "2ff0b949dcbcc050a78e73d984a07d8ac226d034",
+  "recommendation": "blocked_from_release",
+  "gates": [
+    {
+      "id": "repository_tests",
+      "requirement": "Full trusted repository tests",
+      "required": true,
+      "severity": "P1",
+      "status": "passed",
+      "procedure": [
+        "python -B -m pytest -p no:cacheprovider tests/ -q -ra --tb=short --ignore=tests/fixtures/ --junitxml <report outside basetemp> --basetemp <fresh temp>"
+      ],
+      "expected": "Zero failures/errors with reported skip reasons",
+      "actual": {
+        "summary": "1280 passed, 8 skipped; zero failures/errors; see dependency scope",
+        "exit_code": 0,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "counts": {
+          "tests": 1288,
+          "passed": 1280,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 8
+        }
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "repository_tests; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "Available local suite; not Python 3.11 compatibility",
+      "remediation": "Retest final candidate; close platform/runtime gates separately"
+    },
+    {
+      "id": "frontend_tests",
+      "requirement": "Deterministic frontend contract and render tests",
+      "required": true,
+      "severity": "P1",
+      "status": "passed",
+      "procedure": [
+        "npm test --prefix frontend"
+      ],
+      "expected": "Zero failed/error tests with explicit dependency scope",
+      "actual": {
+        "summary": "86 passed, 0 skipped; zero failures/errors; see dependency scope",
+        "exit_code": 0,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "counts": {
+          "tests": 86,
+          "passed": 86,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "frontend_tests; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "Local unit/render coverage only",
+      "remediation": "Repeat with exact installed lock and run browser gate"
+    },
+    {
+      "id": "typescript",
+      "requirement": "Exact installed TypeScript project validation",
+      "required": true,
+      "severity": "P1",
+      "status": "blocked",
+      "procedure": [
+        "npm run typecheck --prefix frontend"
+      ],
+      "expected": "Zero diagnostics with exact installed dependencies",
+      "actual": {
+        "summary": "Supplemental check: zero diagnostics, exit 0; exact installed frontend validation remains blocked",
+        "exit_code": 0,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "dependency_scope": "supplemental"
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "typescript; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "Supplemental check does not prove locked runtime compatibility",
+      "remediation": "Provision approved exact offline dependencies; run without CASCADE_TEST_TOOLS"
+    },
+    {
+      "id": "production_build",
+      "requirement": "Exact-lock production frontend build",
+      "required": true,
+      "severity": "P1",
+      "status": "blocked",
+      "procedure": [
+        "npm run build --prefix frontend"
+      ],
+      "expected": "Successful tsc -b and Vite build",
+      "actual": {
+        "summary": "Required exact installed packages/bin wrappers absent; see preflight and cache. Prior exit 1 is retained in Phase 4.10 report.",
+        "exit_code": null,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false,
+        "previous_attempt_exit_code": 1
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "production_build; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "No distributable production bundle verified",
+      "remediation": "Provision required exact cache artifacts, install offline, build"
+    },
+    {
+      "id": "lint",
+      "requirement": "Configured Oxlint validation",
+      "required": true,
+      "severity": "P1",
+      "status": "blocked",
+      "procedure": [
+        "npm run lint --prefix frontend"
+      ],
+      "expected": "Oxlint exits zero using installed locked tool",
+      "actual": {
+        "summary": "Locked Oxlint installation unavailable; not rerun without prerequisites.",
+        "exit_code": null,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false,
+        "previous_attempt_exit_code": 1
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "lint; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "Source lint remains unverified",
+      "remediation": "Provision locked Oxlint and run lint"
+    },
+    {
+      "id": "browser_accessibility",
+      "requirement": "Browser workflow, keyboard/focus and accessibility acceptance",
+      "required": true,
+      "severity": "P1",
+      "status": "not run",
+      "procedure": [
+        "Follow frontend/README.md workflows in an approved local browser test environment"
+      ],
+      "expected": "Observed browser interactions, labels and focus behavior",
+      "actual": {
+        "summary": "No browser interaction run; SSR and loopback-client tests do not close this gate",
+        "exit_code": null,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "browser_accessibility; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "SSR and client HTTP tests do not establish browser usability",
+      "remediation": "Provide approved local driver and exact built UI; record interactions"
+    },
+    {
+      "id": "python311",
+      "requirement": "Python 3.11 runtime compatibility",
+      "required": true,
+      "severity": "P1",
+      "status": "blocked",
+      "procedure": [
+        "python3.11 -B -m pytest -p no:cacheprovider tests/ --ignore=tests/fixtures/ --basetemp <fresh temp>"
+      ],
+      "expected": "Full suite actually executed under Python 3.11",
+      "actual": {
+        "summary": "No python3.11 PATH command; ordinary per-user/system Python311 and repository .venv interpreter paths absent; no runtime downloaded",
+        "exit_code": null,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false,
+        "release_preflight_exit_code": 1
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "python311; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "Grammar target is not runtime compatibility",
+      "remediation": "Use an approved preinstalled Python 3.11 environment"
+    },
+    {
+      "id": "clean_dependencies",
+      "requirement": "Clean offline backend and frontend dependency verification",
+      "required": true,
+      "severity": "P1",
+      "status": "not run",
+      "procedure": [
+        "Follow the approved offline provisioning procedure in README.md"
+      ],
+      "expected": "Clean Python 3.11 install/check and exact npm lock install, no downloads",
+      "actual": {
+        "summary": "No clean install/resolution performed; 37 locked tarballs verified, 84 absent in local cache",
+        "exit_code": null,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "clean_dependencies; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "Reproducible clean installation is unverified",
+      "remediation": "Resolve/hash-lock backend in approved environment; provision exact local artifacts"
+    },
+    {
+      "id": "local_api",
+      "requirement": "Offline startup and real local client/API integration",
+      "required": true,
+      "severity": "P1",
+      "status": "passed",
+      "procedure": [
+        "python -B -m pytest -p no:cacheprovider tests/integration/test_frontend_local_backend.py -q --basetemp <fresh temp>"
+      ],
+      "expected": "Loopback API, durable analysis and source preservation checks pass",
+      "actual": {
+        "summary": "3 real-client cases passed in final full suite",
+        "exit_code": 0,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "counts": {
+          "tests": 3,
+          "passed": 3,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "local_api; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "Covers configured local tests, not hosted or browser execution",
+      "remediation": "Repeat current candidate acceptance tests"
+    },
+    {
+      "id": "contracts",
+      "requirement": "OpenAPI and frontend/backend contract consistency",
+      "required": true,
+      "severity": "P1",
+      "status": "passed",
+      "procedure": [
+        "python -B frontend/scripts/sync_contracts.py --check"
+      ],
+      "expected": "Generated contracts match authoritative Pydantic OpenAPI",
+      "actual": {
+        "summary": "Current generated OpenAPI/frontend contract check matched",
+        "exit_code": 0,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check"
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "contracts; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "No invented API contract permitted",
+      "remediation": "Regenerate only after deliberate shared schema review"
+    },
+    {
+      "id": "security_integrity",
+      "requirement": "Available authorization, repository and patch-integrity controls",
+      "required": true,
+      "severity": "P1",
+      "status": "passed",
+      "procedure": [
+        "python -B -m pytest -p no:cacheprovider tests/security/ -q -rs --basetemp <fresh temp>"
+      ],
+      "expected": "Available tests pass; skipped platform checks remain explicit",
+      "actual": {
+        "summary": "78 passed; 5 platform skips remain open",
+        "exit_code": 0,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "counts": {
+          "tests": 83,
+          "passed": 78,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 5
+        }
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "security_integrity; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "Tested local guards; not independent security certification",
+      "remediation": "Close platform coverage and review documented trust assumptions"
+    },
+    {
+      "id": "recovery",
+      "requirement": "Job recovery and persistence integrity",
+      "required": true,
+      "severity": "P1",
+      "status": "passed",
+      "procedure": [
+        "python -B -m pytest -p no:cacheprovider tests/integration/test_client_job_recovery.py -q --basetemp <fresh temp>"
+      ],
+      "expected": "Terminal states, interruptions and corrupt identities remain truthful",
+      "actual": {
+        "summary": "5 real-client cases passed in final full suite",
+        "exit_code": 0,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "counts": {
+          "tests": 5,
+          "passed": 5,
+          "failures": 0,
+          "errors": 0,
+          "skipped": 0
+        }
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "recovery; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "No external task queue or recovery-success fabrication",
+      "remediation": "Repeat current candidate and retain durable result evidence"
+    },
+    {
+      "id": "production_evidence",
+      "requirement": "Genuine approved recorded benchmark-to-proposal workflow",
+      "required": true,
+      "severity": "P1",
+      "status": "blocked",
+      "procedure": [
+        "Supply genuine approved local recordings, then follow frontend/README.md proposal/validation/history procedures"
+      ],
+      "expected": "Actual approved provenance and successful authorized reference-only operations",
+      "actual": {
+        "summary": "No genuine approved production recordings supplied; test-only artifacts remain unauthorized for production",
+        "exit_code": null,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "production_evidence; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "Test/demo provenance cannot authorize production proposals",
+      "remediation": "Operator supplies genuine approved recordings; no synthetic substitution"
+    },
+    {
+      "id": "hosted_ci",
+      "requirement": "Completed hosted CI on the candidate commit",
+      "required": true,
+      "severity": "P2",
+      "status": "not run",
+      "procedure": [
+        "Run the existing .github/workflows/tests.yml through separately authorized publication"
+      ],
+      "expected": "Actual hosted run logs identify commit, counts and outcomes",
+      "actual": {
+        "summary": "No push/fetch or hosted run; historical failure cause remains unknown",
+        "exit_code": null,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "executed_this_phase": false
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "hosted_ci; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "Local configuration checks are not hosted evidence",
+      "remediation": "Obtain publication authorization later and retain actual run logs"
+    },
+    {
+      "id": "platform_filesystem",
+      "requirement": "Unskipped target-platform filesystem checks",
+      "required": true,
+      "severity": "P2",
+      "status": "blocked",
+      "procedure": [
+        "Run repository security/compiler tests on suitable Windows and POSIX hosts"
+      ],
+      "expected": "All intended filesystem cases execute with actual outcomes",
+      "actual": {
+        "summary": "Final suite retains six Windows symlink-unavailable skips and two POSIX namespace-replacement skips",
+        "exit_code": null,
+        "observation": "Phase 4.11; scoped current result or explicitly unrun check",
+        "skipped": 8
+      },
+      "environment": {
+        "python": "3.14.3",
+        "node": "24.16.0",
+        "npm": "11.13.0",
+        "dependency_scope": "Existing backend environment; supplemental TypeScript 6.0.3 and React 19.3.0"
+      },
+      "evidence": [
+        {
+          "path": "docs/phase411-observations.json",
+          "scope": "platform_filesystem; current structured observations"
+        },
+        {
+          "path": "docs/phase410-acceptance.md",
+          "scope": "Retained preceding-phase evidence and limitations"
+        }
+      ],
+      "impact": "No universal OS sandbox or race-proof claim",
+      "remediation": "Use appropriate privileges/platforms; preserve point-in-time source limitations"
+    }
+  ]
+}

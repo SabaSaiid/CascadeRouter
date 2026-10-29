@@ -1,115 +1,79 @@
-"""Generate the declarative routing policy (`.cascaderouter.yaml`).
-
-The same document is read back by `backend/runtime/cascade_router.py`.
-Emitted with `yaml.safe_dump` and verified by a strict round-trip load
-(duplicate keys rejected) before it is returned.
-"""
+"""Pure safe-YAML policy generation; no writes, inference or automatic application."""
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Iterable, Optional
+import hashlib
 
-import yaml
-
-from backend.compiler.router_optimizer import NodeDecision
-
-POLICY_FILENAME = ".cascaderouter.yaml"
-POLICY_VERSION = "1.0"
-DEFAULT_MAX_RETRIES = 1
+from backend.schemas import OptimizationResult, RoutingPolicyArtifact, content_digest
 
 
-class PolicyError(ValueError):
-    """The generated policy failed its round-trip verification."""
-
-
-class _UniqueKeyLoader(yaml.SafeLoader):
-    """SafeLoader that rejects duplicate mapping keys."""
-
-
-def _construct_unique_mapping(loader: yaml.SafeLoader, node: yaml.MappingNode, deep: bool = False) -> dict:
-    mapping: dict[Any, Any] = {}
-    for key_node, value_node in node.value:
-        key = loader.construct_object(key_node, deep=deep)
-        if key in mapping:
-            raise PolicyError(f"duplicate key {key!r} in policy")
-        mapping[key] = loader.construct_object(value_node, deep=deep)
-    return mapping
-
-
-_UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_mapping)
-
-
-def load_policy_text(text: str) -> dict[str, Any]:
-    data = yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 - SafeLoader subclass
-    if not isinstance(data, dict):
-        raise PolicyError("policy must be a mapping")
-    return data
-
-
-def node_rule(
-    decision: NodeDecision, expected_schema: Optional[dict[str, Any]], json_required: bool
-) -> dict[str, Any]:
-    """Routing rule for one node, as stored under `nodes.<node_id>`."""
-    return {
-        "status": decision.status,
-        "primary_model": decision.recommended_model,
-        "fallback_model": decision.fallback_model,
-        "baseline_model": decision.baseline_model,
-        "routing_conditions": {
-            "min_quality_score": None,  # filled by build_policy (threshold is global)
-            "enforce_json": bool(json_required),
-            "required_fields": list((expected_schema or {}).get("required", [])),
-            "max_retries": DEFAULT_MAX_RETRIES,
-        },
-        "evidence": {
-            "baseline_cost_usd": decision.baseline_cost_usd,
-            "optimized_cost_usd": decision.optimized_cost_usd,
-            "cost_reduction_pct": decision.cost_reduction_pct,
-            "baseline_latency_ms": decision.baseline_latency_ms,
-            "optimized_latency_ms": decision.optimized_latency_ms,
-            "latency_reduction_pct": decision.latency_reduction_pct,
-            "quality_score": decision.quality_score,
-            "reason": decision.reason,
-        },
+def generate_policy(result: OptimizationResult) -> RoutingPolicyArtifact:
+    result = OptimizationResult.model_validate(result)
+    routes, omissions = [], []
+    for decision in result.decisions:
+        if decision.status not in ("recommended", "baseline_retained"):
+            omissions.append({"node_id": decision.node_id, "status": decision.status, "reason": decision.reason})
+            continue
+        selected = next(item for item in decision.candidates if item.model.identifier == decision.selected_model_id)
+        baseline = next(item for item in decision.candidates if item.model.identifier == decision.baseline_model_id)
+        routes.append({
+            "node_id": decision.node_id, "model": selected.model.model_dump(mode="json"),
+            "provenance": decision.provenance, "decision_status": decision.status, "reason": decision.reason,
+            "quality_threshold": format(decision.quality_threshold, "f"),
+            "observed_case_pass_rate": format(selected.quality_pass_rate, "f"),
+            "case_count": selected.planned_cases, "measurement_digest": selected.measurement_digest,
+            "baseline_model": baseline.model.model_dump(mode="json"),
+            "recorded_baseline_cost_usd": format(baseline.cost_total_usd, "f"),
+            "recorded_selected_cost_usd": format(selected.cost_total_usd, "f"),
+            "recorded_savings_usd": format(decision.recorded_savings_usd, "f"),
+            "latency_ms": selected.latency_ms.model_dump(mode="json"),
+        })
+    if not routes:
+        return RoutingPolicyArtifact(status="unavailable", reason="no_eligible_routes", route_count=0)
+    try:
+        import yaml
+    except ImportError:
+        return RoutingPolicyArtifact(status="unavailable", reason="serializer_unavailable", route_count=0)
+    document = {
+        "schema_version": "cascaderouter.policy.v1", "analysis_id": result.plan.analysis_id,
+        "analysis_digest": result.plan.analysis_digest, "run_id": result.run_id,
+        "benchmark_digest": result.benchmark_digest, "optimization_digest": content_digest(result),
+        "objective_version": result.objective_version, "configuration_version": result.configuration_version,
+        "configuration_digest": result.configuration_digest, "provenance": result.provenance,
+        "approval_manifest_digest": result.approval_manifest_digest, "recording_dataset_digest": result.recording_dataset_digest,
+        "case_set": result.plan.case_set.model_dump(mode="json"), "case_set_digest": result.plan.case_set_digest,
+        "evaluation_profile": result.plan.evaluation_profile.model_dump(mode="json"),
+        "evaluation_profile_digest": result.plan.evaluation_profile_digest,
+        "registry_digest": result.plan.registry_digest, "execution_digest": result.plan.execution_digest,
+        "decisions_complete": result.decisions_complete, "routes": routes, "omitted_nodes": omissions,
     }
+    try:
+        encoded = yaml.safe_dump(document, sort_keys=True, allow_unicode=False, default_flow_style=False, line_break="\n", width=120)
+        class UniqueSafeLoader(yaml.SafeLoader):
+            pass
 
+        def mapping(loader, node):
+            values = {}
+            for key_node, value_node in node.value:
+                key = loader.construct_object(key_node)
+                if type(key) is not str or key in values:
+                    raise ValueError("Duplicate or invalid policy key.")
+                values[key] = loader.construct_object(value_node)
+            return values
 
-def build_policy(
-    decisions: Iterable[tuple[NodeDecision, Optional[dict[str, Any]], bool]],
-    *,
-    threshold: float,
-    repository: str,
-    run_id: str,
-    data_source: str,
-    total_cost_reduction_pct: Optional[float],
-    generated_at: Optional[datetime] = None,
-) -> dict[str, Any]:
-    nodes: dict[str, Any] = {}
-    for decision, schema, json_required in decisions:
-        rule = node_rule(decision, schema, json_required)
-        rule["routing_conditions"]["min_quality_score"] = threshold
-        nodes[decision.node_id] = rule
-    return {
-        "version": POLICY_VERSION,
-        "generated_by": "CascadeRouter FinOps Compiler",
-        "generated_at": (generated_at or datetime.now(timezone.utc)).isoformat(),
-        "repository": repository,
-        "benchmark_run_id": run_id,
-        "data_source": data_source,
-        "quality_threshold": threshold,
-        "total_projected_cost_reduction_pct": total_cost_reduction_pct,
-        "nodes": nodes,
-    }
-
-
-def dump_policy(policy: dict[str, Any]) -> str:
-    """Serialise and verify: the text must load back to exactly `policy`."""
-    text = yaml.safe_dump(policy, sort_keys=False, allow_unicode=True, default_flow_style=False)
-    if load_policy_text(text) != policy:
-        raise PolicyError("policy did not survive a YAML round-trip")
-    return text
-
-
-def dump_node_policy(node_id: str, rule: dict[str, Any]) -> str:
-    return dump_policy({"node_id": node_id, **rule})
+        UniqueSafeLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+        # Only our own bounded generated YAML is loaded; no external YAML endpoint.
+        if len(encoded.encode("utf-8")) > 524288:
+            raise ValueError()
+        loader = UniqueSafeLoader(encoded)
+        try:
+            if loader.get_single_data() != document:
+                raise ValueError()
+        finally:
+            loader.dispose()
+    except (yaml.YAMLError, ValueError, TypeError, RecursionError):
+        return RoutingPolicyArtifact(status="unavailable", reason="serialization_failed", route_count=0)
+    return RoutingPolicyArtifact(
+        status="available" if result.decisions_complete else "partial", route_count=len(routes), yaml_content=encoded,
+        digest=hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+    )

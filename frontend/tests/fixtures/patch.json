@@ -1,0 +1,40 @@
+{
+  "manifest": {
+    "schema_version": "cascaderouter.patch.v1",
+    "patch_id": "patch_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "analysis_id": "analysis_5dca3dad3cee4697b67de955d385d92f",
+    "source_manifest_digest": "93ee17ed2c86ee7aeef50cfc889abe749b7c2582031efa20c5da490a4a97d5a1",
+    "optimization_id": "opt_2f4ecc0165192771e0d60b379e11a7b17cc40ce03337fc4a21b7854edeabb100",
+    "optimization_digest": "2f4ecc0165192771e0d60b379e11a7b17cc40ce03337fc4a21b7854edeabb100",
+    "policy_digest": "41a073d6020437d443f44b23c07736e22faaabcce90f661cc0795b18259544cf",
+    "created_at": "2026-10-29T00:00:00.000000Z",
+    "transformation": "literal_model_id.v1",
+    "patch_format": "literal-spans.v1",
+    "provenance": "test",
+    "status": "proposed",
+    "requested_node_ids": [
+      "llm_4d6f1d6629a81593fae3739f"
+    ],
+    "files": [
+      {
+        "file_path": "app.py",
+        "original_digest": "3ca71c3669a087890b5bdf3bf31df7708c09b7e06dbb2653e96b804ea6faee12",
+        "proposed_digest": "bf366609e39f34a17a8e0f6fa28c66c69b51aa385bc674968e5fe8d0fb1d19bb",
+        "edits": [
+          {
+            "node_id": "llm_4d6f1d6629a81593fae3739f",
+            "old_model_id": "local/baseline",
+            "proposed_model_id": "local/candidate",
+            "start_byte": 92,
+            "end_byte": 108
+          }
+        ]
+      }
+    ],
+    "omissions": [],
+    "complete_for_requested_nodes": true
+  },
+  "review_diff": "literal-spans.v1\n--- a/app.py\n+++ b/app.py\n@@ bytes 92:108 node llm_4d6f1d6629a81593fae3739f @@\n-\"local/baseline\"\n+\"local/candidate\"\n",
+  "artifact_digest": "d313845324d9c45cfefcd44052d36404394f064ff1489522969d08b6574eb473",
+  "digest": "9f4e6c6720e9bad4358f5dc5e00621216c18316f1095f0a0e99f9e165505f187"
+}

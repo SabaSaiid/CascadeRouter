@@ -107,3 +107,7 @@ temp_patch_*/
 benchmark_cache/
 runs/
 *.log
+
+# Explicit local API settings and operator-owned analysis state
+cascaderouter.local.json
+.cascaderouter-data/
