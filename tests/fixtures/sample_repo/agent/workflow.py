@@ -82,7 +82,7 @@ def classify_customer_intent(client: OpenAI, query: str) -> dict[str, Any]:
         temperature=0,
     )
     result = _parse_json(response.choices[0].message.content)
-    if result.get("category") not in ("billing", "tech_support", "general"):
+    if result.get("category") not in INTENT_SCHEMA["properties"]["category"]["enum"]:
         result["category"] = "general"
     return result
 
