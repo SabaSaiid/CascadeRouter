@@ -235,3 +235,32 @@ async def test_real_capture_integration():
     await BenchmarkRunner(S, Recorder()).run(run, extras, calls)
     assert run.status == "complete"
     assert seen and seen[0][0]["content"].startswith("You are a support triage classifier")
+
+
+async def test_evaluation_error_is_isolated(monkeypatch):
+    import backend.compiler.shadow_runner as sr
+
+    def broken(*a, **k):
+        raise AttributeError("bad schema")
+
+    monkeypatch.setattr(sr, "_evaluate_case", broken)
+    run, extras = await _execute(ScriptedClient(behaviour), scan_repository(SAMPLE).calls[:1])
+    assert run.status == "complete"
+    metric = run.nodes[0].metrics_by_model[NANO.id]
+    assert metric.status == "failed" and "evaluation failed: AttributeError" in metric.validation_errors[0]
+    assert extras.spent_usd > 0  # paid calls are still accounted
+
+
+async def test_capture_value_error_is_isolated_per_node():
+    calls = scan_repository(SAMPLE).calls
+
+    def picky(root, call, cases, timeout):
+        if "extract" in call.node_id:
+            raise TypeError("Object of type date is not JSON serializable")
+        return fake_capture(root, call, cases, timeout)
+
+    run, _ = await _execute(ScriptedClient(behaviour), calls, capture=picky)
+    assert run.status == "complete"
+    by_id = {n.node_id: n for n in run.nodes}
+    assert by_id["node_classify_customer_intent"].recommended_model_id is not None
+    assert "not JSON serializable" in by_id["node_extract_ticket_metadata"].metrics_by_model[NANO.id].validation_errors[0]

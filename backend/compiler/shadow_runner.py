@@ -156,9 +156,12 @@ class BenchmarkRunner:
         for i, call in enumerate(calls, start=1):
             cases = all_cases.get(call.node_id, [])
             run.current_step = f"Capturing prompts for {call.node_id} ({i}/{len(calls)})"
-            captured = await asyncio.to_thread(
-                self.capture, extras.repo_root, call, cases, settings.regression_timeout_seconds
-            )
+            try:
+                captured = await asyncio.to_thread(
+                    self.capture, extras.repo_root, call, cases, settings.regression_timeout_seconds
+                )
+            except (TypeError, ValueError) as exc:  # one node's bad input must not sink the run
+                captured = [CaptureResult(None, f"prompt capture failed: {exc}")] * len(cases)
             # Vacuous cases are never sent to a model: they would make any answer "pass".
             captures[call.node_id] = [
                 CaptureResult(None, VACUOUS_CASE_ERROR) if case_is_vacuous(call, case) else cap
@@ -206,9 +209,16 @@ class BenchmarkRunner:
                     logger.exception("benchmark call %s/%s failed", call.node_id, spec.id)
                     outcome = CallOutcome(None, None, False, f"{spec.id}: unexpected error: {type(exc).__name__}")
                 else:
-                    evaluation, hard_ok = _evaluate_case(call, cases_by_node[call.node_id][idx], completion.text, extras.threshold)
-                    outcome = CallOutcome(completion, evaluation, hard_ok)
                     extras.spent_usd += estimate_cost(spec, completion.input_tokens, completion.output_tokens)
+                    try:
+                        evaluation, hard_ok = _evaluate_case(
+                            call, cases_by_node[call.node_id][idx], completion.text, extras.threshold
+                        )
+                    except Exception as exc:  # e.g. a malformed schema in the target repo
+                        logger.exception("evaluation failed for %s/%s", call.node_id, spec.id)
+                        outcome = CallOutcome(None, None, False, f"evaluation failed: {type(exc).__name__}: {exc}")
+                    else:
+                        outcome = CallOutcome(completion, evaluation, hard_ok)
             outcomes[(call.node_id, spec.id)][idx] = outcome
             done += 1
             run.progress_pct = round(done / total * 100, 1)
