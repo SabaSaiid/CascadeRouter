@@ -200,3 +200,80 @@ def test_threshold_bounds():
         evaluate("x", threshold=1.5)
     assert evaluate('{"a":1}', threshold=1.0, json_required=True).passes_validation
     assert evaluate("", threshold=0.0).passes_validation is False
+
+
+# ---------------------------------------------------------------- review regressions
+
+
+def test_huge_integers_do_not_crash():
+    big = "1" + "0" * 400
+    r = evaluate('{"n": %s}' % big, threshold=0.5,
+                 expected_schema={"type": "object", "properties": {"n": {"type": "number"}}})
+    assert r.passes_validation
+    r = evaluate('{"n": %s}' % big, threshold=0.5, json_required=True, reference={"n": 10**400})
+    assert r.passes_validation
+    r = evaluate('{"n": %s}' % big, threshold=0.9, json_required=True, reference={"n": 1.5})
+    assert not r.passes_validation
+
+
+def test_deeply_nested_input_does_not_crash():
+    assert evaluate("[" * 100000, threshold=0.5, json_required=True).quality_score == 0.0
+    assert extract_json("x " + '{"a":' * 5000) == (False, None)
+
+
+def test_nested_required_fields_are_enforced():
+    schema = {
+        "type": "object",
+        "required": ["address"],
+        "properties": {"address": {"type": "object", "required": ["city"], "properties": {"city": {"type": "string"}}}},
+    }
+    r = evaluate('{"address": {}}', threshold=0.92, expected_schema=schema)
+    assert not r.passes_validation
+    assert "Schema violation $.address: missing required field 'city'" in r.validation_errors
+
+
+@pytest.mark.parametrize("text", ['"I cannot help"', "null", "42", "true"])
+def test_json_scalars_are_not_accepted(text):
+    r = evaluate(text, threshold=0.5, json_required=True)
+    assert not r.passes_validation and "Output is not valid JSON" in r.validation_errors
+
+
+def test_scalar_before_object_still_finds_object():
+    assert extract_json('"note" {"a": 1}') == (True, {"a": 1})
+
+
+def test_enum_is_bool_strict():
+    assert validate_schema(False, {"enum": [0]}) == ["$: False not in [0]"]
+    assert validate_schema(1, {"enum": [True]}) == ["$: 1 not in [True]"]
+    assert validate_schema(1.0, {"enum": [1]}) == []
+    assert validate_schema("1", {"enum": [1]}) != []
+    r = evaluate('{"x": true}', threshold=0.92,
+                 expected_schema={"type": "object", "properties": {"x": {"enum": [1, 2]}}})
+    assert not r.passes_validation
+
+
+def test_malformed_enum_is_ignored():
+    r = evaluate('{"x": 5}', threshold=0.5,
+                 expected_schema={"type": "object", "properties": {"x": {"enum": "abc"}}})
+    assert r.passes_validation
+
+
+@pytest.mark.parametrize("const", ["NaN", "Infinity", "-Infinity"])
+def test_non_standard_json_constants_rejected(const):
+    r = evaluate('{"x": %s}' % const, threshold=0.5,
+                 expected_schema={"type": "object", "properties": {"x": {"type": "number"}}})
+    assert not r.passes_validation and "Output is not valid JSON" in r.validation_errors
+
+
+def test_non_finite_type_name():
+    assert validate_schema(float("nan"), {"type": "number"}) == ["$: expected number, got non-finite number"]
+    assert validate_schema(float("inf"), {"type": "integer"}) != []
+
+
+def test_extraction_attempts_are_bounded(monkeypatch):
+    import backend.compiler.evaluator as ev
+
+    monkeypatch.setattr(ev, "MAX_DECODE_ATTEMPTS", 2)
+    assert extract_json('[x [y {"a": 1}') == (False, None)
+    monkeypatch.setattr(ev, "MAX_DECODE_ATTEMPTS", 3)
+    assert extract_json('[x [y {"a": 1}') == (True, {"a": 1})
