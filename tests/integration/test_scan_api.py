@@ -331,9 +331,28 @@ def test_supported_entry_point_is_loopback_and_bad_configuration_exits_safely(ap
                                 "storage_directory": str(api_environment[2])}), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["backend.main", "--config", str(path)])
     assert entry.main() == 0
-    assert invoked == [{"host": "127.0.0.1", "port": 8000, "access_log": False}]
+    assert invoked == [{"host": "127.0.0.1", "port": 8000, "access_log": False, "proxy_headers": False}]
     path.write_text('{"api_key":"PRIVATE_STARTUP_INPUT"}', encoding="utf-8")
     assert entry.main() == 2
     assert len(invoked) == 1
     output = capsys.readouterr().out
     assert "PRIVATE_STARTUP_INPUT" not in output and str(path) not in output
+
+
+@pytest.mark.parametrize("requested,expected", [("repository", 200), ("../PRIVATE_OUTSIDE", 403)])
+def test_rate_limiting_preserves_initial_authorization_and_health(api_environment, requested, expected):
+    previous, _, storage = api_environment
+    settings = BackendConfig(permitted_repository_roots=previous.permitted_repository_roots, storage_directory=storage,
+                             request_rate_limit=1, request_rate_window_seconds=3600)
+    with client_for(settings) as client:
+        first = client.post("/api/scan", json={"repository_path": requested})
+        assert first.status_code == expected
+        if expected == 403:
+            assert_error(first, 403, "repository_forbidden")
+        assert client.get("/api/health").status_code == 200
+        limited = client.post("/api/scan", json={"repository_path": "repository"}, headers={"x-forwarded-for": "192.0.2.5"})
+        assert_error(limited, 429, "capacity_exceeded")
+        assert "PRIVATE" not in limited.text
+        assert client.options("/api/scan", headers={"origin": "http://localhost:5173",
+            "access-control-request-method": "POST", "access-control-request-headers": "Content-Type"}).status_code == 200
+        assert client.get("/api/health").status_code == 200

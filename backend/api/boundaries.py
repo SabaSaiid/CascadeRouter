@@ -7,6 +7,7 @@ import ipaddress
 import logging
 import threading
 import time
+from collections import OrderedDict
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -37,10 +38,65 @@ def _local_host(value: str) -> bool:
         return False
 
 
+def _client_identity(scope) -> str:
+    """Use the transport peer, never forwarding headers, ports or request paths.
+
+    The supported server disables proxy-header rewriting of ASGI client data.
+    Missing/non-IP peers share one bucket rather than arbitrary identity strings.
+    """
+    client = scope.get("client")
+    if not isinstance(client, (tuple, list)) or not client:
+        return "unknown"
+    host = client[0]
+    if type(host) is not str or len(host) > 45 or "%" in host:
+        return "unknown"
+    try:
+        address = ipaddress.ip_address(host)
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            address = address.ipv4_mapped
+        return str(address)
+    except ValueError:
+        return "unknown"
+
+
+class _RequestRateLimiter:
+    """Bounded token buckets; saturated identities cannot be evicted to reset them."""
+
+    def __init__(self, settings, clock):
+        self.capacity = settings.request_rate_limit
+        self.refill = self.capacity / settings.request_rate_window_seconds
+        self.max_clients = settings.request_rate_max_clients
+        self.clock = clock
+        self.buckets = OrderedDict()
+        self.lock = threading.Lock()
+
+    def allow(self, identity):
+        with self.lock:
+            now = self.clock()
+            previous = self.buckets.get(identity)
+            if previous is None:
+                if len(self.buckets) >= self.max_clients:
+                    # O(1) admission work. Reclaim only a fully replenished LRU
+                    # bucket; otherwise refuse a new identity without allocating.
+                    tokens, last = next(iter(self.buckets.values()))
+                    if tokens + max(0.0, now - last) * self.refill < self.capacity:
+                        return False
+                    self.buckets.popitem(last=False)
+                tokens, last = self.capacity, now
+            else:
+                tokens, last = previous
+                tokens = min(self.capacity, tokens + max(0.0, now - last) * self.refill)
+            allowed = tokens >= 1.0
+            self.buckets[identity] = (tokens - 1.0 if allowed else tokens, max(last, now))
+            self.buckets.move_to_end(identity)
+            return allowed
+
+
 class RequestBoundary:
-    def __init__(self, app, *, settings):
+    def __init__(self, app, *, settings, clock=time.monotonic):
         self.app = app
         self.settings = settings
+        self.limiter = _RequestRateLimiter(settings, clock)
         # Bound aggregate buffering as well as each individual request. Scans
         # have their own smaller admission limit, with no executor backlog.
         self.slots = threading.BoundedSemaphore(max(1, min(8, (64 * 1024 * 1024) // settings.max_request_body_bytes)))
@@ -86,6 +142,12 @@ class RequestBoundary:
                         or any(header.strip().lower() not in allowed_headers
                                for value in requested_headers for header in value.split(b","))):
                     raise ServiceError("invalid_request")
+            path = scope.get("path", "")
+            if ((path == "/api" or path.startswith("/api/"))
+                    and not (path == "/api/health" and scope.get("method") == "GET")
+                    and scope.get("method") != "OPTIONS"
+                    and not self.limiter.allow(_client_identity(scope))):
+                raise ServiceError("capacity_exceeded")
             lengths = [value for name, value in headers if name.lower() == b"content-length"]
             encodings = [value for name, value in headers if name.lower() == b"content-encoding"]
             transfers = [value for name, value in headers if name.lower() == b"transfer-encoding"]

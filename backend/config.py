@@ -38,6 +38,9 @@ class BackendConfig(BaseModel):
     max_stored_analyses: Annotated[int, Field(ge=1, le=4096)] = 256
     max_stored_analysis_bytes: Annotated[int, Field(ge=1024, le=64 * 1024 * 1024)] = 16 * 1024 * 1024
     max_request_body_bytes: Annotated[int, Field(ge=1, le=16 * 1024 * 1024)] = 1024 * 1024
+    request_rate_limit: Annotated[int, Field(ge=1, le=10000)] = 60
+    request_rate_window_seconds: Annotated[int, Field(ge=1, le=3600)] = 60
+    request_rate_max_clients: Annotated[int, Field(ge=1, le=4096)] = 256
     scan_workers: Annotated[int, Field(ge=1, le=4)] = 1
     job_workers: Annotated[int, Field(ge=1, le=8)] = 2
     max_queued_jobs: Annotated[int, Field(ge=1, le=256)] = 32

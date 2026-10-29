@@ -248,6 +248,9 @@ or the storage directory.
 | Setting | Default | Maximum |
 |---|---:|---:|
 | Request body bytes | 1 MiB | 16 MiB |
+| Request token-bucket capacity (`request_rate_limit`) | 60 | 10,000 |
+| Full refill period (`request_rate_window_seconds`) | 60 seconds | 3,600 seconds |
+| Tracked peers (`request_rate_max_clients`) | 256 | 4,096 |
 | Scan workers | 1 | 4 |
 | Job workers | 2 | 8 |
 | Queued jobs | 32 | 256 |
@@ -335,6 +338,36 @@ Errors contain a genuine per-request `req_` UUID and the established flat
 `ErrorResponse`. Validation inputs, paths, exception text and tracebacks are never
 returned. Unexpected request failures log only a fixed sentence plus request ID.
 Unknown routes and disallowed methods also use controlled error bodies (`404`/`405`).
+
+Requests to `/api` and `/api/...` share a per-peer token bucket across paths and
+ports. `GET /api/health` and `OPTIONS` are exempt from rate accounting; existing
+Host/Origin, preflight, body-size and admission checks still apply. Rate admission
+runs after Host/Origin/preflight validation and before body framing, buffering or
+any downstream body read. An exhausted quota returns the existing sanitized
+`429 capacity_exceeded` without consuming the body. When quota is available,
+framing and actual-byte checks retain their existing behavior.
+
+Configure the three strict positive integer settings above through the existing
+explicit non-secret JSON. Buckets start full and refill continuously at
+`request_rate_limit / request_rate_window_seconds` tokens per second, capped at
+their capacity. One admitted request consumes one token, including requests that
+later fail validation or authorization. Updates are protected by a lock and the
+clock is injectable for deterministic boundary tests. State is process-local,
+resets on application restart and is not user authentication.
+
+Identity is the canonical numeric ASGI connection-peer IP, with IPv4-mapped IPv6
+normalized to IPv4. Forwarding headers, request paths and source ports do not
+select buckets. Missing, scoped or non-IP peer identities share one bounded
+`unknown` bucket. The supported Uvicorn entry point disables proxy-header
+rewriting (`proxy_headers=False`); embedding hosts must also preserve transport
+peer identity. No reverse-proxy trust configuration is supported.
+
+At the tracked-peer cap, a new identity may reclaim only the least-recently-used
+bucket if that bucket is fully replenished. Otherwise admission fails closed
+with `429` and no new allocation. Depleted buckets cannot be evicted by identity
+churn to reset quotas. Work per bucket operation and stored identity lengths are
+bounded; the limiter does not create per-path state. This conservative policy
+can deny a new peer while the identity table is saturated.
 
 Pure ASGI middleware counts actual body bytes before JSON parsing, including
 chunked/no-length requests and falsely small lengths. Declared oversize is rejected

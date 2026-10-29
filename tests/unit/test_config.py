@@ -16,6 +16,7 @@ def test_defaults_are_local_bounded_and_fail_closed():
     assert config.bind_host == "127.0.0.1" and config.bind_port == 8000
     assert config.scan_workers == 1 and config.job_workers == 2
     assert config.max_request_body_bytes == 1024 * 1024
+    assert (config.request_rate_limit, config.request_rate_window_seconds, config.request_rate_max_clients) == (60, 60, 256)
     assert config.permitted_repository_roots == ()
     assert config.safe_report()["repository_scanning_configured"] is False
     with pytest.raises(ConfigurationError, match="explicit permitted-root policy"):
@@ -168,6 +169,7 @@ def test_config_rejects_final_directory_junctions(tmp_path):
 
 @pytest.mark.parametrize("field,maximum", [
     ("bind_port", 65535), ("max_request_body_bytes", 16 * 1024 * 1024),
+    ("request_rate_limit", 10000), ("request_rate_window_seconds", 3600), ("request_rate_max_clients", 4096),
     ("scan_workers", 4), ("job_workers", 8), ("max_queued_jobs", 256),
     ("max_jobs", 2048), ("max_concurrent_provider_requests", 16),
     ("max_requests_per_job", 1024), ("max_output_tokens", 8192),

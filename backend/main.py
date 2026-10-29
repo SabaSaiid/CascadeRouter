@@ -141,7 +141,9 @@ def main() -> int:
         else:
             print("No configuration supplied: scan and retrieval are disabled.")
         import uvicorn
-        uvicorn.run(create_app(settings), host=settings.bind_host, port=settings.bind_port, access_log=False)
+        # Rate limiting uses the actual peer; loopback forwarding headers grant
+        # no authority to replace scope["client"]. No trusted proxy is configured.
+        uvicorn.run(create_app(settings), host=settings.bind_host, port=settings.bind_port, access_log=False, proxy_headers=False)
         return 0
     except (ConfigurationError, ValidationError, OSError):
         print("Backend configuration is invalid or incomplete.")
