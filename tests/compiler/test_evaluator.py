@@ -304,3 +304,10 @@ def test_unclosed_think_hides_reasoning():
     assert strip_reasoning('answer <think>{"category": "billing"') == "answer"
     r = evaluate('<think>{"category": "billing", "confidence": 1}', threshold=0.5, expected_schema=INTENT_SCHEMA)
     assert not r.passes_validation and "Output is not valid JSON" in r.validation_errors
+
+
+def test_malformed_schema_shapes_do_not_crash():
+    bad = {"type": "object", "properties": ["a"], "required": "a"}
+    r = evaluate('{"a": 1}', threshold=0.5, expected_schema=bad)
+    assert r.passes_validation
+    assert validate_schema({"a": 1}, {"required": [1, "b"]}) == ["$: missing required field 'b'"]

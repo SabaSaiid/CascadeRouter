@@ -121,7 +121,8 @@ def extract_json(text: str, schema: Optional[dict[str, Any]] = None) -> tuple[bo
     candidates = json_candidates(text)
     if not candidates:
         return False, None
-    required = list(schema.get("required", [])) if isinstance(schema, dict) else []
+    raw = schema.get("required") if isinstance(schema, dict) else None
+    required = [k for k in raw if isinstance(k, str)] if isinstance(raw, list) else []
     if required:
         for value in reversed(candidates):
             if isinstance(value, dict) and all(k in value for k in required):
@@ -173,10 +174,12 @@ def validate_schema(value: Any, schema: dict[str, Any], path: str = "$") -> list
         errors.append(f"{path}: {value!r} not in {list(enum)}")
 
     if isinstance(value, dict):
-        for key in schema.get("required", []):
-            if key not in value:
+        required = schema.get("required")
+        for key in required if isinstance(required, list) else []:
+            if isinstance(key, str) and key not in value:
                 errors.append(f"{path}: missing required field '{key}'")
-        for key, sub in schema.get("properties", {}).items():
+        properties = schema.get("properties")
+        for key, sub in (properties.items() if isinstance(properties, dict) else []):
             if key in value and isinstance(sub, dict):
                 errors.extend(validate_schema(value[key], sub, f"{path}.{key}"))
 
@@ -274,7 +277,8 @@ def _evaluate_structured(
     hard_ok = True
 
     if schema:
-        required = list(schema.get("required", []))
+        raw_required = schema.get("required")
+        required = [k for k in raw_required if isinstance(k, str)] if isinstance(raw_required, list) else []
         if required:
             if isinstance(parsed, dict):
                 present = [k for k in required if k in parsed]
@@ -322,8 +326,9 @@ def _evaluate_structured(
 def _count_checked_properties(parsed: Any, schema: dict[str, Any]) -> int:
     """Number of schema-constrained values present in the output (min 1 for a typed root)."""
     count = 0
-    if isinstance(parsed, dict):
-        for key, sub in schema.get("properties", {}).items():
+    properties = schema.get("properties")
+    if isinstance(parsed, dict) and isinstance(properties, dict):
+        for key, sub in properties.items():
             if key in parsed and isinstance(sub, dict):
                 count += 1
     if count == 0 and ("type" in schema or "enum" in schema):
