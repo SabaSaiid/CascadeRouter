@@ -21,10 +21,11 @@
 | GET | `/api/health` | — | `{status, version, data_source, nebius_configured}` |
 | GET | `/api/models` | — | `ModelTierConfig[]` (catalog + prices) |
 | POST | `/api/scan` | `{repository_path}` | `ScanResult` |
-| POST | `/api/benchmark` | `{node_ids, repository_path?, data_source?}` | `{run_id}` (202, runs in background) |
+| POST | `/api/benchmark` | `{node_ids, repository_path?}` | `{run_id}` (202, runs in background) |
 | GET | `/api/runs/{run_id}` | — | `BenchmarkRun` (polled for progress) |
 | POST | `/api/optimize` | `{run_id, quality_threshold=0.92}` | `OptimizeResult` (includes patch, policy, regression) |
-| POST | `/api/regression` | `{run_id}` | regression-only re-run (UI "Run Regression Suite") |
+
+The regression suite runs inside `/api/optimize`, and its results are cached per `(run_id, quality_threshold)`. A separate `/api/regression` endpoint was dropped, because the UI's "Run Regression Suite" button can re-read the cached optimize result.
 
 Notes and gotchas:
 - `/api/benchmark` only sends `node_ids`, so the backend has to keep the **latest scan** in memory (a `ScanStore`) to turn node ids back into prompts. If the UI ever sends `repository_path`, we key on that instead.
@@ -155,7 +156,8 @@ If a node has no cases, it gets no benchmark. Its metrics are reported as `faile
 
 ### 4.10 `runtime/cascade_router.py`
 - `CascadeRouter.load(path)` and `dispatch(node_id, client, fallback_tier=None, validator=None, **kwargs)`.
-- `dispatch` calls the primary model, then validates (JSON schema from the policy, if `enforce_schema`). On failure or exception it escalates to the fallback, up to `max_retries`. There are no dependencies beyond PyYAML.
+- `dispatch` calls the primary model and then validates the response structurally: it must be non-empty and, when `enforce_json` is set, a JSON object with every field in `required_fields`. On failure or exception it escalates to the fallback, up to `max_retries`. If the fallback also fails, the primary response is returned, so routing never makes an app worse than before. `dispatch_async` handles awaited calls. There are no dependencies beyond PyYAML.
+- The patch keeps the original `model=` argument as the passthrough default (used when no policy exists or the node is missing from it), and only rewrites the callee.
 - It's shipped into the sandbox as an importable `cascaderouter` module, so the patched sample repo imports cleanly.
 
 ### 4.11 `regression_runner.py` (Aditya)
@@ -210,7 +212,14 @@ Working rules: small commits per step, no demo data in `backend/`, every module 
 - [x] P0 Scaffold
 - [x] P1 Metrics + evaluator
 - [x] P2 Sample repo + scanner (`/api/scan`)
-- [ ] P3 Benchmark
-- [ ] P4 Optimize
-- [ ] P5 Runtime + regression
-- [ ] P6 Hardening
+- [x] P3 Benchmark: cases, sandbox, prompt capture, Nebius client, record/replay, runner, `/api/benchmark`, `/api/runs/{id}` (code complete)
+- [x] P4 Optimize: optimizer, policy generator, patch generator, `/api/optimize` (code complete)
+- [x] P5 Runtime + regression: `runtime/cascade_router.py`, `regression_runner.py` (code complete)
+- [x] P6 Hardening: rate limit, spend cap, body limit, trusted hosts, loopback bind (code complete)
+- [ ] Testing pass: unit tests for every P3–P6 module, API and integration tests
+- [ ] Docs: `docs/test-report.md`, `docs/demo-scenarios.md`
+
+Known limitations, kept on purpose:
+- Prompt capture and regression isolate credentials, not the OS. Target code still has network and filesystem access inside the sandbox. Only scan repositories you trust enough to run their tests.
+- The contract requires numbers. Failed matrix cells therefore report 0 tokens, cost and latency with `status: "failed"`, and an undefined total reduction is reported as 0.
+- Node ids come from function names (`node_<function>`, then `__2`, `__3` for extra calls in one function). They stay stable across edits elsewhere in the file. Content-hashed ids would also survive renames, but they're unreadable as `cascade_cases.yaml` keys.
