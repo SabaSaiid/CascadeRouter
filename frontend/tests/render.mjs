@@ -1,8 +1,8 @@
 // Uses the declared TypeScript/React tools. CASCADE_TEST_TOOLS may point at an
 // offline cached validation installation; its versions must be reported separately.
 import { createRequire } from 'node:module';
-import { mkdtempSync, readdirSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { resolve, dirname, join } from 'node:path';
+import { mkdtempSync, readdirSync, readFileSync, mkdirSync, writeFileSync, lstatSync, realpathSync, rmSync } from 'node:fs';
+import { resolve, dirname, join, basename } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -12,6 +12,16 @@ const ts = require('typescript');
 export const React = require('react');
 export const { renderToStaticMarkup } = require('react-dom/server');
 const build = mkdtempSync(join(tmpdir(), 'cascade-render-'));
+export const buildDirectory = build;
+const ownedIdentity = lstatSync(build);
+process.once('exit', () => {
+  try {
+    const resolved = realpathSync(build), current = lstatSync(build);
+    if (dirname(resolved) !== realpathSync(tmpdir()) || !basename(resolved).startsWith('cascade-render-')
+      || current.isSymbolicLink() || !current.isDirectory() || current.dev !== ownedIdentity.dev || current.ino !== ownedIdentity.ino) throw new Error();
+    rmSync(resolved, { recursive: true, force: true });
+  } catch { process.stderr.write('Owned render-test workspace cleanup unavailable.\n'); process.exitCode ||= 1; }
+});
 writeFileSync(join(build, 'package.json'), '{"type":"module"}');
 function compile(folder) {
   for (const file of readdirSync(folder, { withFileTypes: true })) {

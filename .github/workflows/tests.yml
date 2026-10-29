@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BACKEND_JUNIT_PATH: ${{ runner.temp }}/cascaderouter-junit-${{ github.run_id }}-${{ github.run_attempt }}.xml
+      CASCADEROUTER_REQUIRE_NODE_ACCEPTANCE: "1"
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -31,6 +32,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Verify Required Backend and Client Prerequisites
+        run: python -B -m scripts.release_preflight --profile ci-backend
 
       - name: Run Backend Unit & Integration Tests
         id: backend_tests

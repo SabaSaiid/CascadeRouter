@@ -1,6 +1,8 @@
 """Run only first-party clients against the real explicitly configured loopback API."""
 from contextlib import contextmanager
 import json
+import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -16,12 +18,23 @@ from backend.main import create_app
 
 
 def node24():
+    flag = os.environ.get("CASCADEROUTER_REQUIRE_NODE_ACCEPTANCE", "0")
+    if flag not in {"0", "1"}:
+        pytest.fail("CASCADEROUTER_REQUIRE_NODE_ACCEPTANCE must be 0 or 1", pytrace=False)
+    def unavailable():
+        message = "Node 24+ unavailable for native TypeScript client acceptance"
+        if flag == "1": pytest.fail(message, pytrace=False)
+        pytest.skip(message)
     node = shutil.which("node")
     if not node:
-        pytest.skip("Node 24+ unavailable for native TypeScript client acceptance")
-    version = subprocess.run([node, "--version"], capture_output=True, text=True, check=True).stdout
-    if int(version.lstrip("v").split(".")[0]) < 24:
-        pytest.skip("Node 24+ unavailable for native TypeScript client acceptance")
+        unavailable()
+    try:
+        version = subprocess.run([node, "--version"], capture_output=True, text=True, check=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        unavailable()
+    match = re.fullmatch(r"v(\d+)\.\d+\.\d+", version)
+    if match is None or int(match[1]) < 24:
+        unavailable()
     return node
 
 
