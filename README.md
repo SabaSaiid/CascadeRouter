@@ -13,6 +13,10 @@ records final commands, results and remediation. The [Phase 4.10 record](docs/ph
 and [reproducibility investigation](docs/phase410-reproducibility.md) are historical
 evidence, not proof that a clean build or browser journey passed.
 
+The [main integration merge review](docs/main-merge-acceptance.md) records the
+subsequent per-file reconciliation and current local acceptance results. It does
+not close the outstanding release gates.
+
 ## Required local tools and offline prerequisites
 
 Use an approved existing Python 3.11 environment for release validation, Node 24+

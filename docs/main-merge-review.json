@@ -1,0 +1,1504 @@
+{
+  "schema_version": "cascaderouter.main-merge-review.v1",
+  "integration_parent": "c93f5f400683cf4908c12a710dbb6fbaded8dfda",
+  "incoming_parent": "5c5f09a86a554affac75cce4743cdf13d1d92450",
+  "common_ancestor": "7cd6cd3024f0c9c11506901582e424077242b497",
+  "backup_branch": "backup/integration-before-main-sync-20261029",
+  "reviewed_paths": [
+    {
+      "path": ".env.example",
+      "conflicted": false,
+      "resolution": "retain_integration",
+      "reason": "Keep tracked integration template unchanged; upstream operational/provider/billing variables are unsupported by explicit JSON BackendConfig. No actual dotenv/credential file is read.",
+      "upstream_sha256": "545aed38142dcf82c296628948b972331d7674626db1e2e0270bbebc38d5e747",
+      "upstream_lines": 89,
+      "base_sha256": "a715b01bdb97f9bc2c1726bc629d3fbb4d92e73727e3dd8d731318eb5ae125cd",
+      "integration_sha256": "a715b01bdb97f9bc2c1726bc629d3fbb4d92e73727e3dd8d731318eb5ae125cd"
+    },
+    {
+      "path": ".github/workflows/tests.yml",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Integration already preserves main failure visibility and loopback intent, plus required Node 24, JUnit counts and independent build results. Main adds an unapproved 95% threshold, Node 20 and frontend build suppression; do not adopt those.",
+      "upstream_sha256": "45603b9b97e8f498a875d8d7e5ca1dd31562b3d09f48634e2aea23a6b77afc06",
+      "upstream_lines": 55,
+      "base_sha256": "a23f49d21dfe6136aacdaa57b6e2b0ff67e2e41d3d1f5af033734418dadbbd97",
+      "integration_sha256": "29f2c2ab2c04ee8bea93146f66af8c4578d029200c1679cc1b18d63bda5f0744"
+    },
+    {
+      "path": "README.md",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep current verified local setup and release blockers. Main describes dotenv/provider credentials, catalog rates, target execution and a different API; its updated layout is not the selected architecture.",
+      "upstream_sha256": "6795e8f13d3871b31f9bfca05698fb0fa9e1d408dbde9ee1d4ae13dcf033b28e",
+      "upstream_lines": 297,
+      "base_sha256": "3e2595cf8be4dc8c33ce959e69d31a0a2ceccdd0580c8a0c0bf359c6837ec96b",
+      "integration_sha256": "d729a4c1487260a7f39258ef59240522333ce9ca9e915841ba86eb4fd5d8e089"
+    },
+    {
+      "path": "backend/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Introduces unrelated 0.1.0 release designation. Keep current namespace packaging; no release version assigned.",
+      "upstream_sha256": "133304665e940d53e1871b3270127b09be5113a50809c459654bf52a01ea5a21",
+      "upstream_lines": 3,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/api/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/api/deps.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Legacy Settings/store dependencies and live Nebius factory; incompatible and creates a paid path.",
+      "upstream_sha256": "5771d1824d95c0bf3b9e711a95cc1aa717229a41ec86ff0e7698eedfaf97ff8f",
+      "upstream_lines": 61,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "from functools import lru_cache",
+        "from fastapi import Depends",
+        "from backend.config import Settings, get_settings",
+        "from backend.guardrails import SpendCappedClient, SpendTracker",
+        "from backend.services.llm import LLMClient, LLMError",
+        "from backend.services.nebius_client import NebiusClient",
+        "from backend.services.recordings import RecordingClient, RecordingStore, RecordingWriter",
+        "from backend.store import RunStore, ScanStore"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/api/routes.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Competing legacy API imports provider/capture/runner, lacks current authorization/durability/validation interfaces.",
+      "upstream_sha256": "3847c2c486f8da924268d205e36b6d8532763a51c81411cfad920b4c986ab1bb",
+      "upstream_lines": 204,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import asyncio",
+        "import uuid",
+        "from datetime import datetime, timezone",
+        "from fastapi import APIRouter, Depends, HTTPException, status",
+        "from starlette.concurrency import run_in_threadpool",
+        "from backend import __version__",
+        "from backend.api.deps import effective_mode, get_llm_client_factory, get_run_store, get_scan_store, get_spend_tracker",
+        "from backend.compiler.ast_scanner import ScanPathError, resolve_scan_path, scan_repository",
+        "from backend.compiler.cases import CasesError, load_cases",
+        "from backend.compiler.dag_builder import build_dag",
+        "from backend.compiler.metrics import estimate_cost",
+        "from backend.compiler.prompt_capture import DEFAULT_MAX_OUTPUT_TOKENS",
+        "from backend.compiler.shadow_runner import BenchmarkRunner, RunExtras",
+        "from backend.config import REPO_ROOT, Settings, get_settings",
+        "from backend.guardrails import SpendTracker",
+        "from backend.schemas import BenchmarkRequest, BenchmarkRun, BenchmarkStarted, HealthResponse, ModelTierConfig, OptimizeRequest, OptimizeResult, ScanRequest, ScanResult",
+        "from backend.services.llm import LLMError",
+        "from backend.services.optimization import OptimizeError, optimize_run",
+        "from backend.store import RunStore, ScanStore, StoredRun, StoredScan"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/compiler/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/compiler/ast_scanner.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep bounded import-provenance scanner, source fingerprints and directory guards. Main uses DiscoveredCall/RepoScan contracts, repository-wide SDK presence and retained source/AST caches. BOM, filesystem budgets and false-positive regressions already exist on integration.",
+      "upstream_sha256": "d16cad7d0ac8057b4cd4ff44a3ca75c4129d5effb0016cd49cb76acadf69961b",
+      "upstream_lines": 591,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import ast",
+        "import logging",
+        "import os",
+        "import stat",
+        "from dataclasses import dataclass, field",
+        "from pathlib import Path",
+        "from typing import Any, Optional",
+        "from backend.schemas import LLMNode"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "0fe5b4f80dbe4a9e6155a00a8106b3b472a1d60e59b1813af49bb95a21b37548"
+    },
+    {
+      "path": "backend/compiler/cases.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Separate unbounded YAML case/file format for executable target vars; current validated registry/case_set contract and guarded asset readers remain authoritative.",
+      "upstream_sha256": "46332587164870b1fb104d98b7badd5f457f86bb0569063660b44cefb39c7c64",
+      "upstream_lines": 123,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import json",
+        "from dataclasses import dataclass, field",
+        "from pathlib import Path",
+        "from typing import Any, Optional",
+        "import yaml"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/compiler/dag_builder.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep evidence-carrying straight-line data dependencies and explicit unsupported boundaries. Main build_dag adds sequence and cross-file/interprocedural edges and drops cycles; its branch fix does not authorize extending the approved subset.",
+      "upstream_sha256": "72e137b20affb99e065b6398dab55a6b70a9554e7d6a157cee0b0660611bc35e",
+      "upstream_lines": 317,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import ast",
+        "from dataclasses import dataclass, field",
+        "from pathlib import PurePosixPath",
+        "from typing import Iterable, Optional",
+        "from backend.compiler.ast_scanner import DiscoveredCall"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "13a50c6b22b53c2051bb27d39fa5a4c379940636589cc681dbc13422dfb4e834"
+    },
+    {
+      "path": "backend/compiler/evaluator.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep bounded exact/strict JSON/schema evaluation over LocalBenchmarkCase/EvaluationProfile. Main heuristically extracts answers, ignores malformed schema shapes and computes weighted scores. Port relevant malformed/example scenarios as fail-closed regressions instead of changing the contract.",
+      "upstream_sha256": "31118ff14db243095ec8fef248e64e3b846b8ffdaba192afd67492fc5e094db5",
+      "upstream_lines": 422,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import json",
+        "import math",
+        "import re",
+        "from dataclasses import dataclass, field",
+        "from typing import Any, Optional"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "4cf9c5bf2dc7ef970761653834185978ad8ebb003734c66240a98012c3d4c13b"
+    },
+    {
+      "path": "backend/compiler/metrics.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep Decimal pinned-pricing calculations and explicit unavailable populations. Main ModelSpec prices, character token estimates and zero failed cells are incompatible; undefined totals fix is already respected by current availability contracts.",
+      "upstream_sha256": "857aea1b26fa9a323130773d2c52fa6f797777801d3f4490dd89d9f2489bcf6a",
+      "upstream_lines": 129,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import math",
+        "from dataclasses import dataclass",
+        "from typing import Iterable, Sequence",
+        "from backend.config import ModelSpec"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "ae3830f8c44d6ad456ae74679195218f6e8241ad0f5c7040d97a04c09e85b6a7"
+    },
+    {
+      "path": "backend/compiler/patch_generator.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep model-literal spans, shared bounded candidate verifier, source-version binding and literal-spans.v1 artifacts. Main rewrites callees/imports and emits unified diffs; CRLF/BOM/Unicode properties already have current regressions.",
+      "upstream_sha256": "c273bcdc42fac9f1c2c37d9b997d5dd0ec3b2cfba1b6068e4a842b04d23f1ccd",
+      "upstream_lines": 278,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import ast",
+        "import difflib",
+        "from dataclasses import dataclass, field",
+        "from typing import Iterable, Optional",
+        "from backend.compiler.ast_scanner import DiscoveredCall"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "f0953f31ed110ee10688e6b89283d3cc0d51420347284c422b66ca736989c81d"
+    },
+    {
+      "path": "backend/compiler/policy_generator.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep immutable evidence/digest-bound policy artifacts and strict own-generated YAML roundtrip. Main NodeDecision policy/fallback design lacks these authority bindings; duplicate/unsafe YAML checks already exist.",
+      "upstream_sha256": "b2d7db672221e91539be9c88f187d72539255126d60f0fc93210d720cab71971",
+      "upstream_lines": 115,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "from datetime import datetime, timezone",
+        "from typing import Any, Iterable, Optional",
+        "import yaml",
+        "from backend.compiler.router_optimizer import NodeDecision"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "d1c182930b96af08fb9a127e1f5b48a3f537112101cba83af476b500115f76a6"
+    },
+    {
+      "path": "backend/compiler/prompt_capture.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Harness imports and invokes scanned target modules; forbidden even with a fake client or copied source.",
+      "upstream_sha256": "268d188ecd3a943589ff46fadee6d5c183382beea1171f1f585c30ec8dd81c07",
+      "upstream_lines": 272,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import json",
+        "import secrets",
+        "from dataclasses import dataclass, field",
+        "from pathlib import Path",
+        "from typing import Any, Optional",
+        "from backend.compiler.ast_scanner import DiscoveredCall",
+        "from backend.compiler.cases import BenchmarkCase",
+        "from backend.compiler.sandbox import run_python, sandbox_copy"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/compiler/regression_runner.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Applies patches to copied targets and executes their pytest suite; outside non-executing static validation contract.",
+      "upstream_sha256": "ef7f18d43f4f551eaf20c4d3edebbbc7e81fa27eff5ec11ff6b040c0ad85fbe3",
+      "upstream_lines": 90,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import re",
+        "from dataclasses import dataclass, field",
+        "from pathlib import Path",
+        "from typing import Optional",
+        "from backend.compiler.patch_generator import RUNTIME_MODULE, PatchSet",
+        "from backend.compiler.policy_generator import POLICY_FILENAME",
+        "from backend.compiler.sandbox import run_python, sandbox_copy"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/compiler/router_optimizer.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep exact cheapest eligible selection, current stable tie and baseline retention. Main still has 2% latency tie window, fallback-tier substitution and invented missing-baseline zero values. Prior optimizer reconciliation regressions already cover the cheaper candidate fix.",
+      "upstream_sha256": "a74eb05834c5c1d7e98073a0ef6b0d21a7c633f44d3055e3bc43513484ccc69e",
+      "upstream_lines": 142,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "from dataclasses import dataclass",
+        "from typing import Mapping, Optional",
+        "from backend.compiler.metrics import cost_savings_pct, latency_reduction_pct",
+        "from backend.config import Settings",
+        "from backend.schemas import BenchmarkMetric, DecisionStatus, LLMNode, NodeBenchmarkResult"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "c7a892b44d77c1150b6950e25c094514776a7a323411c6909d4b95824e810674"
+    },
+    {
+      "path": "backend/compiler/sandbox.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Subprocess execution helper for copied untrusted targets; not an OS jail and not needed by approved static-only architecture.",
+      "upstream_sha256": "4de1e3ad80a535960171bb62188fa1e559ceb0b4f89812647ce3934259dc9e0e",
+      "upstream_lines": 128,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import os",
+        "import shutil",
+        "import signal",
+        "import subprocess",
+        "import sys",
+        "import tempfile",
+        "from contextlib import contextmanager",
+        "from dataclasses import dataclass",
+        "from pathlib import Path",
+        "from typing import Iterator, Optional"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/compiler/shadow_runner.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Uses target capture and live client protocol with legacy metric/run models; current deterministic/recorded offline executor remains authoritative.",
+      "upstream_sha256": "9d398585aeba151ff6bbe0827ff9bf9761d54d1794ffad2292f0cee3337e6143",
+      "upstream_lines": 250,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import asyncio",
+        "import logging",
+        "import statistics",
+        "from dataclasses import dataclass, field",
+        "from pathlib import Path",
+        "from typing import Callable, Optional",
+        "from backend.compiler.ast_scanner import DiscoveredCall",
+        "from backend.compiler.cases import BenchmarkCase, CasesError, load_cases",
+        "from backend.compiler.evaluator import EvaluationResult, evaluate",
+        "from backend.compiler.metrics import estimate_cost",
+        "from backend.compiler.prompt_capture import CaptureResult, capture_requests",
+        "from backend.compiler.router_optimizer import select_model",
+        "from backend.config import ModelSpec, Settings",
+        "from backend.schemas import BenchmarkMetric, BenchmarkRun, NodeBenchmarkResult",
+        "from backend.services.llm import CompletionResult, LLMClient, LLMError"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/config.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep strict BackendConfig, explicit non-secret JSON, loopback/root/storage limits. Main Settings loads dotenv, provider keys, prices, billing and live mode; it is neither schema-compatible nor permitted.",
+      "upstream_sha256": "fc1a844405376ee74713844816b8a63f2c9d0b2319b7a573f5764fa78477a409",
+      "upstream_lines": 256,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import math",
+        "import os",
+        "from dataclasses import dataclass, field",
+        "from functools import lru_cache",
+        "from pathlib import Path",
+        "from typing import Literal, Mapping",
+        "from dotenv import dotenv_values"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "8e622ef8798c0560db8a5f5df0613d88971bb18c43d562a49c6da6cf048c3392"
+    },
+    {
+      "path": "backend/guardrails.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Mixed legacy hosted spend cap/provider/capture imports and incompatible Settings. Bounded request/body/rate checks were already ported into current middleware with regressions.",
+      "upstream_sha256": "fa22e15350bbe6d1b08c54782117046cb589b559bce7d002df5a14626c92f0e0",
+      "upstream_lines": 226,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import json",
+        "import threading",
+        "import time",
+        "from datetime import datetime, timezone",
+        "from typing import Any, Callable, Optional",
+        "from backend.compiler.metrics import estimate_cost",
+        "from backend.compiler.prompt_capture import DEFAULT_MAX_OUTPUT_TOKENS",
+        "from backend.config import ModelSpec, Settings",
+        "from backend.services.llm import CompletionResult, LLMClient, LLMError"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/main.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep authorized guarded routes, durable services, rate/body limits, loopback CLI and CDN-doc disablement. Main imports legacy API/provider factories, re-enables CDN docs and omits patch validation/history.",
+      "upstream_sha256": "b3c52cc53d341a2056dd68c4d74e6ef51a77580c5ea7a42ad75ab7afdc8c0187",
+      "upstream_lines": 53,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import logging",
+        "from fastapi import FastAPI",
+        "from fastapi.middleware.cors import CORSMiddleware",
+        "from starlette.middleware.trustedhost import TrustedHostMiddleware",
+        "from backend import __version__",
+        "from backend.api.routes import router",
+        "from backend.config import Settings, get_settings",
+        "from backend.guardrails import GuardrailMiddleware, RateLimiter"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "733733046a3a86a2106116a098934738b8dcbd648f0cdc33175d5be42d3ff223"
+    },
+    {
+      "path": "backend/runtime/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/runtime/cascade_router.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep explicit local executor registration, authority, evidence and fallback restrictions. Main dispatch accepts arbitrary SDK clients and unrestricted model substitutions; stream/tool passthrough improvements do not authorize provider dispatch.",
+      "upstream_sha256": "003a80bed1d14431c0ff2ebfc425d9015720594105e5c96885de0537cfd0721d",
+      "upstream_lines": 283,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import inspect",
+        "import json",
+        "import logging",
+        "import os",
+        "import re",
+        "from dataclasses import dataclass, field",
+        "from pathlib import Path",
+        "from typing import Any, Callable, Optional",
+        "import yaml"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "ba42c1b8ea4644abaf31d0a03c85a711a8934825114a47f39f2ab11b2f3d89ee"
+    },
+    {
+      "path": "backend/schemas.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep finalized Pydantic contracts for test/recorded provenance, exact evidence, immutable artifacts and static validation reports. Main mirrors obsolete frontend types with live/mock and mandatory estimated numeric fields; silently replacing it would break current generated contracts.",
+      "upstream_sha256": "2dbce102196fd7f51b5866b9a159f83aa30288a37b1accdee23f1def636e7a69",
+      "upstream_lines": 152,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "from typing import Any, Literal, Optional",
+        "from pydantic import BaseModel, ConfigDict, Field"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "f15ad8e904951cf574156a50148e39acd2f9a9cecd8fd495e3b9b1f5080a626c"
+    },
+    {
+      "path": "backend/services/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/services/llm.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Competing completion protocol with heuristic token counts and no current immutable provenance/authority contract; not used by local approved executor.",
+      "upstream_sha256": "c31d8cad1688cf84d67a3b8c5972b4de5af21855915ae4b9f223b0194bd6c185",
+      "upstream_lines": 55,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import hashlib",
+        "import json",
+        "from dataclasses import asdict, dataclass",
+        "from typing import Any, Optional, Protocol"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/services/nebius_client.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Imports OpenAI SDK and sends external paid inference; explicitly prohibited.",
+      "upstream_sha256": "69f39d781e492f3c3a91069a6e9f0b28b2f5af6a260cd21a89883352a02891f8",
+      "upstream_lines": 88,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import time",
+        "from typing import Any, Optional",
+        "import openai",
+        "from openai import AsyncOpenAI",
+        "from backend.compiler.metrics import estimate_tokens",
+        "from backend.services.llm import CompletionResult, LLMError"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/services/optimization.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep durable OptimizationService, approved recorded evidence verification and reference-only results. Main optimize_run invokes sandbox regressions and constructs/re-writes patches automatically with legacy NodeDecision/store contracts.",
+      "upstream_sha256": "d1fc61a95c753d24e5ae0a1639c53ccc10fb35d39c1e59af5dd1713e976e95cd",
+      "upstream_lines": 138,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import logging",
+        "from dataclasses import dataclass",
+        "from typing import Callable, Optional",
+        "from backend.compiler.ast_scanner import DiscoveredCall",
+        "from backend.compiler.metrics import aggregate_totals",
+        "from backend.compiler.patch_generator import build_patches, node_diff",
+        "from backend.compiler.policy_generator import build_policy, dump_node_policy, dump_policy",
+        "from backend.compiler.regression_runner import RegressionResult, run_regression",
+        "from backend.compiler.router_optimizer import NodeDecision, decide_node",
+        "from backend.config import REPO_ROOT, Settings",
+        "from backend.schemas import OptimizationDecision, OptimizeResult",
+        "from backend.store import StoredRun"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "ee6982f0590e6086e39db8324430aac79e0f1e791e2029525540d065cb7914ef"
+    },
+    {
+      "path": "backend/services/recordings.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Live recording writer/replay uses legacy mutable files and heuristic CompletionResult; current immutable approved offline recording datasets already implement replay.",
+      "upstream_sha256": "04f49fb7976dea729f509b625f422ec5f0bda227e2a1cd61b88c028bc2d2accc",
+      "upstream_lines": 117,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import json",
+        "import os",
+        "import re",
+        "import tempfile",
+        "import threading",
+        "from datetime import datetime, timezone",
+        "from pathlib import Path",
+        "from typing import Any",
+        "from backend.services.llm import CompletionResult, LLMClient, LLMError, request_key"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend/store.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "In-memory legacy RepoScan/RunExtras cache competes with current durable integrity-bound storage and recovery.",
+      "upstream_sha256": "a75457fbcf921b0e887c52f895db222ddadfe94a45ea83e7efb941ada64ecfbd",
+      "upstream_lines": 95,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import asyncio",
+        "import threading",
+        "from collections import OrderedDict",
+        "from dataclasses import dataclass, field",
+        "from typing import Optional",
+        "from backend.compiler.ast_scanner import RepoScan",
+        "from backend.compiler.shadow_runner import RunExtras",
+        "from backend.schemas import BenchmarkRun, OptimizeResult, ScanResult"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "backend_plan.md",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Historical plan for main hosted-provider/target-execution architecture, not selected operator instructions; retained verbatim in second-parent Git history.",
+      "upstream_sha256": "81590c76240987e6333253b0d6eadb4cb2c69a582733f3a43d3263de162d38f2",
+      "upstream_lines": 226,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "docs/demo-scenarios.md",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Main-only live paid demo, target regression and legacy endpoint instructions would mislead current users; preserved in incoming Git history.",
+      "upstream_sha256": "54bd3c2f86097ae8a64f5d3a8acb373aef738f405881e9abb553ce9c6a1a7518",
+      "upstream_lines": 82,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "docs/test-report.md",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Main-only claimed 428/98%/95%-gate evidence is not a test result for this merge; historical content remains in incoming Git history.",
+      "upstream_sha256": "35961dcaa7624d96694b25fa839022d3f6aea3510400fbd4e501bfbb3edc58f5",
+      "upstream_lines": 83,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "pytest.ini",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Legacy auto-async/live-key plugin configuration would supersede current explicit runner setup and allow live smoke collection; no new plugin dependency or live marker is adopted.",
+      "upstream_sha256": "84381b1e78b056825dad0bf5b1f175464b70cc198c4da512dc83ceee744fe09c",
+      "upstream_lines": 7,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "start.sh",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Keep explicit JSON config, supported backend.main CLI, fail-visible child cleanup and no automatic install/dotenv creation. Main loopback correction is already satisfied by that CLI; its uvicorn app target is incompatible.",
+      "upstream_sha256": "2c7ebd67dc9f8af16ab373084ccf3fa5ef02e5c9eb7aac3bee3acc1f6447cbed",
+      "upstream_lines": 94,
+      "base_sha256": "6c15a121b6993daa5ca26f26d61236b337f3a7fa8b43aa005b7853a140ea6a72",
+      "integration_sha256": "c708979e5c4cfeb887b60bf20fa579715b31ffdfcbe4713470d097e72e9386b8"
+    },
+    {
+      "path": "tests/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/api/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/api/conftest.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "d598e57ea5eee8263db3fd4d2274ed5b4ea5012470fbfb0c671c0aa589cdaddd",
+      "upstream_lines": 60,
+      "upstream_imports": [
+        "import pytest",
+        "from fastapi.testclient import TestClient",
+        "from backend.api.deps import get_llm_client_factory, get_run_store, get_scan_store, get_spend_tracker",
+        "from backend.guardrails import SpendTracker",
+        "from backend.main import create_app",
+        "from backend.services.llm import CompletionResult",
+        "from backend.store import RunStore, ScanStore"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/api/test_benchmark_flow.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "d64e62da9373055b4f9b0b7de4ed9c2eb2af3f163425991af4807ecc6f42cf16",
+      "upstream_lines": 191,
+      "upstream_imports": [
+        "import time",
+        "import pytest",
+        "from backend.config import REPO_ROOT, load_settings",
+        "import asyncio",
+        "import asyncio",
+        "from fastapi.testclient import TestClient",
+        "from backend.api.deps import get_run_store, get_scan_store",
+        "from backend.main import create_app",
+        "from fastapi.testclient import TestClient",
+        "from backend.api.deps import get_run_store, get_scan_store",
+        "from backend.main import create_app",
+        "import dataclasses",
+        "from fastapi.testclient import TestClient",
+        "from backend.api.deps import get_llm_client_factory, get_run_store, get_scan_store",
+        "from backend.main import create_app",
+        "from backend.api.deps import _tracker_for_cap",
+        "from backend.api.deps import _tracker_for_cap",
+        "from backend.api.routes import projected_output_cost"
+      ],
+      "upstream_test_functions": 13,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/api/test_contract.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "98b289b8a5ae6fee299cd65f4bf886494d6f3d8fa1f13b6007d5cdeaa2e8ea5e",
+      "upstream_lines": 93,
+      "upstream_imports": [
+        "import re",
+        "import typing",
+        "import pytest",
+        "from backend import schemas",
+        "from backend.config import REPO_ROOT, load_settings"
+      ],
+      "upstream_test_functions": 4,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/api/test_deps.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "83c0829a892b8f798178810832ebafe11117e77043931da4c26390fddb076ea2",
+      "upstream_lines": 41,
+      "upstream_imports": [
+        "import dataclasses",
+        "import pytest",
+        "from backend.api.deps import build_llm_client, effective_mode",
+        "from backend.config import load_settings",
+        "from backend.guardrails import SpendCappedClient, SpendTracker",
+        "from backend.services.llm import LLMError",
+        "from backend.services.recordings import RecordingClient, RecordingWriter",
+        "from backend.api.deps import get_run_store, get_scan_store"
+      ],
+      "upstream_test_functions": 5,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/api/test_health.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "e7cc20fde65b5696b9017c0ed8d424b6f0385d346532c909942ece3490953076",
+      "upstream_lines": 112,
+      "upstream_imports": [
+        "import pytest",
+        "from fastapi.testclient import TestClient",
+        "from backend import __version__",
+        "from backend.main import create_app",
+        "import dataclasses",
+        "from backend.config import load_settings",
+        "import importlib",
+        "import backend.main as main"
+      ],
+      "upstream_test_functions": 11,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/api/test_scan.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "6c2087c8676927183c9a0c6979a6a8445fd772117eb551d34fd2c7d7e7349740",
+      "upstream_lines": 66,
+      "upstream_imports": [
+        "from backend.config import REPO_ROOT",
+        "from fastapi.testclient import TestClient",
+        "from backend.api.deps import get_scan_store",
+        "from backend.main import create_app"
+      ],
+      "upstream_test_functions": 7,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_ast_scanner.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Preserve all integration scanner/graph/source-safety assertions. Main tests use different return types/IDs and three extra agent fixture nodes; relevant budget/BOM/provenance scenarios are already covered without target imports.",
+      "upstream_sha256": "7c045970de70f45b588d01b03bc4b2a0eee5d31106480badf27ef20ea388012d",
+      "upstream_lines": 385,
+      "upstream_imports": [
+        "import os",
+        "import textwrap",
+        "from pathlib import Path",
+        "import pytest",
+        "from backend.compiler.ast_scanner import DYNAMIC_MODEL, UNSPECIFIED_MODEL, ScanPathError, resolve_scan_path, scan_repository",
+        "from backend.config import REPO_ROOT",
+        "import backend.compiler.ast_scanner as mod",
+        "import backend.compiler.ast_scanner as mod",
+        "import backend.compiler.ast_scanner as mod",
+        "import backend.compiler.ast_scanner as mod"
+      ],
+      "upstream_test_functions": 27,
+      "base_sha256": null,
+      "integration_sha256": "385915c335628902ab57b8804d9547be296d715e442750235dc69c212c0a62d1"
+    },
+    {
+      "path": "tests/compiler/test_cases.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "1fd3fde9f510d7a0898196ecb654750452daa5c30bc063a961b4fa015a436258",
+      "upstream_lines": 80,
+      "upstream_imports": [
+        "import pytest",
+        "from backend.compiler.cases import CASES_FILENAME, BenchmarkCase, CasesError, load_cases, parse_cases",
+        "from backend.config import REPO_ROOT"
+      ],
+      "upstream_test_functions": 8,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_dag_builder.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "f9857604dbe2b03ce9df3d1ec04cdc2ddb76e0243e3e36499baee12f1762f9da",
+      "upstream_lines": 230,
+      "upstream_imports": [
+        "import textwrap",
+        "from pathlib import Path",
+        "from backend.compiler.ast_scanner import scan_repository",
+        "from backend.compiler.dag_builder import build_dag",
+        "from backend.config import REPO_ROOT"
+      ],
+      "upstream_test_functions": 17,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_evaluator.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "7230654735040046c35463c8c96b32925004b9181f13533f2caeac5e9b5f6846",
+      "upstream_lines": 313,
+      "upstream_imports": [
+        "import pytest",
+        "from backend.compiler.evaluator import evaluate, extract_json, strip_reasoning, validate_schema",
+        "import backend.compiler.evaluator as ev",
+        "from backend.compiler.evaluator import json_candidates"
+      ],
+      "upstream_test_functions": 36,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_metrics.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "def7ce5a24460676a3228e81b7c697b434b9f82403b55df512697d89e03afbcd",
+      "upstream_lines": 112,
+      "upstream_imports": [
+        "import math",
+        "import pytest",
+        "from backend.compiler.metrics import aggregate_totals, cost_savings_pct, estimate_cost, estimate_tokens, latency_reduction_pct, percentile, reduction_pct, summarize_latencies",
+        "from backend.config import load_settings"
+      ],
+      "upstream_test_functions": 10,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_patch_generator.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "ec0f7ac4ea10b52fef1b379637b75fa76ed44ef28f67a517bdb86b0a8da8bde7",
+      "upstream_lines": 194,
+      "upstream_imports": [
+        "import ast",
+        "import textwrap",
+        "import pytest",
+        "from backend.compiler.ast_scanner import scan_module, scan_repository",
+        "from backend.compiler.patch_generator import IMPORT_LINE, LOADER_LINE, PatchError, build_patches, node_diff, patch_source",
+        "from backend.config import REPO_ROOT",
+        "import subprocess"
+      ],
+      "upstream_test_functions": 20,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_policy_generator.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "62ce07a29583045d8a5820aabe9ce3848703e364d69bbfbda750b427861579ac",
+      "upstream_lines": 93,
+      "upstream_imports": [
+        "from datetime import datetime, timezone",
+        "import pytest",
+        "import yaml",
+        "from backend.compiler.policy_generator import POLICY_VERSION, PolicyError, build_policy, dump_node_policy, dump_policy, load_policy_text",
+        "from backend.compiler.router_optimizer import NodeDecision",
+        "from backend.runtime.cascade_router import CascadeRouter"
+      ],
+      "upstream_test_functions": 9,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_prompt_capture.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "bfcf6c3d0300d5710dc47301468e13248f2ae790a33af1de494ec398c2f4fd95",
+      "upstream_lines": 238,
+      "upstream_imports": [
+        "import json",
+        "import textwrap",
+        "from pathlib import Path",
+        "import pytest",
+        "from backend.compiler.ast_scanner import scan_repository",
+        "from backend.compiler.cases import BenchmarkCase, load_cases",
+        "from backend.compiler.prompt_capture import DEFAULT_MAX_OUTPUT_TOKENS, RESULT_MARKER, capture_requests, module_name, parse_harness_output, sanitize_request",
+        "from backend.config import REPO_ROOT"
+      ],
+      "upstream_test_functions": 18,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_regression_runner.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "ed7ba9237e04158dc85662b06015e5171ebcbf21d2bece2570be511c37d11f1b",
+      "upstream_lines": 107,
+      "upstream_imports": [
+        "import textwrap",
+        "from backend.compiler.ast_scanner import scan_repository",
+        "from backend.compiler.patch_generator import FilePatch, PatchSet, build_patches",
+        "from backend.compiler.regression_runner import RegressionResult, parse_pytest_output, run_regression",
+        "from backend.config import REPO_ROOT"
+      ],
+      "upstream_test_functions": 10,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_router_optimizer.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "5a93bdb355a1fef0d157bacb8f1234637a47642a5e27bba89a2b9f10953ab40b",
+      "upstream_lines": 125,
+      "upstream_imports": [
+        "import pytest",
+        "from backend.compiler.router_optimizer import decide_node, is_candidate, select_model",
+        "from backend.config import load_settings",
+        "from backend.schemas import BenchmarkMetric, LLMNode, NodeBenchmarkResult"
+      ],
+      "upstream_test_functions": 12,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_sandbox.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "862d52c16ca60ff35d388180fbc134918e75fb476955839466cd4c2fada05b09",
+      "upstream_lines": 137,
+      "upstream_imports": [
+        "import os",
+        "import sys",
+        "import time",
+        "from backend.compiler.sandbox import ProcessResult, run_python, sandbox_copy, scrubbed_env",
+        "import backend.compiler.sandbox as sb",
+        "import backend.compiler.sandbox as sb"
+      ],
+      "upstream_test_functions": 10,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/compiler/test_shadow_runner.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "1ed420861d0319ca8be97c86db34a0e4f99d013911a2af9598b69f836bc9d28d",
+      "upstream_lines": 266,
+      "upstream_imports": [
+        "import asyncio",
+        "from datetime import datetime, timezone",
+        "from pathlib import Path",
+        "import pytest",
+        "from backend.compiler.ast_scanner import scan_repository",
+        "from backend.compiler.cases import BenchmarkCase",
+        "from backend.compiler.evaluator import EvaluationResult",
+        "from backend.compiler.prompt_capture import CapturedRequest, CaptureResult",
+        "from backend.compiler.shadow_runner import NO_CASES_ERROR, VACUOUS_CASE_ERROR, BenchmarkRunner, CallOutcome, RunExtras, aggregate_metric, case_is_vacuous",
+        "from backend.config import REPO_ROOT, load_settings",
+        "from backend.schemas import BenchmarkRun",
+        "from backend.services.llm import CompletionResult, LLMError",
+        "import dataclasses",
+        "import backend.compiler.shadow_runner as sr"
+      ],
+      "upstream_test_functions": 15,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/conftest.py",
+      "conflicted": true,
+      "resolution": "retain_integration",
+      "reason": "Preserve explicit test-only registry/executor/evidence fixtures. Main autouse fixture depends on absent Settings/get_settings/DOTENV_PATH and legacy environment loading; no provider configuration or target import is needed.",
+      "upstream_sha256": "816c6a558ac6593ac6d548f5f15f18579ffb230da6ac8e63024e33fd56782bed",
+      "upstream_lines": 28,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import os",
+        "import pytest",
+        "import backend.config as config",
+        "from backend.config import get_settings"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": "63023eea199290df810c094fe91a739d854fe2a0c9d80c7bddf1c647fc5c867f"
+    },
+    {
+      "path": "tests/fixtures/sample_repo/agent/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/fixtures/sample_repo/agent/workflow.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Additional main agent/case/target-test fixture belongs to executable-capture pipeline and changes accepted fixture inventory; preserve existing static samples. Do not execute these target tests.",
+      "upstream_sha256": "2925cf9222047977e892ed8f8681cb8ae0ebd1d462727d9124b6040859f323e9",
+      "upstream_lines": 134,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import json",
+        "import os",
+        "from typing import Any",
+        "from openai import OpenAI"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/fixtures/sample_repo/cascade_cases.yaml",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Additional main agent/case/target-test fixture belongs to executable-capture pipeline and changes accepted fixture inventory; preserve existing static samples. Do not execute these target tests.",
+      "upstream_sha256": "7dff5181ab77981605933055ac46b3c9204c8af88b09344b120f65e8e7db43fd",
+      "upstream_lines": 24,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/fixtures/sample_repo/tests/conftest.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Additional main agent/case/target-test fixture belongs to executable-capture pipeline and changes accepted fixture inventory; preserve existing static samples. Do not execute these target tests.",
+      "upstream_sha256": "c50c8305f585c9551191788e47ab0cbebac1b54229902d72a7bd11ce8f5ae4b5",
+      "upstream_lines": 4,
+      "upstream_imports": [
+        "import sys",
+        "from pathlib import Path"
+      ],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/fixtures/sample_repo/tests/test_agent.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Additional main agent/case/target-test fixture belongs to executable-capture pipeline and changes accepted fixture inventory; preserve existing static samples. Do not execute these target tests.",
+      "upstream_sha256": "51b6870a9dea81aec00c404bd68f1339820fc5e5f17b25b2986fee795b477b9c",
+      "upstream_lines": 75,
+      "upstream_imports": [
+        "from __future__ import annotations",
+        "import json",
+        "from types import SimpleNamespace",
+        "import pytest",
+        "from agent import workflow"
+      ],
+      "upstream_test_functions": 6,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/integration/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/integration/test_live_nebius.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "b4137e20fdfecf6665c8dc1a92150c7fec3b161244de762a57fba92742a65d01",
+      "upstream_lines": 26,
+      "upstream_imports": [
+        "import os",
+        "import pytest",
+        "from backend.config import load_settings",
+        "from backend.services.nebius_client import NebiusClient"
+      ],
+      "upstream_test_functions": 1,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/integration/test_pipeline.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "4141376a2933b293ec98283ba04a477c07fd41b5945b880d531cfbf623f2bb8d",
+      "upstream_lines": 49,
+      "upstream_imports": [
+        "import asyncio",
+        "from datetime import datetime, timezone",
+        "from backend.compiler.ast_scanner import scan_repository",
+        "from backend.compiler.dag_builder import build_dag",
+        "from backend.compiler.policy_generator import load_policy_text",
+        "from backend.compiler.shadow_runner import BenchmarkRunner, RunExtras",
+        "from backend.config import REPO_ROOT, load_settings",
+        "from backend.runtime.cascade_router import CascadeRouter",
+        "from backend.schemas import BenchmarkRun, ScanResult",
+        "from backend.services.optimization import optimize_run",
+        "from backend.store import StoredRun, StoredScan",
+        "from tests.api.conftest import FakeLLM"
+      ],
+      "upstream_test_functions": 1,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/runtime/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/runtime/test_cascade_router.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "a4a3a70b5a6f09ffd206560aaacf1a4944106b0ebf1808b9bfbd7891cd7ebe8b",
+      "upstream_lines": 259,
+      "upstream_imports": [
+        "import asyncio",
+        "from types import SimpleNamespace",
+        "import pytest",
+        "from backend.runtime.cascade_router import ENV_DISABLE, ENV_POLICY_PATH, POLICY_FILENAME, CascadeRouter, NodeRule, check_response"
+      ],
+      "upstream_test_functions": 23,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/services/__init__.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Empty legacy package initializer is unnecessary for established namespace packages; avoid changing package/import behavior without functionality.",
+      "upstream_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "upstream_lines": 0,
+      "upstream_imports": [],
+      "upstream_test_functions": 0,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/services/test_llm.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "7be9c1704e694e38284282feb0fc64e2062308fafec9634045f1fe85455c4a48",
+      "upstream_lines": 30,
+      "upstream_imports": [
+        "import pytest",
+        "from backend.services.llm import CompletionResult, request_key"
+      ],
+      "upstream_test_functions": 4,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/services/test_nebius_client.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "8cf891a89db2421aceb56b676c61b9fa476caaa137ec223bf37f20cf58ea3989",
+      "upstream_lines": 95,
+      "upstream_imports": [
+        "from types import SimpleNamespace",
+        "import httpx",
+        "import openai",
+        "import pytest",
+        "from backend.services.llm import LLMError",
+        "from backend.services.nebius_client import NebiusClient"
+      ],
+      "upstream_test_functions": 6,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/services/test_optimization.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "723b93f57760efef7c0331f6884006477cc5958d9e94aa4244900e0df5a0ed83",
+      "upstream_lines": 130,
+      "upstream_imports": [
+        "from datetime import datetime, timezone",
+        "import pytest",
+        "from backend.compiler.ast_scanner import scan_repository",
+        "from backend.compiler.dag_builder import build_dag",
+        "from backend.compiler.regression_runner import RegressionResult",
+        "from backend.compiler.shadow_runner import RunExtras",
+        "from backend.config import REPO_ROOT, load_settings",
+        "from backend.schemas import BenchmarkMetric, BenchmarkRun, NodeBenchmarkResult, ScanResult",
+        "from backend.services.optimization import OptimizeError, optimize_run",
+        "from backend.store import StoredRun, StoredScan",
+        "import backend.services.optimization as opt",
+        "from backend.compiler.patch_generator import PatchSet"
+      ],
+      "upstream_test_functions": 7,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/services/test_recordings.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "a2203114eb38891c7093b6a48a47125a3eee7bf684f5402a6304a8fde18dc39e",
+      "upstream_lines": 130,
+      "upstream_imports": [
+        "import json",
+        "import pytest",
+        "from backend.services.llm import CompletionResult, LLMError, request_key",
+        "from backend.services.recordings import RecordingClient, RecordingStore, RecordingWriter",
+        "import backend.services.recordings as rec"
+      ],
+      "upstream_test_functions": 11,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/test_config.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "1c5201b9953294714395a3be1fa14860323a29eee5d22de737f20d51cbf4feeb",
+      "upstream_lines": 144,
+      "upstream_imports": [
+        "from pathlib import Path",
+        "import pytest",
+        "from backend.config import REPO_ROOT, ConfigError, load_settings",
+        "import os",
+        "import backend.config as config"
+      ],
+      "upstream_test_functions": 12,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/test_guardrails.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "ba65627bce19dc15f99cecdc6cd2c942e6695fee2f8847ff724eaa84f3f67d96",
+      "upstream_lines": 205,
+      "upstream_imports": [
+        "import pytest",
+        "from fastapi import FastAPI",
+        "from fastapi.testclient import TestClient",
+        "from backend.config import load_settings",
+        "from backend.guardrails import GuardrailMiddleware, RateLimiter, SpendCappedClient, SpendTracker",
+        "from backend.services.llm import CompletionResult, LLMError",
+        "from backend.guardrails import worst_case_cost",
+        "import asyncio",
+        "import asyncio",
+        "import asyncio"
+      ],
+      "upstream_test_functions": 15,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/test_schemas.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "57416cdacb7001c572dd00a26d6e34c5d8c1558e08a923f787ae6b5e58fa0e8c",
+      "upstream_lines": 47,
+      "upstream_imports": [
+        "import pytest",
+        "from pydantic import ValidationError",
+        "from backend.schemas import BenchmarkMetric, BenchmarkRequest, LLMNode, OptimizeRequest, ScanResult"
+      ],
+      "upstream_test_functions": 4,
+      "base_sha256": null,
+      "integration_sha256": null
+    },
+    {
+      "path": "tests/test_store.py",
+      "conflicted": false,
+      "resolution": "do_not_adopt_upstream_only",
+      "reason": "Tests target main-only symbols, return shapes, provider factories, execution helpers or legacy schemas identified in import/body review; omit with the incompatible implementation, not mark them skipped/passed. Current accepted regression assertions are all retained.",
+      "upstream_sha256": "8ce3ddba890ce705709ad66b7a02cbdf02a6e7fdea5b0d8cf6b2bc12bcbbf95b",
+      "upstream_lines": 67,
+      "upstream_imports": [
+        "from pathlib import Path",
+        "from backend.compiler.ast_scanner import RepoScan",
+        "from backend.schemas import ScanResult",
+        "from backend.store import ScanStore, StoredScan",
+        "from datetime import datetime, timezone",
+        "from backend.compiler.shadow_runner import RunExtras",
+        "from backend.schemas import BenchmarkRun",
+        "from backend.store import RunStore, StoredRun"
+      ],
+      "upstream_test_functions": 5,
+      "base_sha256": null,
+      "integration_sha256": null
+    }
+  ],
+  "policy": "No incoming-only backend implementation/test API is silently activated. Source snapshots remain reachable from both merge parents. No old-contract test result is claimed. Useful new regression scenarios are tested through actual integration APIs.",
+  "acceptance": {
+    "environment": {
+      "python": "3.14.3",
+      "node": "24.16.0",
+      "npm": "11.13.0",
+      "typescript": "6.0.3",
+      "react": "19.3.0",
+      "frontend_scope": "supplemental"
+    },
+    "guard_sha256": "cb96c485f736e62a11e75d12f40cf3a964c6fdd880b6a9585670490cdeb9eea9",
+    "guard_artifact": "scripts/pytest_loopback_guard.py",
+    "guard_denial_probe_exit_code": 0,
+    "supplemental_typecheck": {
+      "exit_code": 0,
+      "diagnostics": 0,
+      "exact_lock_verified": false
+    },
+    "source_inventory": {
+      "exit_code": 0,
+      "artifacts": 65,
+      "canonical_source_bytes": 621437
+    },
+    "contract_check_exit_code": 0,
+    "offline_inputs_check_exit_code": 0,
+    "release_evidence_check_exit_code": 0,
+    "unclosed_release_gates": "Unchanged: exact-lock typecheck/build/lint, browser, Python 3.11, clean dependencies, genuine production evidence, hosted CI, platform filesystem",
+    "focused": {
+      "counts": {
+        "tests": 905,
+        "passed": 897,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 8
+      },
+      "exit_code": 0,
+      "report_basename": "cascade-merge-focused.xml",
+      "junit_sha256": "42ab69890d100bc0f9ce7e7418a77ba4577895e5238b7c3e7cc00cbcae496f21",
+      "network_guard": {
+        "non_loopback_attempts": 0,
+        "scope": "Python DNS/connect/connect_ex/sendto; child processes not instrumented",
+        "provider_sdk_imports": []
+      },
+      "seconds": 36.85,
+      "warnings": 3755
+    },
+    "full": {
+      "counts": {
+        "tests": 1299,
+        "passed": 1291,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 8
+      },
+      "exit_code": 0,
+      "report_basename": "cascade-merge-full.xml",
+      "junit_sha256": "4e59b27470f5afa3e02400e4caa3823cec134de4e5923516608039020750242c",
+      "network_guard": {
+        "non_loopback_attempts": 0,
+        "scope": "Python DNS/connect/connect_ex/sendto; child processes not instrumented",
+        "provider_sdk_imports": []
+      },
+      "seconds": 49.47,
+      "warnings": 3778,
+      "skip_reasons": [
+        {
+          "reason": "Symbolic links unavailable on this platform (errno 22).",
+          "count": 3
+        },
+        {
+          "reason": "File symlink creation unavailable: errno=22, winerror=1314",
+          "count": 2
+        },
+        {
+          "reason": "Directory symlink creation unavailable: errno=22, winerror=1314",
+          "count": 1
+        },
+        {
+          "reason": "POSIX namespace replacement; Windows pins prevent this rename.",
+          "count": 2
+        }
+      ]
+    },
+    "frontend": {
+      "counts": {
+        "tests": 86,
+        "passed": 86,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      },
+      "exit_code": 0,
+      "report_basename": "cascade-merge-frontend.xml",
+      "junit_sha256": "f15dd4b1d9e7475ea097f7449285558d76a77933cdca6e97a4919d4ee8fa380a"
+    },
+    "ci_static_check_exit_code": 0,
+    "startup_bash_syntax_exit_code": 0
+  },
+  "observed_newer_main": "616ae073a0d4dc505a791c06e0914d429d5b49b4",
+  "first_merge_excludes_pr5": true
+}
