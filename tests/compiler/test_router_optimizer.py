@@ -112,3 +112,14 @@ def test_threshold_is_respected():
     r = full(**{NANO: m(NANO, 0.1, quality=0.93), LIGHT: m(LIGHT, 0.1, quality=0.93)})
     assert decide_node(node(), r, 0.92, S).recommended_model in (NANO, LIGHT)
     assert decide_node(node(), r, 0.95, S).recommended_model == SUPER
+
+
+def test_tie_window_never_hides_a_cheaper_than_baseline_model():
+    # Cheapest passing (Super) is 1% below the baseline (Ultra); Ultra is faster and
+    # within the 2% window, but must not be picked over a genuinely cheaper model.
+    r = NodeBenchmarkResult(node_id="n", metrics_by_model={
+        NANO: m(NANO, 0.1, quality=0.1, passes=False), LIGHT: m(LIGHT, 0.1, quality=0.1, passes=False),
+        SUPER: m(SUPER, 0.99, latency=900), ULTRA: m(ULTRA, 1.0, latency=100)})
+    d = decide_node(node(), r, 0.92, S)
+    assert d.status == "optimized" and d.recommended_model == SUPER
+    assert d.cost_reduction_pct == pytest.approx(1.0)

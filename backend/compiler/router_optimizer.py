@@ -114,6 +114,11 @@ def decide_node(
     chosen_id = select_model(metrics, threshold, hard_ok)
     if chosen_id is None:
         return retained("baseline_retained", f"no model meets quality >= {threshold:g}")
+    if metrics[chosen_id].estimated_cost_usd >= baseline.estimated_cost_usd:
+        # The latency tie-break may land on a model no cheaper than the baseline even
+        # though a cheaper passing model exists: choose among the cheaper ones instead.
+        cheaper = {k: v for k, v in metrics.items() if v.estimated_cost_usd < baseline.estimated_cost_usd}
+        chosen_id = select_model(cheaper, threshold, hard_ok) or chosen_id
     chosen = metrics[chosen_id]
     if chosen_id == baseline_id or chosen.estimated_cost_usd >= baseline.estimated_cost_usd:
         return retained("baseline_retained", "no passing model is cheaper than the baseline")
