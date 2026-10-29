@@ -71,3 +71,16 @@ async def test_failed_live_call_is_not_recorded(tmp_path):
     with pytest.raises(LLMError):
         await RecordingWriter(Failing(), store).complete("m", MSGS, {})
     assert not list(tmp_path.glob("*"))
+
+
+def test_failed_write_leaves_no_temp_file(tmp_path, monkeypatch):
+    import backend.services.recordings as rec
+
+    def boom(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(rec.os, "replace", boom)
+    store = RecordingStore(tmp_path)
+    with pytest.raises(OSError):
+        store.put(request_key("m", MSGS, {}), "m", RESULT)
+    assert list(tmp_path.iterdir()) == []
