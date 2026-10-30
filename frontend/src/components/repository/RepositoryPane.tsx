@@ -211,6 +211,7 @@ export function RepositoryPane({ api, demo, onAnalysis, selected, onSelect }: { 
         </label>
         <div className="control-row">
           <button disabled={demo || !api || state.status === 'loading' || !path.trim()}>Scan repository</button>
+          <button type="button" disabled={demo || !api || state.status === 'loading'} onClick={() => setPath('examples/customer_support_agent')}>Load Sample Agent</button>
           <button type="button" disabled={demo || !api || state.status === 'loading'} onClick={() => setPath('.')}>Use Current Repo (.)</button>
         </div>
       </form>

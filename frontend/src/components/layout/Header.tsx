@@ -47,6 +47,25 @@ export function Header({ demo, onModeChange }: { demo: boolean; onModeChange: ()
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+        <span
+          style={{
+            fontSize: '11px',
+            padding: '5px 11px',
+            borderRadius: 'var(--cr-r-chip)',
+            background: 'rgba(77, 133, 255, 0.08)',
+            border: '1px solid rgba(77, 133, 255, 0.25)',
+            color: '#93B4FF',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontFamily: 'var(--font-mono)',
+          }}
+          title="Benchmarking against Nebius Token Factory on NVIDIA GPUs"
+        >
+          <span style={{ color: '#4D85FF' }} aria-hidden="true">⚡</span>
+          Nebius × NVIDIA Token Factory
+        </span>
+
         <button
           onClick={onModeChange}
           style={{
