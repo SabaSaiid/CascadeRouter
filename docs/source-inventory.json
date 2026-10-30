@@ -1,7 +1,7 @@
 {
   "schema_version": "cascaderouter.source-inventory.v1",
   "version": null,
-  "source_commit": "3ac66cd7ec32208ca22558b4df0aefb170662e7f",
+  "source_commit": "1c633f6fb0386b97c4a9cfa432a2bde76d4c9530",
   "scope": "Selected tracked runtime/frontend/contract/build inputs; canonical Git blob bytes, not a built distribution or target-source snapshot",
   "artifacts": [
     {
@@ -201,8 +201,8 @@
     },
     {
       "path": "frontend/src/App.tsx",
-      "bytes": 3534,
-      "sha256": "df05e326fc662bd35eeae2ceb1fd9b70d1d1d3a55299ac41f6fc30197b55c568"
+      "bytes": 6025,
+      "sha256": "f77059be751c315b5ee9b840baa875a5d86ebb973223d4ebb51e7ca7cb4f997b"
     },
     {
       "path": "frontend/src/assets/react.svg",
@@ -216,43 +216,43 @@
     },
     {
       "path": "frontend/src/components/OperationStatus.tsx",
-      "bytes": 836,
-      "sha256": "ffdba6f4fbc76cb880161912ac239b8eaf13742b6d81b5829cdecacebfe74c17"
+      "bytes": 4359,
+      "sha256": "cabe2a3a89cf37be679bcb1847b6eb6d85c8f32bd44c3564e836d3cbd44b6b90"
     },
     {
       "path": "frontend/src/components/benchmark/BenchmarkPane.tsx",
-      "bytes": 8330,
-      "sha256": "dc4ab3626c2a1814526b06f6e2b16e6ae147c10cb25ffa08dff7cbc20134e088"
+      "bytes": 14774,
+      "sha256": "8349c9b98badf305e991472ec2606664fd39cc72efd8be1822f83e83dee5f213"
     },
     {
       "path": "frontend/src/components/layout/Header.tsx",
-      "bytes": 486,
-      "sha256": "b1aabe9225f6ef6664855500fd4d4260fa6bf72bc52b1d2b08f1ab503fc5faba"
+      "bytes": 3658,
+      "sha256": "a0b15d90c9f3d64b264872558bb14d809d663be2b0b75a852dc784160ab83490"
     },
     {
       "path": "frontend/src/components/optimization/OptimizationPane.tsx",
-      "bytes": 3927,
-      "sha256": "a847336dbbccce4ccdcee45d57d304193cf839ad0e44eab001e701ec3b2c0a89"
+      "bytes": 10043,
+      "sha256": "77dd4b014faaad34570ed09b5c71e829f1214952df8982cf0e88172b2f930479"
     },
     {
       "path": "frontend/src/components/patches/PatchPane.tsx",
-      "bytes": 10321,
-      "sha256": "734cdb3f42593cb4f5d16aedc9b2c734ae1737bb9ad819e3efdac13b93037ca3"
+      "bytes": 15549,
+      "sha256": "18b645e0c664b650af6b04741676a1a3af9dd48866e2c6fbd3bf0fb09609dce6"
     },
     {
       "path": "frontend/src/components/repository/AgentGraph.tsx",
-      "bytes": 2006,
-      "sha256": "b8cc5658b1733c8614561de83291249865a3c1ad460c386a971563e9e5ac5b27"
+      "bytes": 12482,
+      "sha256": "18b8496d23781acaf7c525c9fd069399fdcfa000680601c7357dd2e82531a420"
     },
     {
       "path": "frontend/src/components/repository/RepositoryPane.tsx",
-      "bytes": 4840,
-      "sha256": "1ae382e7c419b86f23ebd45f3ccb28a7618342ac439b5b4a85dc389694fed0af"
+      "bytes": 12912,
+      "sha256": "b358b98b3f607833aadb70554b22793166554285dfaea4d88db5e762d85ad1d3"
     },
     {
       "path": "frontend/src/index.css",
-      "bytes": 16596,
-      "sha256": "0d29cacc78a737bbbb6abb1a16685549ce34a124441a95f118a53f1f940f4452"
+      "bytes": 25618,
+      "sha256": "37e61985a8fc28b1af766ab2cca7c1883ab662b5863b955012941bccdae0017d"
     },
     {
       "path": "frontend/src/main.tsx",
