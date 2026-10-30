@@ -1,7 +1,7 @@
 {
   "schema_version": "cascaderouter.source-inventory.v1",
   "version": null,
-  "source_commit": "1c633f6fb0386b97c4a9cfa432a2bde76d4c9530",
+  "source_commit": "1af42e4c7e6c429779a04a04cdeebf84dcd123a0",
   "scope": "Selected tracked runtime/frontend/contract/build inputs; canonical Git blob bytes, not a built distribution or target-source snapshot",
   "artifacts": [
     {
@@ -226,8 +226,8 @@
     },
     {
       "path": "frontend/src/components/layout/Header.tsx",
-      "bytes": 3658,
-      "sha256": "a0b15d90c9f3d64b264872558bb14d809d663be2b0b75a852dc784160ab83490"
+      "bytes": 4309,
+      "sha256": "807406407c570c3238a03e8d1550c160d67d2290dfca7d792e57c58b8549cbfd"
     },
     {
       "path": "frontend/src/components/optimization/OptimizationPane.tsx",
@@ -246,8 +246,8 @@
     },
     {
       "path": "frontend/src/components/repository/RepositoryPane.tsx",
-      "bytes": 12912,
-      "sha256": "b358b98b3f607833aadb70554b22793166554285dfaea4d88db5e762d85ad1d3"
+      "bytes": 13084,
+      "sha256": "e0e70ad9607a65eb7a3cb7c960ca747fad3a7d4b27cc23a27197bd9f5bcd779c"
     },
     {
       "path": "frontend/src/index.css",
