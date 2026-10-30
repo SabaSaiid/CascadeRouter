@@ -45,3 +45,4 @@ resolution_response = client.chat.completions.create(
         {"role": "user", "content": extracted_context}
     ],
 )
+
