@@ -24,3 +24,23 @@ CascadeRouter analyzes multi-agent LLM systems, maps live data-dependency DAGs v
 2. **Empirical Measurement**: No synthetic guesswork; model routing decisions rely on empirical benchmarks over Nebius Token Factory endpoints.
 3. **Deterministic Patching**: Atomic AST-guided code modifications with automated backups (`.bak`) and rollback capability.
 4. **Targeted FinOps**: Squeezing maximum cost efficiency (up to 85% cost reduction) without compromising downstream generation quality.
+
+---
+
+## Model Selection Decision Matrix
+
+| Workload Characteristic | Recommended Model | Primary Host Hardware | FinOps Rationale |
+|---|---|---|---|
+| Classification, Intent Triage, Extraction | `Meta-Llama-3.1-8B-Instruct` | Nebius Token Factory | Sub-80ms TTFT, $0.03 / 1M input tokens (91% cheaper) |
+| Strict Schema JSON, Function Calling, Code | `nvidia/Llama-3.1-Nemotron-70B-Instruct` | NVIDIA H100 SXM5 | 99.7% schema compliance, 17% faster prefill than baseline 70B |
+| Nuanced Synthesis, Empathy, Long Editorial | `Meta-Llama-3.1-70B-Instruct` | Nebius Token Factory | High semantic depth, balanced open weights performance |
+
+---
+
+## Technical Glossary
+
+- **TTFT (Time-To-First-Token)**: Latency from request transmission until receipt of the first streamed SSE chunk.
+- **Pareto Frontier**: Set of non-dominated routing configurations where cost cannot be lowered without increasing latency or decreasing schema quality.
+- **Byte-Span Replacement**: Precise slice editing of source code using exact character offsets from the AST, preserving untargeted syntax.
+- **Prefix Caching**: Server-side KV cache retention on Nebius H100 clusters enabling accelerated prefill for recurrent prompt prefixes.
+
