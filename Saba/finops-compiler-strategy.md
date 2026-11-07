@@ -49,3 +49,20 @@ CascadeRouter provides three predefined routing heuristics:
 ### 3. Ultra-Low Latency (Performance First)
 - Maximizes token throughput and minimizes TTFT.
 - Employs 8B models on H100s for every possible step to keep end-to-end multi-agent execution sub-second.
+
+## Confidence Interval & Risk Scoring
+
+Empirical benchmarks on small sample sizes ($N < 30$) introduce statistical variance. To guard against premature down-selection to smaller models, CascadeRouter computes Wilson score confidence intervals for quality scores:
+
+$$W(p, n, z) = \frac{p + \frac{z^2}{2n} - z \sqrt{\frac{p(1-p)}{n} + \frac{z^2}{4n^2}}}{1 + \frac{z^2}{n}}$$
+
+Where:
+- $p$: Sample pass rate.
+- $n$: Number of benchmark runs.
+- $z$: Standard normal quantile ($z = 1.96$ for 95% confidence).
+
+A smaller model is only substituted for a frontier model if its **lower confidence bound** satisfies the node's strict threshold:
+$$W(p, n, 1.96) \ge Q_{\text{min\_threshold}}(v_i)$$
+
+This prevents edge-case regressions where an 8B model passes 3 consecutive tests by chance but fails in production workloads.
+
