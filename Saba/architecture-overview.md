@@ -91,3 +91,42 @@ Once the user approves the optimization plan, the patcher applies AST-guided str
 - Preserves exact code formatting, indentation, and docstrings.
 - Generates a timestamped `.bak` file for instantaneous recovery.
 - Runs an immediate AST round-trip compilation check on the patched file to guarantee syntactical integrity.
+
+### Patch Safety & Rollback Lifecycle
+
+```
+[ Optimization Plan Approved ]
+              |
+              v
+[ Step 1: Pre-patch AST Validation ] ---> (Fails) ---> [ Abort Operation ]
+              |
+              v (Pass)
+[ Step 2: Create .bak Backup ] (e.g., pipeline.py.20261107.bak)
+              |
+              v
+[ Step 3: Compute Exact Byte Span ]
+              |
+              v
+[ Step 4: Apply Atomic Write ]
+              |
+              v
+[ Step 5: Post-patch AST Verification ]
+      |                      |
+   (Valid)               (Invalid)
+      |                      |
+      v                      v
+[ Emit Success ]    [ Auto-Rollback from .bak & Raise Safety Alert ]
+```
+
+### Byte-Span Replacement Mechanics
+
+Rather than unparsing the full AST back to source code (which discards formatting, comments, and spacing), CascadeRouter performs surgery strictly at the identified slice boundaries:
+
+```python
+def apply_span_replacement(original_code: str, start_byte: int, end_byte: int, replacement: str) -> str:
+    """Replaces a targeted slice while preserving all surrounding code untouched."""
+    return original_code[:start_byte] + replacement + original_code[end_byte:]
+```
+
+This guarantees 100% preservation of comments, inline type annotations, and codebase styling.
+
