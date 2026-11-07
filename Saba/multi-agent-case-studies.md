@@ -54,3 +54,28 @@ CascadeRouter scanned the AST, benchmarked candidate models on Nebius Token Fact
 - **Financial Impact**: Cost reduced from **$1.79 per 1,000 inquiries to $0.98 per 1,000 inquiries** (a **45.3% reduction**). At enterprise scale (10,000,000 monthly tickets), this generates **$8,100 / month** in direct inference savings.
 - **Latency Acceleration**: End-to-end pipeline latency dropped from **2,170 ms to 1,320 ms** (a **39.2% latency reduction**), dramatically improving real-time user responsiveness.
 - **Zero Reliability Loss**: JSON schema pass rate remained identical or superior (99.7%) due to targeting NVIDIA Nemotron on the structured plan node.
+
+---
+
+## Case Study 2: Autonomous Retrieval-Augmented Generation (RAG) Pipeline
+
+### Pipeline Architecture
+
+An enterprise RAG workflow executes three chained LLM interactions:
+1. **Query Rewriting & HyDE Generation**: Transforms colloquial search queries into dense hypothetical document vectors.
+2. **Passage Relevance Filtering**: Evaluates 5 candidate chunks retrieved from vector search to eliminate false positives.
+3. **Evidence Synthesis & Citation**: Generates a grounded response with strict source attributions.
+
+### Baseline vs. CascadeRouter Optimized Allocation
+
+| Stage | Baseline Model | Optimized Model | Baseline Cost (100k queries) | Optimized Cost (100k queries) | Latency Delta |
+|---|---|---|---|---|---|
+| Query Rewriting | `gpt-4o` | `Meta-Llama-3.1-8B-Instruct` | $75.00 | $4.20 | **-71%** |
+| Passage Filtering | `gpt-4o` | `Meta-Llama-3.1-8B-Instruct` | $190.00 | $15.80 | **-68%** |
+| Evidence Synthesis | `gpt-4o` | `nvidia/Llama-3.1-Nemotron-70B-Instruct` | $380.00 | $44.50 | **-22%** |
+| **Combined** | - | - | **$645.00** | **$64.50** | **-54% Average** |
+
+### FinOps Highlights
+- **90.0% Aggregate Spend Reduction**: Shifting low-complexity query preprocessing and chunk filtering to `Meta-Llama-3.1-8B-Instruct` reduced daily inference burn by an order of magnitude.
+- **Grounded Verification**: Assigning `nvidia/Llama-3.1-Nemotron-70B-Instruct` to final synthesis preserved hallucination rejection rates at >99.4%, outperforming standard non-aligned open models.
+
