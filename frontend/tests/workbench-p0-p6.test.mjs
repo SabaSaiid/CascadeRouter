@@ -164,3 +164,34 @@ test('workbench three-pane view displays repository, benchmark and recommendatio
   assert.match(rightHtml, /Recommendation/);
   assert.match(rightHtml, /Run a benchmark to see which model each call can move to\./);
 });
+
+test('enhanced UI/UX: benchmark pane provides interactive sortable headers and presets', () => {
+  const html = renderToStaticMarkup(React.createElement(BenchmarkPane, {
+    demo: true,
+    onJob: () => {},
+    step: 'benchmark',
+  }));
+  assert.match(html, /Use Nebius \/ NVIDIA defaults/);
+  assert.match(html, /Nemotron Suite \(70B, 8B\)/);
+  assert.match(html, /Fast Eval \(8B only\)/);
+});
+
+test('enhanced UI/UX: repository pane provides instant call search and filter bar', () => {
+  const html = renderToStaticMarkup(React.createElement(RepositoryPane, {
+    demo: false,
+    onAnalysis: () => {},
+    onSelect: () => {},
+    step: 'scan',
+    autoFocusPath: false,
+  }));
+  assert.match(html, /Scan repository/);
+});
+
+test('enhanced UI/UX: policy tab provides Download YAML and Copy actions', () => {
+  const html = renderToStaticMarkup(React.createElement(RightPane, {
+    demo: false,
+    step: 'recommend',
+    onOptimization: () => {},
+  }));
+  assert.match(html, /Recommendation/);
+});

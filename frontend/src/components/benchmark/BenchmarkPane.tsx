@@ -36,8 +36,28 @@ function RowDetailDrawer({
   job: Job;
   onClose: () => void;
 }) {
+  const [filter, setFilter] = useState<'all' | 'passed' | 'failed'>('all');
+  const [search, setSearch] = useState('');
   const measurements = job.measurements.filter(m => m.model_id === modelId);
   const name = shortModelName(modelId);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [onClose]);
+
+  const passedCount = measurements.filter(m => m.evaluation_status === 'passed').length;
+  const failedCount = measurements.filter(m => m.evaluation_status === 'failed').length;
+
+  const filtered = measurements.filter(m => {
+    if (filter === 'passed' && m.evaluation_status !== 'passed') return false;
+    if (filter === 'failed' && m.evaluation_status !== 'failed') return false;
+    if (search && !m.case_id.toLowerCase().includes(search.toLowerCase())) return false;
+    return true;
+  });
 
   return (
     <div
@@ -56,6 +76,41 @@ function RowDetailDrawer({
           <button className="btn-ghost" onClick={onClose} aria-label="Close drawer" style={{ padding: '4px 8px' }}>✕</button>
         </div>
 
+        {/* Filter & Search Bar */}
+        <div style={{ padding: '10px 20px', borderBottom: '1px solid var(--rule)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', background: 'var(--paper)' }}>
+          <input
+            type="search"
+            placeholder="Search test case..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="field-input"
+            style={{ width: 180, fontSize: 'var(--fs-xs)', padding: '4px 8px' }}
+          />
+          <div style={{ display: 'inline-flex', gap: 4 }}>
+            <button
+              type="button"
+              className={`filter-pill${filter === 'all' ? ' active' : ''}`}
+              onClick={() => setFilter('all')}
+            >
+              All ({measurements.length})
+            </button>
+            <button
+              type="button"
+              className={`filter-pill${filter === 'passed' ? ' active' : ''}`}
+              onClick={() => setFilter('passed')}
+            >
+              Passed ({passedCount})
+            </button>
+            <button
+              type="button"
+              className={`filter-pill${filter === 'failed' ? ' active' : ''}`}
+              onClick={() => setFilter('failed')}
+            >
+              Failed ({failedCount})
+            </button>
+          </div>
+        </div>
+
         <div style={{ padding: '16px 20px', flex: 1, overflowY: 'auto' }}>
           <table aria-label={`Per-case results for ${name}`} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-xs)' }}>
             <caption className="sr-only">Per-case benchmark results</caption>
@@ -69,10 +124,10 @@ function RowDetailDrawer({
               </tr>
             </thead>
             <tbody>
-              {measurements.length === 0 ? (
-                <tr><td colSpan={5} style={{ padding: '12px 8px', color: 'var(--muted)', textAlign: 'center' }}>No measurements for this model.</td></tr>
+              {filtered.length === 0 ? (
+                <tr><td colSpan={5} style={{ padding: '16px 8px', color: 'var(--muted)', textAlign: 'center' }}>No matching measurements found.</td></tr>
               ) : (
-                measurements.map((m, i) => (
+                filtered.map((m, i) => (
                   <tr key={i}>
                     <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--rule)', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--muted)' }}>{m.case_id}</td>
                     <td className="num" style={{ padding: '6px 8px', borderBottom: '1px solid var(--rule)', textAlign: 'right' }}>{fmt(m.latency_ms.value, ' ms')}</td>
@@ -293,6 +348,19 @@ export function BenchmarkPane({
   const job = state.data;
   const busy = accepted.status === 'loading' || state.status === 'loading';
 
+  type SortColumn = 'model' | 'cost' | 'latency' | 'ttft' | 'checks' | 'result';
+  const [sortColumn, setSortColumn] = useState<SortColumn>('cost');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  const toggleSort = (col: SortColumn) => {
+    if (sortColumn === col) {
+      setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(col);
+      setSortDirection('asc');
+    }
+  };
+
   const isCurrent = step === 'benchmark';
   const selectedNode = selected && analysis ? analysis.nodes.find(n => n.node_id === selected) : undefined;
   const nodeName = selectedNode ? callName(selectedNode) : '—';
@@ -338,6 +406,37 @@ export function BenchmarkPane({
     (job && job.status === 'complete' && selected) ? buildRows(job, selected) : [],
     [job, selected]
   );
+
+  const sortedRows = useMemo(() => {
+    if (!rows.length) return [];
+    const list = [...rows];
+    list.sort((a, b) => {
+      let diff = 0;
+      if (sortColumn === 'model') {
+        diff = shortModelName(a.modelId).localeCompare(shortModelName(b.modelId));
+      } else if (sortColumn === 'cost') {
+        const aCost = a.costUsd ? parseFloat(a.costUsd) : 999999;
+        const bCost = b.costUsd ? parseFloat(b.costUsd) : 999999;
+        diff = aCost - bCost;
+      } else if (sortColumn === 'latency') {
+        const aLat = a.latencyMs ?? 999999;
+        const bLat = b.latencyMs ?? 999999;
+        diff = aLat - bLat;
+      } else if (sortColumn === 'ttft') {
+        const aTtft = a.ttftMs ?? 999999;
+        const bTtft = b.ttftMs ?? 999999;
+        diff = aTtft - bTtft;
+      } else if (sortColumn === 'checks') {
+        const aRate = a.totalCases ? a.passedCases / a.totalCases : 0;
+        const bRate = b.totalCases ? b.passedCases / b.totalCases : 0;
+        diff = aRate - bRate;
+      } else if (sortColumn === 'result') {
+        diff = a.status.localeCompare(b.status);
+      }
+      return sortDirection === 'asc' ? diff : -diff;
+    });
+    return list;
+  }, [rows, sortColumn, sortDirection]);
 
   const maxCost = useMemo(() => {
     if (!rows.length) return null;
@@ -495,16 +594,58 @@ export function BenchmarkPane({
             <caption className="sr-only">Model benchmark results, ordered cheapest to most expensive</caption>
             <thead>
               <tr>
-                <th style={{ width: '30%' }}>Model, per 1M tokens</th>
-                <th style={{ width: '25%' }}>Cost per run</th>
-                <th style={{ width: '12%', textAlign: 'right' }}>Latency</th>
-                <th style={{ width: '12%', textAlign: 'right' }}>First token</th>
-                <th style={{ width: '10%', textAlign: 'center' }}>Checks</th>
-                <th style={{ width: '11%', textAlign: 'center' }}>Result</th>
+                <th
+                  style={{ width: '30%', cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => toggleSort('model')}
+                  title="Click to sort by model"
+                  aria-sort={sortColumn === 'model' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                >
+                  Model, per 1M tokens {sortColumn === 'model' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th
+                  style={{ width: '25%', cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => toggleSort('cost')}
+                  title="Click to sort by cost"
+                  aria-sort={sortColumn === 'cost' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                >
+                  Cost per run {sortColumn === 'cost' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th
+                  style={{ width: '12%', textAlign: 'right', cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => toggleSort('latency')}
+                  title="Click to sort by latency"
+                  aria-sort={sortColumn === 'latency' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                >
+                  Latency {sortColumn === 'latency' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th
+                  style={{ width: '12%', textAlign: 'right', cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => toggleSort('ttft')}
+                  title="Click to sort by time to first token"
+                  aria-sort={sortColumn === 'ttft' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                >
+                  First token {sortColumn === 'ttft' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th
+                  style={{ width: '10%', textAlign: 'center', cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => toggleSort('checks')}
+                  title="Click to sort by checks"
+                  aria-sort={sortColumn === 'checks' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                >
+                  Checks {sortColumn === 'checks' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
+                <th
+                  style={{ width: '11%', textAlign: 'center', cursor: 'pointer', userSelect: 'none' }}
+                  onClick={() => toggleSort('result')}
+                  title="Click to sort by result"
+                  aria-sort={sortColumn === 'result' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}
+                >
+                  Result {sortColumn === 'result' && (sortDirection === 'asc' ? '↑' : '↓')}
+                </th>
               </tr>
             </thead>
             <tbody>
-              {rows.map(row => {
+              {sortedRows.map(row => {
                 const scale = maxCost ? costBarScale(row.costUsd, maxCost) : 0;
                 const isRecommended = row.status === 'recommended';
                 const isFailed = row.status === 'fails';
@@ -672,6 +813,24 @@ export function BenchmarkPane({
                     }}
                   >
                     Use Nebius / NVIDIA defaults
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    type="button"
+                    onClick={() => {
+                      setCandidates('nvidia/Llama-3.1-Nemotron-70B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct');
+                    }}
+                  >
+                    Nemotron Suite (70B, 8B)
+                  </button>
+                  <button
+                    className="btn-ghost"
+                    type="button"
+                    onClick={() => {
+                      setCandidates('meta-llama/Meta-Llama-3.1-8B-Instruct');
+                    }}
+                  >
+                    Fast Eval (8B only)
                   </button>
                 </div>
               </fieldset>

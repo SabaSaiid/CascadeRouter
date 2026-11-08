@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiClient } from '../../services/api.ts';
 import type { Scan, Optimization } from '../../services/contracts.ts';
 import { useOperation } from '../../services/useOperation.ts';
@@ -13,17 +13,21 @@ import { AgentGraph } from './AgentGraph.tsx';
 // ---------------------------------------------------------------------------
 
 function CallList({
-  scan,
+  nodes,
   selected,
   onSelect,
   optimization,
   graphEdges,
+  totalCount,
+  onClearFilters,
 }: {
-  scan: Scan;
+  nodes: Scan['nodes'];
   selected?: string;
   onSelect: (id: string) => void;
   optimization?: Optimization;
   graphEdges: readonly (readonly [string, string])[];
+  totalCount: number;
+  onClearFilters?: () => void;
 }) {
   const hasEdges = graphEdges.length > 0;
 
@@ -43,13 +47,24 @@ function CallList({
         }} aria-hidden="true" />
       )}
 
-      {scan.nodes.length === 0 ? (
+      {totalCount === 0 ? (
         <p style={{ padding: '20px 16px', fontSize: 'var(--fs-sm)', color: 'var(--muted)', margin: 0 }}>
-          No LLM calls found. {scanSummary(scan).empty}
+          No LLM calls found.
         </p>
+      ) : nodes.length === 0 ? (
+        <div style={{ padding: '20px 16px', textAlign: 'center' }}>
+          <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', margin: '0 0 6px' }}>
+            No calls match this filter.
+          </p>
+          {onClearFilters && (
+            <button type="button" className="btn-link" onClick={onClearFilters} style={{ fontSize: 'var(--fs-xs)' }}>
+              Clear filter
+            </button>
+          )}
+        </div>
       ) : (
         <>
-          {scan.nodes.map(node => {
+          {nodes.map(node => {
             const isSelected = selected === node.node_id;
             const cr = callResult(node.node_id, optimization);
             const hasResult = cr.change !== null;
@@ -273,6 +288,40 @@ export function RepositoryPane({
   const isCurrent = step === 'scan';
   const busy = state.status === 'loading';
 
+  const [callSearch, setCallSearch] = useState('');
+  const [callFilter, setCallFilter] = useState<'all' | 'optimize' | 'retained'>('all');
+
+  const canOptimizeCount = useMemo(() => {
+    if (!scan) return 0;
+    return scan.nodes.filter(n => callResult(n.node_id, optimization).kind === 'recommended').length;
+  }, [scan, optimization]);
+
+  const retainedCount = useMemo(() => {
+    if (!scan) return 0;
+    return scan.nodes.filter(n => callResult(n.node_id, optimization).kind === 'retained').length;
+  }, [scan, optimization]);
+
+  const filteredNodes = useMemo(() => {
+    if (!scan) return [];
+    return scan.nodes.filter(node => {
+      const cr = callResult(node.node_id, optimization);
+      if (callFilter === 'optimize' && cr.kind !== 'recommended') return false;
+      if (callFilter === 'retained' && cr.kind !== 'retained') return false;
+      if (callSearch.trim()) {
+        const q = callSearch.toLowerCase();
+        const name = callName(node).toLowerCase();
+        const file = node.file_path.toLowerCase();
+        const fn = (node.function_name ?? '').toLowerCase();
+        const model = (node.current_model ?? '').toLowerCase();
+        const targetModel = (cr.selectedName ?? '').toLowerCase();
+        if (!name.includes(q) && !file.includes(q) && !fn.includes(q) && !model.includes(q) && !targetModel.includes(q)) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [scan, callFilter, callSearch, optimization]);
+
   const submit = () => {
     onAnalysis(undefined);
     void operation.run(s => api!.scan(path.trim(), s)).then(result => { if (result) onAnalysis(result); });
@@ -397,17 +446,58 @@ export function RepositoryPane({
             )}
           </div>
 
+          {/* Search and filter bar for calls */}
+          {scan.nodes.length > 0 && !showGraph && (
+            <div style={{ padding: '0 16px 10px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <input
+                type="search"
+                placeholder="Search calls (name, file, model)..."
+                value={callSearch}
+                onChange={e => setCallSearch(e.target.value)}
+                className="field-input"
+                style={{ width: '100%', fontSize: 'var(--fs-xs)', padding: '4px 8px' }}
+              />
+              {optimization && (
+                <div style={{ display: 'flex', gap: 4 }}>
+                  <button
+                    type="button"
+                    className={`filter-pill${callFilter === 'all' ? ' active' : ''}`}
+                    onClick={() => setCallFilter('all')}
+                  >
+                    All ({scan.nodes.length})
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-pill${callFilter === 'optimize' ? ' active' : ''}`}
+                    onClick={() => setCallFilter('optimize')}
+                  >
+                    Can optimize ({canOptimizeCount})
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-pill${callFilter === 'retained' ? ' active' : ''}`}
+                    onClick={() => setCallFilter('retained')}
+                  >
+                    Retained ({retainedCount})
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {showGraph ? (
             <div style={{ padding: '0 0 16px' }}>
               <AgentGraph scan={scan} onSelect={onSelect} selected={selected} />
             </div>
           ) : (
             <CallList
-              scan={scan}
+              nodes={filteredNodes}
               selected={selected}
               onSelect={onSelect}
               optimization={optimization}
               graphEdges={scan.graph_edges}
+              totalCount={scan.nodes.length}
+              onClearFilters={() => { setCallSearch(''); setCallFilter('all'); }}
             />
           )}
         </>

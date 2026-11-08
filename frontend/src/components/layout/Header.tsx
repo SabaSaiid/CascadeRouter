@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Health, Scan, Job, Optimization } from '../../services/contracts.ts';
 import type { ApiFailure } from '../../services/transport.ts';
 import { dataSourceLabel, type WorkflowStep } from '../../services/display.ts';
@@ -58,6 +58,37 @@ function ProgressTrail({
   );
 }
 
+type RecentSessionItem = {
+  id: string;
+  type: 'analysis' | 'run';
+  label: string;
+  date: string;
+};
+
+function saveRecentSession(item: { id: string; type: 'analysis' | 'run'; label: string }) {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const raw = window.localStorage.getItem('cascaderouter_recent_sessions');
+    const existing: RecentSessionItem[] = raw ? JSON.parse(raw) : [];
+    const filtered = existing.filter(x => x.id !== item.id);
+    const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    filtered.unshift({ ...item, date });
+    window.localStorage.setItem('cascaderouter_recent_sessions', JSON.stringify(filtered.slice(0, 5)));
+  } catch {
+    // ignore
+  }
+}
+
+function getRecentSessions(): RecentSessionItem[] {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return [];
+    const raw = window.localStorage.getItem('cascaderouter_recent_sessions');
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
 export function Header({
   demo,
   health,
@@ -92,6 +123,26 @@ export function Header({
   onRetrieveValidation?: (id: string) => void;
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
+
+  useEffect(() => {
+    if (analysis?.analysis_id) {
+      saveRecentSession({
+        id: analysis.analysis_id,
+        type: 'analysis',
+        label: `${analysis.nodes.length} call${analysis.nodes.length !== 1 ? 's' : ''} (${analysis.detected_framework ?? 'Scan'})`,
+      });
+    }
+  }, [analysis?.analysis_id, analysis?.nodes.length, analysis?.detected_framework]);
+
+  useEffect(() => {
+    if (job?.run_id && job.status === 'complete') {
+      saveRecentSession({
+        id: job.run_id,
+        type: 'run',
+        label: `Benchmark: ${job.plan.models.length} models, ${job.plan.case_ids.length} cases`,
+      });
+    }
+  }, [job?.run_id, job?.status, job?.plan.models.length, job?.plan.case_ids.length]);
 
   const hasData = Boolean(demo || analysis || (job && job.status === 'complete'));
   const dataSource = demo ? 'mock' : analysis?.data_source;
@@ -246,6 +297,8 @@ function EarlierResultPopover({
   onRetrievePatch?: (id: string) => void;
   onRetrieveValidation?: (id: string) => void;
 }) {
+  const [recentSessions] = useState<RecentSessionItem[]>(() => getRecentSessions());
+
   return (
     <div
       className="popover-backdrop"
@@ -259,6 +312,53 @@ function EarlierResultPopover({
           <h2 style={{ margin: 0, fontSize: 'var(--fs-base)', fontWeight: 600 }}>Open earlier result</h2>
           <button type="button" className="btn-ghost" onClick={onClose} aria-label="Close popover" style={{ padding: '4px 8px' }}>✕</button>
         </div>
+
+        {recentSessions.length > 0 && (
+          <div style={{ marginBottom: 16, paddingBottom: 14, borderBottom: '1px solid var(--rule)' }}>
+            <span style={{ fontSize: 'var(--fs-xs)', fontWeight: 600, color: 'var(--ink)', display: 'block', marginBottom: 8 }}>
+              Recent Sessions
+            </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {recentSessions.map(s => (
+                <div
+                  key={s.id}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    padding: '6px 10px',
+                    background: 'var(--paper)',
+                    border: '1px solid var(--rule)',
+                    borderRadius: 'var(--r-ctrl)',
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 500, fontSize: 'var(--fs-xs)', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {s.label}
+                    </div>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--muted)' }}>
+                      {s.id.slice(0, 16)}… • {s.date}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    style={{ fontSize: 'var(--fs-xs)', padding: '2px 8px', flexShrink: 0 }}
+                    onClick={() => {
+                      if (s.type === 'analysis') onRetrieveAnalysis?.(s.id);
+                      else if (s.type === 'run') onRetrieveRun?.(s.id);
+                      onClose();
+                    }}
+                  >
+                    Load
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', marginBottom: 16 }}>
           Paste any stored ID to retrieve a previous result. Fields are independent.
         </p>

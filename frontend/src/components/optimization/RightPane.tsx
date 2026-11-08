@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { ApiClient } from '../../services/api.ts';
 import type { Scan, Job, Optimization, Patch, PatchAccepted, Validation } from '../../services/contracts.ts';
 import { useOperation } from '../../services/useOperation.ts';
@@ -103,6 +103,15 @@ function PatchTab({
   const m = proposal.manifest;
   const f = m.files[0];
   const [applied, applyOperation] = useOperation<{ patch_id: string; status: string; applied_at: string; applied_files: { file_path: string; backup_path: string; edits_count: number }[] }>();
+  const [copiedDiff, setCopiedDiff] = useState(false);
+
+  const copyDiff = () => {
+    if (proposal.review_diff) {
+      void navigator.clipboard?.writeText(proposal.review_diff);
+      setCopiedDiff(true);
+      setTimeout(() => setCopiedDiff(false), 2000);
+    }
+  };
 
   // Build checks from validation
   const checks: CheckEntry[] = [
@@ -136,12 +145,23 @@ function PatchTab({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0, flex: 1 }}>
-      {/* File path */}
+      {/* File path + Copy diff */}
       {f && (
-        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--rule)' }}>
+        <div style={{ padding: '10px 20px', borderBottom: '1px solid var(--rule)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
             {f.file_path}
           </span>
+          {proposal.review_diff && (
+            <button
+              type="button"
+              className="btn-ghost"
+              onClick={copyDiff}
+              style={{ fontSize: 'var(--fs-xs)', padding: '2px 8px' }}
+              title="Copy diff to clipboard"
+            >
+              {copiedDiff ? 'Copied' : 'Copy diff'}
+            </button>
+          )}
         </div>
       )}
 
@@ -167,6 +187,9 @@ function PatchTab({
         {applied.data ? (
           <div className="inline-alert success" role="status">
             Patch applied. Backup saved at <code style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)' }}>{applied.data.applied_files[0]?.backup_path ?? '—'}</code>
+            <div style={{ marginTop: 6, fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
+              Rollback command: <code style={{ userSelect: 'all', fontFamily: 'var(--font-mono)' }}>cp {applied.data.applied_files[0]?.backup_path} {applied.data.applied_files[0]?.file_path}</code>
+            </div>
           </div>
         ) : applied.error ? (
           <div className="inline-alert error" role="alert">
@@ -211,20 +234,121 @@ function PolicyTab({ yaml }: { yaml: string }) {
   const [copied, setCopied] = useState(false);
 
   const copy = () => {
-    navigator.clipboard?.writeText(yaml);
+    void navigator.clipboard?.writeText(yaml);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const downloadYaml = () => {
+    const blob = new Blob([yaml], { type: 'text/yaml;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'cascaderouter.yaml';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div style={{ padding: '12px 20px', flex: 1 }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
-        <button className="btn-ghost" onClick={copy} style={{ fontSize: 'var(--fs-xs)' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 8 }}>
+        <button type="button" className="btn-ghost" onClick={downloadYaml} style={{ fontSize: 'var(--fs-xs)' }} title="Download as cascaderouter.yaml">
+          Download YAML
+        </button>
+        <button type="button" className="btn-ghost" onClick={copy} style={{ fontSize: 'var(--fs-xs)' }}>
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
       <div style={{ background: 'var(--paper)', border: '1px solid var(--rule)', borderRadius: 'var(--r-ctrl)', padding: '10px 12px' }}>
         <YamlDisplay content={yaml} />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ROI & Impact Calculator
+// ---------------------------------------------------------------------------
+
+function RoiCalculatorCard({
+  baselineCost,
+  selectedCost,
+  baselineName,
+  selectedName,
+}: {
+  baselineCost: number;
+  selectedCost: number;
+  baselineName: string;
+  selectedName: string;
+}) {
+  const [monthlyVolume, setMonthlyVolume] = useState(100000);
+
+  if (baselineCost <= selectedCost) return null;
+
+  const costPerRunDiff = baselineCost - selectedCost;
+  const pctSavings = Math.round((costPerRunDiff / baselineCost) * 100);
+  const monthlySavings = costPerRunDiff * monthlyVolume;
+  const annualSavings = monthlySavings * 12;
+
+  const fmtCurrency = (n: number) => {
+    if (n >= 1000) return `$${n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+    return `$${n.toFixed(2)}`;
+  };
+
+  return (
+    <div className="roi-calculator-card" style={{ marginTop: 12, padding: '12px 14px', background: 'var(--sheet)', border: '1px solid var(--rule)', borderRadius: 'var(--r-ctrl)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <span style={{ fontSize: 'var(--fs-xs)', fontWeight: 600, color: 'var(--ink)' }}>
+          Projected Impact
+        </span>
+        <span className="chip" style={{ background: 'var(--gain-tint)', color: 'var(--gain)', fontSize: '11px', fontWeight: 600 }}>
+          {pctSavings}% cost reduction
+        </span>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 10 }}>
+        <div style={{ padding: '6px 8px', background: 'var(--paper)', borderRadius: 'var(--r-ctrl)' }}>
+          <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Monthly Savings</div>
+          <div className="num" style={{ fontSize: 'var(--fs-base)', fontWeight: 600, color: 'var(--gain)' }}>
+            {fmtCurrency(monthlySavings)}
+          </div>
+        </div>
+        <div style={{ padding: '6px 8px', background: 'var(--paper)', borderRadius: 'var(--r-ctrl)' }}>
+          <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Annual Savings</div>
+          <div className="num" style={{ fontSize: 'var(--fs-base)', fontWeight: 600, color: 'var(--gain)' }}>
+            {fmtCurrency(annualSavings)}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--muted)' }}>
+          <span>Throughput: <strong className="num" style={{ color: 'var(--ink)' }}>{monthlyVolume.toLocaleString()} calls/mo</strong></span>
+          <span>{shortModelName(baselineName)} → {shortModelName(selectedName)}</span>
+        </div>
+        <input
+          type="range"
+          min={10000}
+          max={1000000}
+          step={10000}
+          value={monthlyVolume}
+          onChange={e => setMonthlyVolume(Number(e.target.value))}
+          style={{ width: '100%', accentColor: 'var(--navy)', cursor: 'pointer' }}
+          aria-label="Monthly call volume"
+        />
+        <div style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+          {[10000, 50000, 100000, 500000, 1000000].map(v => (
+            <button
+              key={v}
+              type="button"
+              className={`filter-pill${monthlyVolume === v ? ' active' : ''}`}
+              onClick={() => setMonthlyVolume(v)}
+              style={{ fontSize: '10px', padding: '2px 4px', flex: 1, textAlign: 'center' }}
+            >
+              {v >= 1000000 ? `${v / 1000000}M` : `${v / 1000}k`}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -270,6 +394,25 @@ export function RightPane({
   const selectedNodeId = firstDecision?.node_id;
   const selectedNode = selectedNodeId && analysis ? analysis.nodes.find(n => n.node_id === selectedNodeId) : undefined;
   const headline = decisionHeadline(firstDecision, selectedNode ? callName(selectedNode) : undefined);
+
+  const costImpact = useMemo(() => {
+    if (!job || !firstDecision || firstDecision.status !== 'recommended' || !firstDecision.selected_model_id) return null;
+    const bMeas = job.measurements.filter(m => m.node_id === firstDecision.node_id && m.model_id === firstDecision.baseline_model_id);
+    const sMeas = job.measurements.filter(m => m.node_id === firstDecision.node_id && m.model_id === firstDecision.selected_model_id);
+    const bCosts = bMeas.map(m => m.calculated_cost?.amount_usd ? parseFloat(m.calculated_cost.amount_usd) : null).filter(c => c !== null) as number[];
+    const sCosts = sMeas.map(m => m.calculated_cost?.amount_usd ? parseFloat(m.calculated_cost.amount_usd) : null).filter(c => c !== null) as number[];
+    const bTotal = bCosts.length > 0 ? bCosts.reduce((a, b) => a + b, 0) : null;
+    const sTotal = sCosts.length > 0 ? sCosts.reduce((a, b) => a + b, 0) : null;
+    if (bTotal !== null && sTotal !== null && bTotal > sTotal) {
+      return {
+        baselineCost: bTotal,
+        selectedCost: sTotal,
+        baselineName: firstDecision.baseline_model_id,
+        selectedName: firstDecision.selected_model_id,
+      };
+    }
+    return null;
+  }, [job, firstDecision]);
 
   const startOptimize = () => {
     onOptimization(undefined);
@@ -362,6 +505,16 @@ export function RightPane({
               <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', margin: '0 0 8px', lineHeight: 1.5 }}>
                 {headline.subline}
               </p>
+            )}
+
+            {/* ROI & Impact Calculator */}
+            {costImpact && (
+              <RoiCalculatorCard
+                baselineCost={costImpact.baselineCost}
+                selectedCost={costImpact.selectedCost}
+                baselineName={costImpact.baselineName}
+                selectedName={costImpact.selectedName}
+              />
             )}
 
             {/* Per-node decisions */}
