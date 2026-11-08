@@ -47,3 +47,4 @@ export const homeIllustrationFixture: HomeIllustration = {
   summarySentence: 'Two of three calls can move to a cheaper model. The third stays where it is.',
   footerNote: 'Models: NVIDIA Nemotron, served by Nebius Token Factory.',
 };
+
