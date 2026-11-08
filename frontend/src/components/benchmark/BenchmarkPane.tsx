@@ -1,10 +1,168 @@
+/* oxlint-disable react/set-state-in-effect */
 import { useEffect, useMemo, useState } from 'react';
 import type { ApiClient } from '../../services/api.ts';
 import type { Scan, Job, JobAccepted, BenchmarkRequest } from '../../services/contracts.ts';
 import { useOperation } from '../../services/useOperation.ts';
 import { SubmissionKeys, terminal, population, measured } from '../../services/benchmark.ts';
 import { provenance } from '../../services/presentation.ts';
-import { OperationStatus } from '../OperationStatus.tsx';
+import { shortModelName, costBarScale, savingsSentence, callName, type WorkflowStep } from '../../services/display.ts';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function fmt(val?: number | null, unit = ''): string {
+  if (val == null) return '—';
+  return `${val}${unit}`;
+}
+
+// ---------------------------------------------------------------------------
+// Model price line from model ID
+// ---------------------------------------------------------------------------
+// Pricing comes from API data only. If unavailable, show em dash.
+
+
+// ---------------------------------------------------------------------------
+// Row detail drawer
+// ---------------------------------------------------------------------------
+
+function RowDetailDrawer({
+  modelId,
+  job,
+  onClose,
+}: {
+  modelId: string;
+  job: Job;
+  onClose: () => void;
+}) {
+  const measurements = job.measurements.filter(m => m.model_id === modelId);
+  const name = shortModelName(modelId);
+
+  return (
+    <div
+      className="detail-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Details for ${name}`}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="detail-drawer-panel">
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--rule)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontWeight: 600, fontSize: 'var(--fs-base)' }}>{name}</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', color: 'var(--muted)', marginTop: 2 }}>{modelId}</div>
+          </div>
+          <button className="btn-ghost" onClick={onClose} aria-label="Close drawer" style={{ padding: '4px 8px' }}>✕</button>
+        </div>
+
+        <div style={{ padding: '16px 20px', flex: 1, overflowY: 'auto' }}>
+          <table aria-label={`Per-case results for ${name}`} style={{ width: '100%', borderCollapse: 'collapse', fontSize: 'var(--fs-xs)' }}>
+            <caption className="sr-only">Per-case benchmark results</caption>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '1px solid var(--rule)', color: 'var(--muted)', fontWeight: 600 }}>Case</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', borderBottom: '1px solid var(--rule)', color: 'var(--muted)', fontWeight: 600 }}>Latency</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', borderBottom: '1px solid var(--rule)', color: 'var(--muted)', fontWeight: 600 }}>TTFT</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', borderBottom: '1px solid var(--rule)', color: 'var(--muted)', fontWeight: 600 }}>Tokens in/out</th>
+                <th style={{ textAlign: 'right', padding: '6px 8px', borderBottom: '1px solid var(--rule)', color: 'var(--muted)', fontWeight: 600 }}>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {measurements.length === 0 ? (
+                <tr><td colSpan={5} style={{ padding: '12px 8px', color: 'var(--muted)', textAlign: 'center' }}>No measurements for this model.</td></tr>
+              ) : (
+                measurements.map((m, i) => (
+                  <tr key={i}>
+                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--rule)', fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--muted)' }}>{m.case_id}</td>
+                    <td className="num" style={{ padding: '6px 8px', borderBottom: '1px solid var(--rule)', textAlign: 'right' }}>{fmt(m.latency_ms.value, ' ms')}</td>
+                    <td className="num" style={{ padding: '6px 8px', borderBottom: '1px solid var(--rule)', textAlign: 'right' }}>{m.ttft_ms ? fmt(m.ttft_ms.value, ' ms') : '—'}</td>
+                    <td className="num" style={{ padding: '6px 8px', borderBottom: '1px solid var(--rule)', textAlign: 'right' }}>
+                      {measured(m.input_tokens)} / {measured(m.output_tokens)}
+                    </td>
+                    <td style={{ padding: '6px 8px', borderBottom: '1px solid var(--rule)', textAlign: 'right' }}>
+                      <span style={{ color: m.evaluation_status === 'passed' ? 'var(--gain)' : m.evaluation_status === 'failed' ? 'var(--loss)' : 'var(--muted)', fontWeight: 500 }}>
+                        {m.evaluation_status}
+                      </span>
+                      {m.evaluation?.reason && m.evaluation_status === 'failed' && (
+                        <div style={{ fontSize: '11px', color: 'var(--muted)' }}>{m.evaluation.reason}</div>
+                      )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Benchmark table
+// ---------------------------------------------------------------------------
+
+interface ModelRow {
+  modelId: string;
+  costUsd: string | null;
+  latencyMs: number | null;
+  ttftMs: number | null;
+  passedCases: number;
+  totalCases: number;
+  status: 'recommended' | 'passes' | 'fails' | 'current' | 'unavailable';
+  isBaseline: boolean;
+}
+
+function buildRows(job: Job, selectedNodeId: string): ModelRow[] {
+  const models = job.plan.models;
+  const measurements = job.measurements.filter(m => m.node_id === selectedNodeId);
+  const totalCases = job.plan.case_ids.length;
+
+  const rows: ModelRow[] = models.map(m => {
+    const meas = measurements.filter(x => x.model_id === m.identifier);
+    const passed = meas.filter(x => x.evaluation_status === 'passed').length;
+    const failed = meas.filter(x => x.evaluation_status === 'failed').length;
+    const costs = meas.map(x => x.calculated_cost?.amount_usd ? parseFloat(x.calculated_cost.amount_usd) : null).filter(x => x !== null) as number[];
+    const latencies = meas.map(x => x.latency_ms.value).filter(x => x != null) as number[];
+    const ttfts = meas.map(x => x.ttft_ms?.value).filter(x => x != null) as number[];
+    const totalCost = costs.length > 0 ? costs.reduce((a, b) => a + b, 0) : null;
+    const avgLatency = latencies.length > 0 ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length) : null;
+    const avgTtft = ttfts.length > 0 ? Math.round(ttfts.reduce((a, b) => a + b, 0) / ttfts.length) : null;
+
+    let status: ModelRow['status'] = 'current';
+    if (failed > 0 && passed < totalCases) status = 'fails';
+    else if (passed >= totalCases) status = 'passes';
+
+    return {
+      modelId: m.identifier,
+      costUsd: totalCost !== null ? totalCost.toFixed(6) : null,
+      latencyMs: avgLatency,
+      ttftMs: avgTtft,
+      passedCases: passed,
+      totalCases,
+      status,
+      isBaseline: false, // will be set below
+    };
+  });
+
+  // Sort cheapest first
+  rows.sort((a, b) => {
+    if (a.costUsd === null && b.costUsd === null) return 0;
+    if (a.costUsd === null) return 1;
+    if (b.costUsd === null) return -1;
+    return parseFloat(a.costUsd) - parseFloat(b.costUsd);
+  });
+
+  // Mark baseline (first row that passes or cheapest)
+  const baselineId = job.plan.models[0]?.identifier;
+  rows.forEach(r => { r.isBaseline = r.modelId === baselineId; });
+
+  // Mark recommended (cheapest that passes)
+  const cheapestPassing = rows.find(r => r.status === 'passes' || r.passedCases >= r.totalCases);
+  if (cheapestPassing) cheapestPassing.status = 'recommended';
+
+  return rows;
+}
 
 export function JobEvidence({ job }: { job: Job }) {
   const [page, setPage] = useState(0);
@@ -17,127 +175,84 @@ export function JobEvidence({ job }: { job: Job }) {
     <>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', margin: '8px 0' }}>
         <p className="evidence-warning" style={{ margin: 0 }}>{provenance(job.plan.provenance)}</p>
-        <span style={{ fontSize: '12px', color: 'var(--cr-subtle)' }}>
-          State: <strong style={{ color: job.status === 'complete' ? 'var(--cr-pass)' : 'var(--cr-accent)' }}>{job.status}</strong>
+        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+          State: <strong style={{ color: job.status === 'complete' ? 'var(--gain)' : 'var(--navy)', fontWeight: 500 }}>{job.status}</strong>
         </span>
       </div>
 
-      <div style={{ background: 'var(--cr-surface-2)', padding: '14px 18px', borderRadius: 'var(--cr-r-control)', border: '1px solid var(--cr-line)', margin: '12px 0' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--cr-text)' }}>Benchmark Execution Progress</span>
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--cr-muted)' }}>
-            {job.progress.completed_units} / {job.progress.total_units} units
-          </span>
-        </div>
-        <div className="job-progress-bar">
-          <div
-            className="job-progress-bar-inner"
-            style={{ transform: `scaleX(${ratio})` }}
-          />
-        </div>
-      </div>
-
-      <p><code>{job.run_id}</code> — processing state: <strong>{job.status}</strong>. This is a stored snapshot; refresh for current progress.</p>
       <p>Completed units: {job.progress.completed_units}/{job.progress.total_units}. Evaluation: {job.result?.evaluation_status ?? 'not available'}. Processing completion does not mean quality passed.</p>
-      <p>Updated {new Date(job.updated_at).toLocaleString()}; deadline {new Date(job.deadline_at).toLocaleString()}{job.finished_at && `; finished ${new Date(job.finished_at).toLocaleString()}`}.</p>
-      {job.error && <p role="alert">Job failure: {job.error.code}. Check local service configuration before submitting again.</p>}
-      {job.cancellation_reason && <p>Cancellation reason: {job.cancellation_reason}. Only the backend confirms cancellation.</p>}
 
-      {metrics ? (
-        <>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', margin: '12px 0' }}>
-            <span style={{ padding: '4px 10px', borderRadius: '6px', background: 'rgba(52, 211, 153, 0.12)', border: '1px solid rgba(52, 211, 153, 0.3)', color: 'var(--cr-pass)', fontSize: '12px', fontWeight: 600 }}>
-              ✓ {metrics.passed} passed
-            </span>
-            <span style={{ padding: '4px 10px', borderRadius: '6px', background: 'rgba(248, 113, 113, 0.12)', border: '1px solid rgba(248, 113, 113, 0.3)', color: 'var(--cr-fail)', fontSize: '12px', fontWeight: 600 }}>
-              ✕ {metrics.failed} failed
-            </span>
-            <span style={{ padding: '4px 10px', borderRadius: '6px', background: 'rgba(251, 191, 36, 0.12)', border: '1px solid rgba(251, 191, 36, 0.3)', color: 'var(--cr-warn)', fontSize: '12px', fontWeight: 600 }}>
-              ⚠ {metrics.skipped} skipped
-            </span>
-            <span style={{ padding: '4px 10px', borderRadius: '6px', background: 'var(--cr-surface-2)', border: '1px solid var(--cr-line)', color: 'var(--cr-subtle)', fontSize: '12px' }}>
-              ? {metrics.inconclusive} inconclusive
+      {job.status !== 'complete' && (
+        <div style={{ margin: '12px 0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-xs)', color: 'var(--muted)', marginBottom: 6 }}>
+            <span aria-live="polite" aria-atomic="true">
+              {job.progress.completed_units} of {job.progress.total_units} units complete
             </span>
           </div>
-          <dl>
-            <dt>Evaluation coverage</dt>
-            <dd>{metrics.evaluation_complete ? 'complete' : 'incomplete'} — evaluated {metrics.evaluated_units}/{metrics.planned_units}</dd>
-            <dt>Outcomes</dt>
-            <dd>{metrics.passed} passed; {metrics.failed} failed; {metrics.skipped} skipped; {metrics.inconclusive} inconclusive; {metrics.not_run} not run</dd>
-            <dt>Latency</dt>
-            <dd>{population(metrics.latency_ms)}</dd>
-            <dt>Time to first token</dt>
-            <dd>{population(metrics.ttft_ms)}</dd>
-            <dt>Input usage</dt>
-            <dd>{population(metrics.input_tokens)}</dd>
-            <dt>Output usage</dt>
-            <dd>{population(metrics.output_tokens)}</dd>
-            <dt>Verified population cost</dt>
-            <dd>{population(metrics.cost_usd)}</dd>
+          <div style={{ height: 3, background: 'var(--rule)', borderRadius: 2 }}>
+            <div style={{ height: '100%', background: 'var(--navy)', borderRadius: 2, transform: `scaleX(${ratio})`, transformOrigin: 'left', transition: 'transform 300ms ease' }} />
+          </div>
+        </div>
+      )}
+
+      {job.error && (
+        <div className="inline-alert error" style={{ margin: '8px 0' }} role="alert">
+          Job failed: {job.error.code}. {job.error.message} Check local service configuration before submitting again.
+        </div>
+      )}
+
+      {metrics && (
+        <>
+          <dl style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 16px', fontSize: 'var(--fs-xs)', margin: '10px 0' }}>
+            <dt style={{ color: 'var(--muted)' }}>Latency</dt><dd className="num" style={{ margin: 0 }}>{population(metrics.latency_ms)}</dd>
+            <dt style={{ color: 'var(--muted)' }}>TTFT</dt><dd className="num" style={{ margin: 0 }}>{population(metrics.ttft_ms)}</dd>
+            <dt style={{ color: 'var(--muted)' }}>Outcomes</dt><dd style={{ margin: 0 }}>{metrics.passed} passed; {metrics.failed} failed</dd>
           </dl>
-          <p>Populations may cover different subsets. Missing samples are never zero or extrapolated into savings.</p>
+          <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', margin: '4px 0' }}>Populations may cover different subsets. Missing samples are never zero or extrapolated into savings.</p>
         </>
-      ) : (
-        <p>Aggregate measurements unavailable. No comparison or quality score has been invented.</p>
+      )}
+
+      {!metrics && (
+        <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>Aggregate measurements unavailable. No comparison or quality score has been invented.</p>
       )}
 
       {job.measurements.length > 0 && (
-        <details style={{ marginTop: '14px' }}>
-          <summary style={{ cursor: 'pointer', color: 'var(--cr-muted)', fontSize: 'var(--cr-fs-xs)' }}>
-            Unit measurements ({job.measurements.length}; 50 per page)
+        <details style={{ marginTop: 14 }}>
+          <summary style={{ cursor: 'pointer', color: 'var(--muted)', fontSize: 'var(--fs-xs)' }}>
+            Unit measurements ({job.measurements.length})
           </summary>
-          <div className="table-scroll">
-            <table>
-              <caption>Actual returned measurements — {job.plan.provenance} provenance</caption>
+          <div className="table-scroll" style={{ marginTop: 8 }}>
+            <table aria-label="Unit measurements" style={{ borderCollapse: 'collapse', fontSize: '11px' }}>
+              <caption className="sr-only">Actual returned measurements — {job.plan.provenance} provenance</caption>
               <thead>
                 <tr>
-                  <th>Node / model / case</th>
-                  <th>Evaluation</th>
-                  <th>Latency (ms)</th>
-                  <th>Input / output tokens</th>
-                  <th>Calculated cost</th>
+                  <th style={{ textAlign: 'left', padding: '5px 8px', borderBottom: '1px solid var(--rule)', color: 'var(--muted)', fontWeight: 600 }}>Node / model / case</th>
+                  <th style={{ textAlign: 'left', padding: '5px 8px', borderBottom: '1px solid var(--rule)', color: 'var(--muted)', fontWeight: 600 }}>Result</th>
+                  <th style={{ textAlign: 'right', padding: '5px 8px', borderBottom: '1px solid var(--rule)', color: 'var(--muted)', fontWeight: 600 }}>Latency (ms)</th>
                 </tr>
               </thead>
               <tbody>
                 {job.measurements.slice(page * 50, page * 50 + 50).map(m => (
                   <tr key={`${m.node_id}:${m.model_id}:${m.case_id}`}>
-                    <td style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
-                      <span style={{ color: 'var(--cr-accent)' }}>{m.node_id}</span>
-                      <br />
-                      <span style={{ color: 'var(--cr-text)' }}>{m.model_id}</span>
-                      <br />
-                      <span style={{ color: 'var(--cr-subtle)' }}>{m.case_id}</span>
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--rule)', fontFamily: 'var(--font-mono)' }}>
+                      <span style={{ color: 'var(--navy)' }}>{m.node_id}</span><br />
+                      <span style={{ color: 'var(--ink)' }}>{shortModelName(m.model_id)}</span><br />
+                      <span style={{ color: 'var(--muted)' }}>{m.case_id}</span>
                     </td>
-                    <td>
-                      <span
-                        style={{
-                          fontSize: '11px',
-                          fontWeight: 600,
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          background: m.evaluation_status === 'passed' ? 'rgba(52, 211, 153, 0.12)' : 'rgba(251, 191, 36, 0.12)',
-                          color: m.evaluation_status === 'passed' ? 'var(--cr-pass)' : 'var(--cr-warn)',
-                        }}
-                      >
+                    <td style={{ padding: '5px 8px', borderBottom: '1px solid var(--rule)' }}>
+                      <span style={{ color: m.evaluation_status === 'passed' ? 'var(--gain)' : m.evaluation_status === 'failed' ? 'var(--loss)' : 'var(--muted)', fontWeight: 500 }}>
                         {m.evaluation_status}
                       </span>
-                      ; quality {m.quality_score ?? 'Unavailable'}
                     </td>
-                    <td className="num">{measured(m.latency_ms)}</td>
-                    <td className="num">{measured(m.input_tokens)} / {measured(m.output_tokens)}</td>
-                    <td>
-                      {m.calculated_cost?.availability === 'available'
-                        ? <span className="num" style={{ color: 'var(--cr-pass)' }}>{m.calculated_cost.amount_usd} USD</span>
-                        : 'Unavailable'}
-                    </td>
+                    <td className="num" style={{ padding: '5px 8px', borderBottom: '1px solid var(--rule)', textAlign: 'right' }}>{measured(m.latency_ms)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-          <div className="control-row">
-            <button disabled={page === 0} onClick={() => setPage(page - 1)}>Previous measurements</button>
-            <button disabled={(page + 1) * 50 >= job.measurements.length} onClick={() => setPage(page + 1)}>Next measurements</button>
+          <div style={{ display: 'flex', gap: 8, padding: '8px 0', justifyContent: 'flex-end' }}>
+            <button className="btn-ghost" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+            <button className="btn-ghost" disabled={(page + 1) * 50 >= job.measurements.length} onClick={() => setPage(page + 1)}>Next</button>
           </div>
         </details>
       )}
@@ -145,39 +260,52 @@ export function JobEvidence({ job }: { job: Job }) {
   );
 }
 
-export function BenchmarkPane({ api, demo, analysis, selected, onJob }: { api?: ApiClient; demo: boolean; analysis?: Scan; selected?: string; onJob: (job?: Job) => void }) {
+// ---------------------------------------------------------------------------
+// BenchmarkPane
+// ---------------------------------------------------------------------------
+
+export function BenchmarkPane({
+  api,
+  demo,
+  analysis,
+  selected,
+  step,
+  onJob,
+}: {
+  api?: ApiClient;
+  demo: boolean;
+  analysis?: Scan;
+  selected?: string;
+  step: WorkflowStep;
+  onJob: (job?: Job) => void;
+}) {
   const [baseline, setBaseline] = useState('');
   const [candidates, setCandidates] = useState('');
   const [cases, setCases] = useState('');
   const [profile, setProfile] = useState('');
   const [runId, setRunId] = useState('');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [drawerModel, setDrawerModel] = useState<string | null>(null);
   const [accepted, submission] = useOperation<JobAccepted>();
   const [state, retrieval] = useOperation<Job>();
   const keys = useMemo(() => new SubmissionKeys(), []);
   const job = state.data;
   const busy = accepted.status === 'loading' || state.status === 'loading';
 
+  const isCurrent = step === 'benchmark';
+  const selectedNode = selected && analysis ? analysis.nodes.find(n => n.node_id === selected) : undefined;
+  const nodeName = selectedNode ? callName(selectedNode) : '—';
+
   useEffect(() => {
     if (selected && analysis) {
       const node = analysis.nodes.find(n => n.node_id === selected);
-      if (node && node.current_model) {
-        setBaseline(node.current_model);
-      } else {
-        setBaseline(b => b || 'meta-llama/Meta-Llama-3.1-70B-Instruct');
-      }
+      if (node?.current_model) setBaseline(node.current_model);
+      else setBaseline(b => b || 'meta-llama/Meta-Llama-3.1-70B-Instruct');
       setCandidates(c => c || 'nvidia/Llama-3.1-Nemotron-70B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct');
       setCases(cs => cs || 'nebius_standard_cases');
       setProfile(p => p || 'json_eval_profile');
     }
   }, [selected, analysis]);
-
-  const fillNebiusDefaults = () => {
-    const node = selected && analysis ? analysis.nodes.find(n => n.node_id === selected) : undefined;
-    setBaseline(node?.current_model || 'meta-llama/Meta-Llama-3.1-70B-Instruct');
-    setCandidates('nvidia/Llama-3.1-Nemotron-70B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct');
-    setCases('nebius_standard_cases');
-    setProfile('json_eval_profile');
-  };
 
   const retrieve = (value: string, cancel = false) => {
     onJob(undefined);
@@ -185,13 +313,14 @@ export function BenchmarkPane({ api, demo, analysis, selected, onJob }: { api?: 
   };
 
   const start = () => {
+    if (!analysis || !selected) return;
     const request: BenchmarkRequest = {
-      analysis_id: analysis!.analysis_id,
-      node_ids: [selected!],
+      analysis_id: analysis.analysis_id,
+      node_ids: [selected],
       baseline_model_id: baseline.trim(),
       candidate_model_ids: candidates.split(',').map(s => s.trim()).filter(Boolean),
       benchmark_case_set_id: cases.trim(),
-      evaluation_profile_id: profile.trim()
+      evaluation_profile_id: profile.trim(),
     };
     retrieval.reset();
     onJob(undefined);
@@ -203,95 +332,349 @@ export function BenchmarkPane({ api, demo, analysis, selected, onJob }: { api?: 
     });
   };
 
+  // Build table rows when job is complete
+  const rows = useMemo(() =>
+    (job && job.status === 'complete' && selected) ? buildRows(job, selected) : [],
+    [job, selected]
+  );
+
+  const maxCost = useMemo(() => {
+    if (!rows.length) return null;
+    const costs = rows.map(r => r.costUsd ? parseFloat(r.costUsd) : 0);
+    const max = Math.max(...costs);
+    return max > 0 ? max.toFixed(6) : null;
+  }, [rows]);
+
+  // Savings sentence for the first recommended row
+  const sentenceRow = rows.find(r => r.status === 'recommended');
+  const savingText = useMemo(() => {
+    if (!sentenceRow || !job) return null;
+    // Build a decision-like structure from job plan
+    const decision = {
+      analysis_id: job.plan.analysis_id,
+      node_id: selected ?? '',
+      provenance: job.plan.provenance,
+      status: 'recommended' as const,
+      reason: 'lowest_recorded_cost' as const,
+      baseline_model_id: job.plan.models[0]?.identifier ?? '',
+      selected_model_id: sentenceRow.modelId,
+      differs_from_baseline: true,
+      quality_threshold: null,
+      recorded_savings_usd: null,
+      candidates: rows.map(r => ({
+        model: { identifier: r.modelId, version: '1' },
+        eligibility: r.status === 'fails' ? 'rejected' as const : 'eligible' as const,
+        reasons: [],
+        planned_cases: r.totalCases,
+        passed_cases: r.passedCases,
+        failed_cases: r.totalCases - r.passedCases,
+        unresolved_cases: 0,
+        latency_ms: { availability: 'available' as const, unit: 'ms' as const, sample_count: 1, mean: r.latencyMs ?? 0 },
+        cost_total_usd: r.costUsd,
+        quality_pass_rate: null,
+        provenance: job.plan.provenance,
+      })),
+    };
+    return savingsSentence({
+      decision,
+      candidates: decision.candidates,
+      selectedModelId: sentenceRow.modelId,
+      baselineModelId: job.plan.models[0]?.identifier ?? '',
+    });
+  }, [sentenceRow, rows, job, selected]);
+
+  const hasRun = !!job;
+  const isRunning = hasRun && !terminal(job?.status ?? 'queued') && job?.status !== 'complete';
+
   return (
-    <section aria-labelledby="benchmark-title">
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-        <h2 id="benchmark-title">2. Local model benchmark</h2>
-        {job && (
-          <span style={{ fontSize: '11px', fontWeight: 600, color: job.status === 'complete' ? 'var(--cr-pass)' : 'var(--cr-accent)', background: 'var(--cr-surface-2)', padding: '3px 8px', borderRadius: '4px', border: '1px solid var(--cr-line)' }}>
-            Status: {job.status}
-          </span>
-        )}
-      </div>
-      <p>Supply identifiers from your operator-configured local registry. Preloaded Nebius and NVIDIA models and standard evaluation suites are available below.</p>
-      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 12px', background: 'var(--cr-surface-2)', borderRadius: 'var(--cr-r-chip)', border: '1px solid var(--cr-line)', margin: '6px 0' }}>
-        <span style={{ fontSize: '12px', color: 'var(--cr-subtle)' }}>Selected finding:</span>
-        <code style={{ color: selected ? 'var(--cr-accent)' : 'var(--cr-warn)' }}>
-          {selected ?? 'none — select a discovered call'}
-        </code>
-      </div>
-      <p>Each submission benchmarks this one finding.</p>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+      {/* Title row */}
+      <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--rule)', background: 'var(--sheet)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <span className="pane-title">{nodeName}</span>
+          {selectedNode && (
+            <span className="pane-subtitle" style={{ marginLeft: 10 }}>
+              {selectedNode.file_path}:{selectedNode.line_number}
+            </span>
+          )}
+          {!selectedNode && (
+            <span style={{ marginLeft: 10, fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
+              {!analysis ? 'Scan a repository first.' : 'Select a call from the left pane.'}
+            </span>
+          )}
+        </div>
 
-      <form onSubmit={e => { e.preventDefault(); start(); }}>
-        <fieldset disabled={demo || !api || !analysis || !selected || busy || (!!job && !terminal(job.status))}>
-          <legend style={{ fontSize: '12px', fontWeight: 600, color: 'var(--cr-subtle)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Explicit local job plan
-          </legend>
-          <label>
-            Baseline model ID
-            <input required value={baseline} onChange={e => setBaseline(e.target.value)} />
-          </label>
-          <label>
-            Candidate model IDs (comma separated, up to 8)
-            <input required value={candidates} onChange={e => setCandidates(e.target.value)} />
-          </label>
-          <label>
-            Local benchmark case-set ID
-            <input required value={cases} onChange={e => setCases(e.target.value)} />
-          </label>
-          <label>
-            Evaluation-profile ID
-            <input required value={profile} onChange={e => setProfile(e.target.value)} />
-          </label>
-          <div className="control-row">
-            <button>Submit local benchmark job</button>
-            <button type="button" onClick={fillNebiusDefaults}>Use Nebius / NVIDIA Defaults</button>
-          </div>
-        </fieldset>
-      </form>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Running: show progress */}
+          {isRunning && job && (
+            <span aria-live="polite" aria-atomic="true" style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
+              {job.progress.completed_units} of {job.progress.total_units} complete
+            </span>
+          )}
 
-      <OperationStatus state={accepted} cancel={submission.cancel} />
-      {accepted.data && (
-        <p>
-          Backend accepted <code>{accepted.data.run_id}</code> in state {accepted.data.status}. {provenance(accepted.data.provenance)}. Acceptance is not a completed evaluation.
-        </p>
+          {/* Cancel button when running */}
+          {isRunning && (
+            <button
+              className="btn-cancel"
+              disabled={!api || busy}
+              onClick={() => retrieve(job!.run_id, true)}
+            >
+              Cancel
+            </button>
+          )}
+
+          {/* Primary Run button: only shown when this is the current step */}
+          {isCurrent && !isRunning && (
+            <button
+              className="btn-primary"
+              disabled={demo || !api || busy || !analysis || !selected}
+              onClick={start}
+            >
+              {busy ? 'Starting…' : job ? 'Run again' : 'Run benchmark'}
+            </button>
+          )}
+
+          {/* Ghost re-run when not current step */}
+          {!isCurrent && !isRunning && job && (
+            <button
+              className="btn-ghost"
+              disabled={demo || !api || busy || !analysis || !selected}
+              onClick={start}
+            >
+              Run again
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Errors */}
+      {(accepted.error || state.error) && (
+        <div className="inline-alert error" style={{ margin: '12px 20px' }} role="alert">
+          {(accepted.error ?? state.error)!.kind}: {(accepted.error ?? state.error)!.message}
+        </div>
       )}
 
-      <form onSubmit={e => { e.preventDefault(); retrieve(runId.trim()); }}>
-        <label>
-          Stored run ID
-          <input
-            value={runId}
-            onChange={e => setRunId(e.target.value)}
-            required
-            pattern="run_[0-9a-f]{32}"
-            disabled={demo}
-            placeholder="run_0123456789abcdef0123456789abcdef"
-          />
-        </label>
-        <button disabled={demo || !api || busy}>Retrieve / refresh run</button>
-      </form>
+      {/* Cancelled timeout message */}
+      {(accepted.status === 'cancelled' || state.status === 'cancelled') && (
+        <div className="inline-alert warn" style={{ margin: '12px 20px' }}>
+          This is taking longer than expected. The backend may still finish. Check for the result before submitting again.
+          {runId && (
+            <button className="btn-link" style={{ marginLeft: 8 }} onClick={() => retrieve(runId)}>Check result</button>
+          )}
+        </div>
+      )}
 
-      <OperationStatus state={state} cancel={retrieval.cancel} />
+      {/* Loading skeleton */}
+      {busy && !job && (
+        <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {[100, 100, 100].map((_, i) => (
+            <div key={i} className="skeleton" style={{ height: 52, borderRadius: 'var(--r-ctrl)' }} />
+          ))}
+        </div>
+      )}
 
-      {job && (
-        <>
+      {/* Empty state */}
+      {!job && !busy && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 40, gap: 8 }}>
+          <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', textAlign: 'center', margin: 0 }}>
+            {!analysis
+              ? 'Scan a repository to find LLM calls, then run a benchmark.'
+              : !selected
+              ? 'Select a call from the left pane to benchmark it.'
+              : 'Run a benchmark to compare models on this call.'}
+          </p>
+          <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', margin: 0 }}>
+            No stored run loaded. No automatic retry or polling occurs.
+          </p>
+        </div>
+      )}
+
+      {/* Result table */}
+      {job && rows.length > 0 && (
+        <div style={{ padding: '16px 20px' }}>
+          <table className="benchmark-table" aria-label="Benchmark results">
+            <caption className="sr-only">Model benchmark results, ordered cheapest to most expensive</caption>
+            <thead>
+              <tr>
+                <th style={{ width: '30%' }}>Model, per 1M tokens</th>
+                <th style={{ width: '25%' }}>Cost per run</th>
+                <th style={{ width: '12%', textAlign: 'right' }}>Latency</th>
+                <th style={{ width: '12%', textAlign: 'right' }}>First token</th>
+                <th style={{ width: '10%', textAlign: 'center' }}>Checks</th>
+                <th style={{ width: '11%', textAlign: 'center' }}>Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(row => {
+                const scale = maxCost ? costBarScale(row.costUsd, maxCost) : 0;
+                const isRecommended = row.status === 'recommended';
+                const isFailed = row.status === 'fails';
+                const rowClass = `benchmark-row${isRecommended ? ' row-recommended' : isFailed ? ' row-failed' : row.status === 'unavailable' ? ' row-unavailable' : ''}`;
+
+                return (
+                  <tr
+                    key={row.modelId}
+                    className={rowClass}
+                    onClick={() => setDrawerModel(row.modelId)}
+                    style={{ cursor: 'pointer' }}
+                    tabIndex={0}
+                    role="button"
+                    aria-label={`View details for ${shortModelName(row.modelId)}`}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setDrawerModel(row.modelId); }}
+                  >
+                    <td>
+                      <div style={{ fontWeight: 500 }}>{shortModelName(row.modelId)}</div>
+                      <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
+                        — / — per 1M
+                      </div>
+                    </td>
+                    <td>
+                      <div className="num" style={{ fontWeight: 500, color: isRecommended ? 'var(--gain)' : 'var(--ink)' }}>
+                        {row.costUsd ? `$${row.costUsd}` : '—'}
+                      </div>
+                      <div className="cost-bar-track" aria-hidden="true">
+                        <div className="cost-bar-fill" style={{ width: `${scale}%` }} />
+                      </div>
+                    </td>
+                    <td className="num" style={{ textAlign: 'right' }}>{fmt(row.latencyMs, ' ms')}</td>
+                    <td className="num" style={{ textAlign: 'right' }}>{fmt(row.ttftMs, ' ms')}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span className="num">
+                        {row.passedCases} of {row.totalCases}
+                      </span>
+                    </td>
+                    <td style={{ textAlign: 'center' }}>
+                      {row.status === 'unavailable' ? (
+                        <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>Not available on this account</span>
+                      ) : (
+                        <span className={`result-chip ${row.status}`}>
+                          {row.status === 'recommended' ? 'Recommended'
+                            : row.status === 'passes' ? 'Passes'
+                            : row.status === 'fails' ? 'Fails'
+                            : 'Current'}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {/* Savings sentence */}
+          {savingText && (
+            <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', marginTop: 12, lineHeight: 1.5 }}>
+              {savingText}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Raw job evidence (non-complete) */}
+      {job && rows.length === 0 && (
+        <div style={{ padding: '16px 20px' }}>
           <JobEvidence key={job.run_id} job={job} />
-          <button
-            disabled={demo || !api || busy || terminal(job.status) || job.status === 'cancelling'}
-            onClick={() => retrieve(job.run_id, true)}
-            style={{ marginTop: '10px' }}
-          >
-            Request backend cancellation
-          </button>
-        </>
+          {!terminal(job.status) && job.status !== 'cancelling' && (
+            <button
+              className="btn-ghost"
+              disabled={demo || !api || busy}
+              onClick={() => retrieve(job.run_id, true)}
+              style={{ marginTop: 10 }}
+            >
+              Request cancellation
+            </button>
+          )}
+        </div>
       )}
 
-      {!job && (
-        <p>
-          No stored run loaded. Unknown submission outcome? Retry the same plan to reuse its idempotency key, or retrieve the known run ID. No automatic retry or polling occurs.
-        </p>
+      {/* Benchmark settings disclosure */}
+      <div style={{ marginTop: 'auto' }}>
+        <button
+          className="disclosure-row"
+          type="button"
+          onClick={() => setSettingsOpen(!settingsOpen)}
+          aria-expanded={settingsOpen}
+          style={{ width: '100%', textAlign: 'left' }}
+        >
+          <span className="disclosure-label">Benchmark settings</span>
+          {!settingsOpen && (
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {baseline || 'meta-llama/Meta-Llama-3.1-70B-Instruct'}, {cases || 'nebius_standard_cases'}, {profile || 'json_eval_profile'}
+            </span>
+          )}
+          <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 'var(--fs-xs)' }}>
+            <span className="btn-link">
+              {settingsOpen ? 'Hide' : 'Change'}
+            </span>
+          </span>
+        </button>
+
+        <div className="settings-reveal" style={{ display: settingsOpen ? 'block' : 'none' }}>
+          <form onSubmit={e => { e.preventDefault(); start(); }}>
+            <fieldset disabled={demo || !api || !analysis || !selected || busy || (!!job && !terminal(job.status))}>
+              <legend style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+                Explicit local job plan
+              </legend>
+              <label>
+                Baseline model ID
+                <input required className="field-input" value={baseline} onChange={e => setBaseline(e.target.value)} />
+              </label>
+              <label>
+                Candidate model IDs (comma-separated, up to 8)
+                <input required className="field-input" value={candidates} onChange={e => setCandidates(e.target.value)} />
+              </label>
+              <label>
+                Local benchmark case-set ID
+                <input required className="field-input" value={cases} onChange={e => setCases(e.target.value)} />
+              </label>
+              <label>
+                Evaluation-profile ID
+                <input required className="field-input" value={profile} onChange={e => setProfile(e.target.value)} />
+              </label>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                <button type="submit" className="btn-ghost">Submit local benchmark job</button>
+                <button
+                  className="btn-ghost"
+                  type="button"
+                  onClick={() => {
+                    const node = selected && analysis ? analysis.nodes.find(n => n.node_id === selected) : undefined;
+                    setBaseline(node?.current_model || 'meta-llama/Meta-Llama-3.1-70B-Instruct');
+                    setCandidates('nvidia/Llama-3.1-Nemotron-70B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct');
+                    setCases('nebius_standard_cases');
+                    setProfile('json_eval_profile');
+                  }}
+                >
+                  Use Nebius / NVIDIA defaults
+                </button>
+              </div>
+            </fieldset>
+          </form>
+
+          {/* Retrieve existing run */}
+          <form
+            onSubmit={e => { e.preventDefault(); retrieve(runId.trim()); }}
+            style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 8 }}
+          >
+            <label className="field-label" style={{ flex: 1 }}>
+              Stored run ID
+              <input
+                className="field-input mono"
+                value={runId}
+                onChange={e => setRunId(e.target.value)}
+                pattern="run_[0-9a-f]{32}"
+                placeholder="run_…"
+                disabled={demo}
+              />
+            </label>
+            <button className="btn-ghost" disabled={demo || !api || busy} style={{ flexShrink: 0 }}>Retrieve / refresh run</button>
+          </form>
+        </div>
+      </div>
+
+      {/* Row detail drawer */}
+      {drawerModel && job && (
+        <RowDetailDrawer modelId={drawerModel} job={job} onClose={() => setDrawerModel(null)} />
       )}
-    </section>
+    </div>
   );
 }
