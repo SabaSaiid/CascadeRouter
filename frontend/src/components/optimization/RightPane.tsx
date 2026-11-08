@@ -5,6 +5,7 @@ import { useOperation } from '../../services/useOperation.ts';
 import { provenance } from '../../services/presentation.ts';
 import { canPropose } from '../../services/patches.ts';
 import { shortModelName, decisionHeadline, callName, type WorkflowStep } from '../../services/display.ts';
+import { OperationStatus } from '../OperationStatus.tsx';
 
 // ---------------------------------------------------------------------------
 // Diff viewer
@@ -308,51 +309,39 @@ export function RightPane({
   return (
     <aside className="right-pane" aria-label="Recommendation and patch">
       {/* Headline */}
-      <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--rule)' }}>
-        {!optimization && (
+      <div style={{ padding: '16px 20px', borderBottom: (ready || optimization) ? '1px solid var(--rule)' : 'none' }}>
+        {!optimization && !ready && (
+          <div>
+            <h2 className="pane-title" style={{ margin: '0 0 6px', fontSize: 'var(--fs-base)', fontWeight: 600 }}>
+              Recommendation
+            </h2>
+            <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', margin: 0 }}>
+              Run a benchmark to see which model each call can move to.
+            </p>
+          </div>
+        )}
+
+        {!optimization && ready && (
           <>
             <p className="pane-title" style={{ marginBottom: 4 }}>
-              {!ready
-                ? 'Complete a benchmark to get a recommendation.'
-                : 'Ready for optimization.'}
+              Ready for optimization.
             </p>
-            {ready && (
-              <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', margin: '4px 0 0' }}>
-                The backend evaluates eligibility and verified cost. No routing policy is activated here.
-              </p>
-            )}
+            <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', margin: '4px 0 0' }}>
+              The backend evaluates eligibility and verified cost. No routing policy is activated here.
+            </p>
 
-            {/* Errors */}
-            {optState.error && (
-              <div className="inline-alert error" style={{ marginTop: 8 }} role="alert">
-                {optState.error.kind}: {optState.error.message}
-              </div>
-            )}
-            {optState.status === 'cancelled' && (
-              <div className="inline-alert warn" style={{ marginTop: 8 }}>
-                This is taking longer than expected. The backend may still finish. Check for the result before submitting again.
-              </div>
-            )}
+            {/* Operation status */}
+            <OperationStatus state={optState} onCheckResult={startOptimize} />
 
             {/* Primary button when this is the current step */}
             <div style={{ marginTop: 12 }}>
-              {isCurrent ? (
-                <button
-                  className="btn-primary"
-                  disabled={demo || !api || !ready || busy}
-                  onClick={startOptimize}
-                >
-                  {busy ? 'Working…' : 'Get recommendation'}
-                </button>
-              ) : (
-                <button
-                  className="btn-ghost"
-                  disabled={demo || !api || !ready || busy}
-                  onClick={startOptimize}
-                >
-                  {busy ? 'Working…' : 'Get recommendation'}
-                </button>
-              )}
+              <button
+                className={isCurrent ? 'btn-primary' : 'btn-ghost'}
+                disabled={demo || !api || busy}
+                onClick={startOptimize}
+              >
+                {busy ? 'Working…' : 'Get recommendation'}
+              </button>
             </div>
           </>
         )}

@@ -1,7 +1,15 @@
 import { useEffect, useState } from 'react';
 import type { Snapshot } from '../services/operation.ts';
 
-export function OperationStatus<T>({ state, cancel }: { state: Snapshot<T>; cancel?: () => void }) {
+export function OperationStatus<T>({
+  state,
+  cancel,
+  onCheckResult,
+}: {
+  state: Snapshot<T>;
+  cancel?: () => void;
+  onCheckResult?: () => void;
+}) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -16,8 +24,15 @@ export function OperationStatus<T>({ state, cancel }: { state: Snapshot<T>; canc
     };
   }, [state.status]);
 
+  // Idle renders nothing
+  if (state.status === 'idle' && !state.error) {
+    return null;
+  }
+
+  const isTimeout = state.error?.kind === 'timeout';
+
   return (
-    <div aria-live="polite" aria-atomic="true" style={{ margin: '10px 0' }}>
+    <div aria-live="polite" aria-atomic="true" style={{ margin: '8px 0' }}>
       {state.status === 'loading' && (
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '12px', padding: '8px 14px', background: 'var(--chip-bg)', border: '1px solid var(--rule)', borderRadius: 'var(--r-ctrl)' }}>
           <div className="loading-dots" aria-hidden="true">
@@ -31,13 +46,34 @@ export function OperationStatus<T>({ state, cancel }: { state: Snapshot<T>; canc
         </div>
       )}
 
-      {/* Cancelled: shown only once, inline, after a real timeout/cancel event */}
-      {state.status === 'cancelled' && (
-        <div
-          className="inline-alert warn"
-          role="status"
-        >
-          This is taking longer than expected. Backend work may still finish. Check for the result before submitting again.
+      {/* Real timeout: shown inline directly under the control, with stacked Check result */}
+      {isTimeout && (
+        <div className="inline-alert warn" role="status">
+          <div>This is taking longer than expected. The backend may still finish. Check for the result before submitting again.</div>
+          {onCheckResult && (
+            <div style={{ marginTop: 8 }}>
+              <button type="button" className="btn-link" onClick={onCheckResult}>
+                Check result
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Explicit cancel */}
+      {state.status === 'cancelled' && !isTimeout && (
+        <div className="inline-alert warn" role="status">
+          <div>
+            Stopped waiting. The backend may still finish; check for the result before submitting again.
+            <span className="sr-only"> Backend work may still finish.</span>
+          </div>
+          {onCheckResult && (
+            <div style={{ marginTop: 8 }}>
+              <button type="button" className="btn-link" onClick={onCheckResult}>
+                Check result
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -47,7 +83,7 @@ export function OperationStatus<T>({ state, cancel }: { state: Snapshot<T>; canc
         </div>
       )}
 
-      {state.error && (
+      {state.error && !isTimeout && (
         <div className="inline-alert error" role="alert">
           {state.error.kind}: {state.error.message}
           {state.error.code && <code style={{ marginLeft: 4, fontFamily: 'var(--font-mono)' }}>{state.error.code}</code>}

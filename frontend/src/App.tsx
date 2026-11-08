@@ -4,6 +4,7 @@ import { LocalTransport, failure } from './services/transport.ts';
 import { useOperation } from './services/useOperation.ts';
 import type { Health, Scan, Job, Optimization } from './services/contracts.ts';
 import { deriveStep } from './services/display.ts';
+import { demoScan } from './services/demo.ts';
 import { Header } from './components/layout/Header.tsx';
 import { RepositoryPane } from './components/repository/RepositoryPane.tsx';
 import { BenchmarkPane } from './components/benchmark/BenchmarkPane.tsx';
@@ -36,24 +37,35 @@ export default function App() {
       {/* Full-width amber strip for mock / emulated */}
       {isMock && (
         <div className="mock-strip" role="alert" aria-live="polite">
-          <span aria-hidden="true">⚠</span>
-          Design mockup with sample data. These are not real model results.
+          <span aria-hidden="true">⚠ </span>
+          Mock data, not real model results
         </div>
       )}
 
       <Header
         demo={demo}
         health={health.data}
+        healthError={health.error}
         healthLoading={health.status === 'loading'}
         analysis={analysis}
+        job={job}
+        optimization={optimization}
         onCheckHealth={() => healthOperation.run(s => connection.api!.health(s))}
         onOpenDemo={() => {
           healthOperation.reset();
-          setAnalysis(undefined);
-          setJob(undefined);
-          setOptimization(undefined);
-          setSelected(undefined);
-          setDemo(!demo);
+          if (!demo) {
+            setAnalysis(demoScan);
+            setSelected(demoScan.nodes[0]?.node_id);
+            setJob(undefined);
+            setOptimization(undefined);
+            setDemo(true);
+          } else {
+            setAnalysis(undefined);
+            setSelected(undefined);
+            setJob(undefined);
+            setOptimization(undefined);
+            setDemo(false);
+          }
         }}
         step={step}
         onRetrieveAnalysis={id => {

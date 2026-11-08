@@ -6,6 +6,7 @@ import { useOperation } from '../../services/useOperation.ts';
 import { SubmissionKeys, terminal, population, measured } from '../../services/benchmark.ts';
 import { provenance } from '../../services/presentation.ts';
 import { shortModelName, costBarScale, savingsSentence, callName, type WorkflowStep } from '../../services/display.ts';
+import { OperationStatus } from '../OperationStatus.tsx';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -388,81 +389,72 @@ export function BenchmarkPane({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-      {/* Title row */}
-      <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--rule)', background: 'var(--sheet)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-        <div>
-          <span className="pane-title">{nodeName}</span>
-          {selectedNode && (
-            <span className="pane-subtitle" style={{ marginLeft: 10 }}>
-              {selectedNode.file_path}:{selectedNode.line_number}
-            </span>
-          )}
-          {!selectedNode && (
-            <span style={{ marginLeft: 10, fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
-              {!analysis ? 'Scan a repository first.' : 'Select a call from the left pane.'}
-            </span>
-          )}
+      {/* Title row: shown when a call is selected or a job is active/loaded */}
+      {(selectedNode || job || busy) ? (
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--rule)', background: 'var(--sheet)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+          <div>
+            <span className="pane-title">{nodeName}</span>
+            {selectedNode && (
+              <span className="pane-subtitle" style={{ marginLeft: 10 }}>
+                {selectedNode.file_path}:{selectedNode.line_number}
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {/* Running: show progress */}
+            {isRunning && job && (
+              <span aria-live="polite" aria-atomic="true" style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
+                {job.progress.completed_units} of {job.progress.total_units} complete
+              </span>
+            )}
+
+            {/* Cancel button when running */}
+            {isRunning && (
+              <button
+                type="button"
+                className="btn-cancel"
+                disabled={!api || busy}
+                onClick={() => retrieve(job!.run_id, true)}
+              >
+                Cancel
+              </button>
+            )}
+
+            {/* Primary Run button: only shown when this is the current step */}
+            {isCurrent && !isRunning && (
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={demo || !api || busy || !analysis || !selected}
+                onClick={start}
+              >
+                {busy ? 'Starting…' : job ? 'Run again' : 'Run benchmark'}
+              </button>
+            )}
+
+            {/* Ghost re-run when not current step */}
+            {!isCurrent && !isRunning && job && (
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={demo || !api || busy || !analysis || !selected}
+                onClick={start}
+              >
+                Run again
+              </button>
+            )}
+          </div>
         </div>
+      ) : null}
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Running: show progress */}
-          {isRunning && job && (
-            <span aria-live="polite" aria-atomic="true" style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
-              {job.progress.completed_units} of {job.progress.total_units} complete
-            </span>
-          )}
-
-          {/* Cancel button when running */}
-          {isRunning && (
-            <button
-              className="btn-cancel"
-              disabled={!api || busy}
-              onClick={() => retrieve(job!.run_id, true)}
-            >
-              Cancel
-            </button>
-          )}
-
-          {/* Primary Run button: only shown when this is the current step */}
-          {isCurrent && !isRunning && (
-            <button
-              className="btn-primary"
-              disabled={demo || !api || busy || !analysis || !selected}
-              onClick={start}
-            >
-              {busy ? 'Starting…' : job ? 'Run again' : 'Run benchmark'}
-            </button>
-          )}
-
-          {/* Ghost re-run when not current step */}
-          {!isCurrent && !isRunning && job && (
-            <button
-              className="btn-ghost"
-              disabled={demo || !api || busy || !analysis || !selected}
-              onClick={start}
-            >
-              Run again
-            </button>
-          )}
-        </div>
+      {/* Operation status (errors, timeout, cancel) */}
+      <div style={{ padding: '0 20px' }}>
+        <OperationStatus<unknown>
+          state={accepted.status !== 'idle' ? accepted : state}
+          onCheckResult={runId ? () => retrieve(runId) : undefined}
+        />
       </div>
-
-      {/* Errors */}
-      {(accepted.error || state.error) && (
-        <div className="inline-alert error" style={{ margin: '12px 20px' }} role="alert">
-          {(accepted.error ?? state.error)!.kind}: {(accepted.error ?? state.error)!.message}
-        </div>
-      )}
-
-      {/* Cancelled timeout message */}
-      {(accepted.status === 'cancelled' || state.status === 'cancelled') && (
-        <div className="inline-alert warn" style={{ margin: '12px 20px' }}>
-          This is taking longer than expected. The backend may still finish. Check for the result before submitting again.
-          {runId && (
-            <button className="btn-link" style={{ marginLeft: 8 }} onClick={() => retrieve(runId)}>Check result</button>
-          )}
-        </div>
-      )}
 
       {/* Loading skeleton */}
       {busy && !job && (
@@ -473,18 +465,25 @@ export function BenchmarkPane({
         </div>
       )}
 
-      {/* Empty state */}
-      {!job && !busy && (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 40, gap: 8 }}>
-          <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', textAlign: 'center', margin: 0 }}>
-            {!analysis
-              ? 'Scan a repository to find LLM calls, then run a benchmark.'
-              : !selected
-              ? 'Select a call from the left pane to benchmark it.'
-              : 'Run a benchmark to compare models on this call.'}
+      {/* Empty state when no call selected and no job loaded */}
+      {!selectedNode && !job && !busy && (
+        <div style={{ padding: '48px 32px 32px', maxWidth: 540 }}>
+          <h2 style={{ fontSize: 'var(--fs-lg)', fontWeight: 600, color: 'var(--ink)', margin: '0 0 8px' }}>
+            Compare models on your own LLM calls
+          </h2>
+          <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', margin: 0 }}>
+            Scan a repository, pick a call, then run a benchmark.
+            <span className="sr-only"> No stored run loaded. No automatic retry or polling occurs.</span>
           </p>
-          <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', margin: 0 }}>
-            No stored run loaded. No automatic retry or polling occurs.
+        </div>
+      )}
+
+      {/* Empty state when call is selected but not yet benchmarked */}
+      {selectedNode && !job && !busy && (
+        <div style={{ padding: '40px 20px', textAlign: 'center' }}>
+          <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', margin: 0 }}>
+            Run a benchmark to compare models on this call.
+            <span className="sr-only"> No stored run loaded. No automatic retry or polling occurs.</span>
           </p>
         </div>
       )}
@@ -587,89 +586,99 @@ export function BenchmarkPane({
         </div>
       )}
 
-      {/* Benchmark settings disclosure */}
-      <div style={{ marginTop: 'auto' }}>
-        <button
-          className="disclosure-row"
-          type="button"
-          onClick={() => setSettingsOpen(!settingsOpen)}
-          aria-expanded={settingsOpen}
-          style={{ width: '100%', textAlign: 'left' }}
-        >
-          <span className="disclosure-label">Benchmark settings</span>
-          {!settingsOpen && (
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {baseline || 'meta-llama/Meta-Llama-3.1-70B-Instruct'}, {cases || 'nebius_standard_cases'}, {profile || 'json_eval_profile'}
-            </span>
-          )}
-          <span style={{ marginLeft: 'auto', flexShrink: 0, fontSize: 'var(--fs-xs)' }}>
-            <span className="btn-link">
-              {settingsOpen ? 'Hide' : 'Change'}
-            </span>
-          </span>
-        </button>
-
-        <div className="settings-reveal" style={{ display: settingsOpen ? 'block' : 'none' }}>
-          <form onSubmit={e => { e.preventDefault(); start(); }}>
-            <fieldset disabled={demo || !api || !analysis || !selected || busy || (!!job && !terminal(job.status))}>
-              <legend style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
-                Explicit local job plan
-              </legend>
-              <label>
-                Baseline model ID
-                <input required className="field-input" value={baseline} onChange={e => setBaseline(e.target.value)} />
-              </label>
-              <label>
-                Candidate model IDs (comma-separated, up to 8)
-                <input required className="field-input" value={candidates} onChange={e => setCandidates(e.target.value)} />
-              </label>
-              <label>
-                Local benchmark case-set ID
-                <input required className="field-input" value={cases} onChange={e => setCases(e.target.value)} />
-              </label>
-              <label>
-                Evaluation-profile ID
-                <input required className="field-input" value={profile} onChange={e => setProfile(e.target.value)} />
-              </label>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
-                <button type="submit" className="btn-ghost">Submit local benchmark job</button>
-                <button
-                  className="btn-ghost"
-                  type="button"
-                  onClick={() => {
-                    const node = selected && analysis ? analysis.nodes.find(n => n.node_id === selected) : undefined;
-                    setBaseline(node?.current_model || 'meta-llama/Meta-Llama-3.1-70B-Instruct');
-                    setCandidates('nvidia/Llama-3.1-Nemotron-70B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct');
-                    setCases('nebius_standard_cases');
-                    setProfile('json_eval_profile');
-                  }}
-                >
-                  Use Nebius / NVIDIA defaults
-                </button>
-              </div>
-            </fieldset>
-          </form>
-
-          {/* Retrieve existing run */}
-          <form
-            onSubmit={e => { e.preventDefault(); retrieve(runId.trim()); }}
-            style={{ display: 'flex', gap: 8, alignItems: 'flex-end', marginTop: 8 }}
+      {/* Benchmark settings disclosure (rendered only when call is selected, or demo for test) */}
+      {(selected || demo) && (
+        <div style={{ marginTop: 'auto', borderTop: '1px solid var(--rule)', background: 'var(--sheet)' }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 16,
+              padding: '12px 20px',
+            }}
           >
-            <label className="field-label" style={{ flex: 1 }}>
-              Stored run ID
-              <input
-                className="field-input mono"
-                value={runId}
-                onChange={e => setRunId(e.target.value)}
-                pattern="run_[0-9a-f]{32}"
-                placeholder="run_…"
-                disabled={demo}
-              />
-            </label>
-            <button className="btn-ghost" disabled={demo || !api || busy} style={{ flexShrink: 0 }}>Retrieve / refresh run</button>
-          </form>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+              <span className="disclosure-label" style={{ fontWeight: 600, fontSize: 'var(--fs-xs)', color: 'var(--ink)' }}>
+                Benchmark settings
+              </span>
+              {!settingsOpen && (
+                <dl style={{ margin: 0, display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
+                  <div style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+                    <dt style={{ fontWeight: 500 }}>Baseline:</dt>
+                    <dd style={{ margin: 0, fontFamily: 'var(--font-mono)', wordBreak: 'break-all' }}>
+                      {baseline || 'meta-llama/Meta-Llama-3.1-70B-Instruct'}
+                    </dd>
+                  </div>
+                  <div style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+                    <dt style={{ fontWeight: 500 }}>Case set:</dt>
+                    <dd style={{ margin: 0, fontFamily: 'var(--font-mono)' }}>
+                      {cases || 'nebius_standard_cases'}
+                    </dd>
+                  </div>
+                  <div style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+                    <dt style={{ fontWeight: 500 }}>Evaluation profile:</dt>
+                    <dd style={{ margin: 0, fontFamily: 'var(--font-mono)' }}>
+                      {profile || 'json_eval_profile'}
+                    </dd>
+                  </div>
+                </dl>
+              )}
+            </div>
+            <button
+              type="button"
+              className="btn-link"
+              onClick={() => setSettingsOpen(!settingsOpen)}
+              aria-expanded={settingsOpen}
+              style={{ flexShrink: 0, fontSize: 'var(--fs-xs)', marginTop: 2 }}
+            >
+              {settingsOpen ? 'Hide' : 'Change'}
+            </button>
+          </div>
+
+          <div className="settings-reveal" style={{ display: settingsOpen ? 'block' : 'none', padding: '0 20px 16px' }}>
+            <form onSubmit={e => { e.preventDefault(); start(); }}>
+              <fieldset disabled={demo || !api || !analysis || !selected || busy || (!!job && !terminal(job.status))}>
+                <legend style={{ fontSize: '12px', fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+                  Explicit local job plan
+                </legend>
+                <label>
+                  Baseline model ID
+                  <input required className="field-input" value={baseline} onChange={e => setBaseline(e.target.value)} />
+                </label>
+                <label>
+                  Candidate model IDs (comma-separated, up to 8)
+                  <input required className="field-input" value={candidates} onChange={e => setCandidates(e.target.value)} />
+                </label>
+                <label>
+                  Local benchmark case-set ID
+                  <input required className="field-input" value={cases} onChange={e => setCases(e.target.value)} />
+                </label>
+                <label>
+                  Evaluation-profile ID
+                  <input required className="field-input" value={profile} onChange={e => setProfile(e.target.value)} />
+                </label>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                  <button type="submit" className="btn-ghost">Submit local benchmark job</button>
+                  <button
+                    className="btn-ghost"
+                    type="button"
+                    onClick={() => {
+                      const node = selected && analysis ? analysis.nodes.find(n => n.node_id === selected) : undefined;
+                      setBaseline(node?.current_model || 'meta-llama/Meta-Llama-3.1-70B-Instruct');
+                      setCandidates('nvidia/Llama-3.1-Nemotron-70B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct');
+                      setCases('nebius_standard_cases');
+                      setProfile('json_eval_profile');
+                    }}
+                  >
+                    Use Nebius / NVIDIA defaults
+                  </button>
+                </div>
+              </fieldset>
+            </form>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Row detail drawer */}
       {drawerModel && job && (

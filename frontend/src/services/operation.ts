@@ -10,7 +10,14 @@ export class Operation<T> {
   snapshot = () => this.state;
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish(state: Snapshot<T>) { this.state = state; for (const listener of this.listeners) listener(); }
-  cancel = () => { this.generation++; this.controller?.abort(); this.controller = undefined; this.publish({ ...this.state, status: 'cancelled', error: undefined }); };
+  cancel = () => {
+    this.generation++;
+    this.controller?.abort();
+    this.controller = undefined;
+    if (this.state.status === 'loading') {
+      this.publish({ ...this.state, status: 'cancelled', error: undefined });
+    }
+  };
   reset = () => { this.cancel(); this.publish({ status: 'idle' }); };
   async run(task: (signal: AbortSignal) => Promise<T>, replace = false, retain = false): Promise<T | undefined> {
     if (this.state.status === 'loading' && !replace) return;

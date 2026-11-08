@@ -309,21 +309,43 @@ code, pre, .mono { font-family: var(--font-mono); }
   white-space: nowrap;
 }
 
-.trail-step.done   { color: var(--gain); }
-.trail-step.active { color: var(--navy); font-weight: 500; }
+.trail-step.done {
+  color: var(--gain);
+  font-weight: 500;
+}
+.trail-step.current,
+.trail-step.active {
+  color: var(--navy);
+  font-weight: 600;
+}
+.trail-step.pending {
+  color: var(--muted);
+  font-weight: 400;
+}
 
 .trail-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: var(--rule);
+  background: var(--field-border);
   flex-shrink: 0;
+  box-sizing: border-box;
 }
 
-.trail-step.done   .trail-dot { background: var(--gain); }
-.trail-step.active .trail-dot { background: var(--navy); }
-
-.trail-dot.pending { background: var(--field-border); }
+.trail-step.done .trail-dot {
+  background: var(--gain);
+  border: none;
+}
+.trail-step.current .trail-dot,
+.trail-step.active .trail-dot {
+  background: transparent;
+  border: 2px solid var(--navy);
+}
+.trail-step.pending .trail-dot,
+.trail-dot.pending {
+  background: var(--field-border);
+  border: none;
+}
 
 .trail-connector {
   width: 20px;
@@ -398,7 +420,13 @@ code, pre, .mono { font-family: var(--font-mono); }
   transition: background 140ms ease;
 }
 .btn-primary:hover:not(:disabled) { background: var(--navy-hover); }
-.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary:disabled {
+  background: transparent;
+  border: 1px solid #C9CFD9;
+  color: #6B7482;
+  cursor: not-allowed;
+  opacity: 1;
+}
 
 /* Text / ghost button */
 .btn-ghost {
@@ -419,7 +447,11 @@ code, pre, .mono { font-family: var(--font-mono); }
   transition: color 140ms ease, background 140ms ease;
 }
 .btn-ghost:hover:not(:disabled) { color: var(--ink); background: var(--chip-bg); }
-.btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-ghost:disabled {
+  color: #6B7482;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
 /* Text link button */
 .btn-link {
@@ -436,11 +468,23 @@ code, pre, .mono { font-family: var(--font-mono); }
   cursor: pointer;
   border: none;
   white-space: nowrap;
+  text-decoration: none;
+  transition: text-decoration 140ms ease;
+}
+.btn-link:hover:not(:disabled),
+.btn-link:focus-visible {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.btn-link:hover:not(:disabled) { text-decoration: none; }
-.btn-link:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-link:focus-visible {
+  outline: 2px solid var(--navy);
+  outline-offset: 2px;
+}
+.btn-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
+}
 
 /* Cancel / destructive text */
 .btn-cancel {
@@ -480,7 +524,12 @@ code, pre, .mono { font-family: var(--font-mono); }
   transition: border-color 140ms ease, color 140ms ease;
 }
 .btn-outline:hover:not(:disabled) { color: var(--ink); border-color: var(--muted); }
-.btn-outline:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-outline:disabled {
+  border-color: #C9CFD9;
+  color: #6B7482;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
 /* --------------------------------------------------------------------------- */
 /* Form controls                                                                */

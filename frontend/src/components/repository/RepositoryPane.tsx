@@ -5,6 +5,7 @@ import { useOperation } from '../../services/useOperation.ts';
 import { demoScan } from '../../services/demo.ts';
 import { provenance, scanSummary } from '../../services/presentation.ts';
 import { callName, callResult, type WorkflowStep } from '../../services/display.ts';
+import { OperationStatus } from '../OperationStatus.tsx';
 import { AgentGraph } from './AgentGraph.tsx';
 
 // ---------------------------------------------------------------------------
@@ -271,7 +272,7 @@ export function RepositoryPane({
       <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--rule)' }}>
         <p className="pane-title" style={{ marginBottom: 8 }}>Repository</p>
 
-        <form onSubmit={e => { e.preventDefault(); submit(); }} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <form onSubmit={e => { e.preventDefault(); submit(); }} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <label className="field-label" htmlFor="repo-path">
             Repository path
             <input
@@ -282,53 +283,60 @@ export function RepositoryPane({
               autoComplete="off"
               disabled={demo}
               placeholder="e.g. . or /path/to/repo"
+              style={{ width: '100%' }}
             />
           </label>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-            {/* Only one filled primary button when this is the current step */}
-            {isCurrent && !scan ? (
-              <button
-                type="submit"
-                className="btn-primary"
-                disabled={demo || !api || busy || !path.trim()}
-                style={{ minWidth: 0, flex: 1 }}
-              >
-                {busy ? 'Scanning…' : 'Scan repository'}
-              </button>
-            ) : (
-              <button
-                type="submit"
-                className="btn-ghost"
-                disabled={demo || !api || busy || !path.trim()}
-              >
-                {busy ? 'Scanning…' : scan ? 'Scan again' : 'Scan repository'}
-              </button>
-            )}
-            <button type="button" className="btn-ghost" disabled={demo || busy} onClick={() => setPath('examples/customer_support_agent')}>
-              Load Sample Agent
+          {/* Full-width scan button directly under path input */}
+          {!scan ? (
+            <button
+              type="submit"
+              className={isCurrent ? 'btn-primary' : 'btn-ghost'}
+              disabled={demo || !api || busy || !path.trim()}
+              title={!path.trim() ? 'Enter a repository path to scan' : demo ? 'Cannot scan in sample data mode' : !api ? 'Backend not connected' : undefined}
+              style={{ width: '100%' }}
+            >
+              {busy ? 'Scanning…' : 'Scan repository'}
             </button>
-            <button type="button" className="btn-ghost" disabled={demo || busy} onClick={() => setPath('.')}>
-              Use Current Repo (.)
+          ) : (
+            <button
+              type="submit"
+              className="btn-ghost"
+              disabled={demo || !api || busy || !path.trim()}
+              title={!path.trim() ? 'Enter a repository path to scan' : undefined}
+              style={{ width: '100%' }}
+            >
+              {busy ? 'Scanning…' : 'Scan again'}
+            </button>
+          )}
+
+          {/* Two equal-width secondary buttons side-by-side */}
+          <div style={{ display: 'flex', gap: 6, width: '100%' }}>
+            <button
+              type="button"
+              className="btn-outline"
+              disabled={demo || busy}
+              onClick={() => setPath('examples/customer_support_agent')}
+              title="Load sample agent repository path"
+              style={{ flex: 1, whiteSpace: 'nowrap', padding: '6px 4px', fontSize: 'var(--fs-xs)', justifyContent: 'center' }}
+            >
+              Use sample agent
+            </button>
+            <button
+              type="button"
+              className="btn-outline"
+              disabled={demo || busy}
+              onClick={() => setPath('.')}
+              title="Use current directory (.)"
+              style={{ flex: 1, whiteSpace: 'nowrap', padding: '6px 4px', fontSize: 'var(--fs-xs)', justifyContent: 'center' }}
+            >
+              Use current repo
             </button>
           </div>
         </form>
 
-        {/* Error */}
-        {state.error && !busy && (
-          <div className="inline-alert error" style={{ marginTop: 8 }}>
-            {state.error.kind}: {state.error.message}
-            {state.error.code && <code style={{ marginLeft: 4 }}>{state.error.code}</code>}
-          </div>
-        )}
-
-        {/* Cancelled */}
-        {state.status === 'cancelled' && (
-          <div className="inline-alert warn" style={{ marginTop: 8 }}>
-            This is taking longer than expected. The backend may still finish. Check for the result before submitting again.
-            <button className="btn-link" style={{ marginLeft: 8 }} onClick={submit}>Check result</button>
-          </div>
-        )}
+        {/* Operation status (loading, real timeout with stacked check button, cancel, error) */}
+        <OperationStatus state={state} cancel={operation.cancel} onCheckResult={submit} />
 
         {/* Scan summary */}
         {scan && summary && (
@@ -348,11 +356,12 @@ export function RepositoryPane({
         </div>
       )}
 
-      {/* Empty state */}
+      {/* Under the form: single muted left-aligned line */}
       {!scan && !busy && (
-        <div style={{ padding: '20px 16px', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <p style={{ fontSize: 'var(--fs-sm)', color: 'var(--muted)', textAlign: 'center', margin: 0 }}>
-            No analysis result loaded. Scan a repository to find LLM calls.
+        <div style={{ padding: '12px 16px', textAlign: 'left' }}>
+          <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', margin: 0 }}>
+            Calls will appear here after a scan.
+            <span className="sr-only"> No analysis result loaded. Scan a repository to find LLM calls.</span>
           </p>
         </div>
       )}

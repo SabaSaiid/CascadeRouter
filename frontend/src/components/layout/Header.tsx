@@ -1,31 +1,52 @@
 import { useState } from 'react';
-import type { Health, Scan } from '../../services/contracts.ts';
+import type { Health, Scan, Job, Optimization } from '../../services/contracts.ts';
+import type { ApiFailure } from '../../services/transport.ts';
 import { dataSourceLabel, type WorkflowStep } from '../../services/display.ts';
 
 type TrailStepDef = {
   key: string;
   label: string;
-  state: 'done' | 'active' | 'pending';
+  state: 'done' | 'current' | 'pending';
 };
 
-function ProgressTrail({ step }: { step: WorkflowStep }) {
+function ProgressTrail({
+  analysis,
+  job,
+  optimization,
+}: {
+  analysis?: Scan;
+  job?: Job;
+  optimization?: Optimization;
+}) {
+  const scanDone = Boolean(analysis);
+  const benchmarkDone = Boolean(job && job.status === 'complete');
+  const recommendDone = Boolean(optimization);
+  const patchDone = false;
+
+  const currentStep = !scanDone ? 'scan' : !benchmarkDone ? 'benchmark' : !recommendDone ? 'recommend' : 'patch';
+
   const steps: TrailStepDef[] = [
-    { key: 'scan',      label: 'Scanned',     state: step === 'scan'      ? 'active' : 'done' },
-    { key: 'benchmark', label: 'Benchmarked', state: step === 'benchmark' ? 'active' : step === 'scan' ? 'pending' : 'done' },
-    { key: 'recommend', label: 'Recommended', state: step === 'recommend' ? 'active' : (step === 'scan' || step === 'benchmark') ? 'pending' : 'done' },
-    { key: 'patch',     label: 'Patch ready', state: step === 'patch'     ? 'active' : 'pending' },
+    { key: 'scan',      label: 'Scan',      state: scanDone ? 'done' : currentStep === 'scan' ? 'current' : 'pending' },
+    { key: 'benchmark', label: 'Benchmark', state: benchmarkDone ? 'done' : currentStep === 'benchmark' ? 'current' : 'pending' },
+    { key: 'recommend', label: 'Recommend', state: recommendDone ? 'done' : currentStep === 'recommend' ? 'current' : 'pending' },
+    { key: 'patch',     label: 'Patch',     state: patchDone ? 'done' : currentStep === 'patch' ? 'current' : 'pending' },
   ];
 
   return (
     <nav className="progress-trail" aria-label="Workflow progress">
       {steps.map((s, i) => (
         <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center' }}>
-          <span className={`trail-step ${s.state}`}>
+          <span
+            className={`trail-step ${s.state}`}
+            aria-current={s.state === 'current' ? 'step' : undefined}
+          >
             <span
-              className={`trail-dot${s.state === 'pending' ? ' pending' : ''}`}
+              className={`trail-dot ${s.state}`}
               aria-hidden="true"
             />
-            <span className="sr-only">{s.state === 'done' ? 'Done: ' : s.state === 'active' ? 'Current: ' : 'Pending: '}</span>
+            <span className="sr-only">
+              {s.state === 'done' ? 'Done: ' : s.state === 'current' ? 'Current: ' : 'Pending: '}
+            </span>
             <span style={{ fontSize: 'var(--fs-xs)' }}>{s.label}</span>
           </span>
           {i < steps.length - 1 && (
@@ -40,11 +61,14 @@ function ProgressTrail({ step }: { step: WorkflowStep }) {
 export function Header({
   demo,
   health,
+  healthError,
   healthLoading,
   analysis,
+  job,
+  optimization,
   onCheckHealth,
   onOpenDemo,
-  step,
+  step: _step,
   onRetrieveAnalysis,
   onRetrieveRun,
   onRetrievePatch,
@@ -52,11 +76,14 @@ export function Header({
 }: {
   demo: boolean;
   health?: Health;
+  healthError?: ApiFailure;
   healthLoading: boolean;
   analysis?: Scan;
+  job?: Job;
+  optimization?: Optimization;
   onCheckHealth: () => void;
   onOpenDemo: () => void;
-  step: WorkflowStep;
+  step?: WorkflowStep;
   onRetrieveAnalysis?: (id: string) => void;
   onRetrieveRun?: (id: string) => void;
   onRetrievePatch?: (id: string) => void;
@@ -64,6 +91,7 @@ export function Header({
 }) {
   const [popoverOpen, setPopoverOpen] = useState(false);
 
+  const hasData = Boolean(demo || analysis || (job && job.status === 'complete'));
   const dataSource = demo ? 'mock' : analysis?.data_source;
   const dsLabel = dataSourceLabel(dataSource, health?.benchmark_provenance, analysis?.timestamp);
 
@@ -89,13 +117,13 @@ export function Header({
           </span>
 
           {/* Progress trail */}
-          <ProgressTrail step={step} />
+          <ProgressTrail analysis={analysis} job={job} optimization={optimization} />
         </div>
 
         {/* Right side controls */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0, flexWrap: 'wrap' }}>
-          {/* Data-source chip */}
-          {dataSource && (
+          {/* Data-source chip: appears only once a scan or run exists (or in mock mode) */}
+          {hasData && dataSource && (
             <span
               className="chip"
               style={{ ...(dsKindStyle[dsLabel.kind] ?? dsKindStyle.live), fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)' }}
@@ -104,12 +132,28 @@ export function Header({
             </span>
           )}
 
-          {/* Backend status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
+          {/* Backend status grouped as one unit */}
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
             {health ? (
               <>
                 <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--gain)', flexShrink: 0 }} aria-hidden="true" />
                 <span style={{ color: 'var(--ink)', fontWeight: 500 }}>Backend connected</span>
+              </>
+            ) : healthError ? (
+              <>
+                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--loss)', flexShrink: 0 }} aria-hidden="true" />
+                <span style={{ color: 'var(--loss)' }}>{healthError.kind === 'unavailable' ? 'Backend unavailable' : 'Connection failed'}</span>
+                {!demo && (
+                  <button
+                    type="button"
+                    className="btn-link"
+                    disabled={healthLoading}
+                    onClick={onCheckHealth}
+                    style={{ padding: '0 4px' }}
+                  >
+                    {healthLoading ? 'Checking…' : 'Retry'}
+                  </button>
+                )}
               </>
             ) : (
               <>
@@ -117,6 +161,7 @@ export function Header({
                 <span>Backend not checked</span>
                 {!demo && (
                   <button
+                    type="button"
                     className="btn-link"
                     disabled={healthLoading || demo}
                     onClick={onCheckHealth}
@@ -129,16 +174,23 @@ export function Header({
             )}
           </div>
 
-          {/* Demo toggle */}
-          <button className="btn-ghost" onClick={onOpenDemo} style={{ fontSize: 'var(--fs-xs)' }}>
-            {demo ? 'Exit demo' : 'Open demo'}
+          {/* Use sample data toggle */}
+          <button
+            type="button"
+            className="btn-outline"
+            onClick={onOpenDemo}
+            title="Loads built-in mock data. Nothing is sent to a model."
+            style={{ fontSize: 'var(--fs-xs)', height: 32 }}
+          >
+            {demo ? 'Exit sample data' : 'Use sample data'}
           </button>
 
-          {/* Open earlier result */}
+          {/* Open earlier result secondary button */}
           <button
-            className="btn-link"
+            type="button"
+            className="btn-outline"
             onClick={() => setPopoverOpen(true)}
-            style={{ fontSize: 'var(--fs-sm)' }}
+            style={{ fontSize: 'var(--fs-xs)', height: 32 }}
           >
             Open earlier result
           </button>
@@ -184,7 +236,7 @@ function EarlierResultPopover({
       <div className="popover-panel">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <h2 style={{ margin: 0, fontSize: 'var(--fs-base)', fontWeight: 600 }}>Open earlier result</h2>
-          <button className="btn-ghost" onClick={onClose} aria-label="Close popover" style={{ padding: '4px 8px' }}>✕</button>
+          <button type="button" className="btn-ghost" onClick={onClose} aria-label="Close popover" style={{ padding: '4px 8px' }}>✕</button>
         </div>
         <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', marginBottom: 16 }}>
           Paste any stored ID to retrieve a previous result. Fields are independent.
