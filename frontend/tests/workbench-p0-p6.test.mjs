@@ -3,9 +3,14 @@ import assert from 'node:assert/strict';
 import { React, renderToStaticMarkup, component } from './render.mjs';
 import { Operation } from '../src/services/operation.ts';
 import { ApiFailure } from '../src/services/transport.ts';
+import { homeIllustrationFixture } from '../src/services/homeIllustration.ts';
 
 const { default: App } = await component('App');
 const { OperationStatus } = await component('components/OperationStatus');
+const { HomeScreen } = await component('components/home/HomeScreen');
+const { RepositoryPane } = await component('components/repository/RepositoryPane');
+const { BenchmarkPane } = await component('components/benchmark/BenchmarkPane');
+const { RightPane } = await component('components/optimization/RightPane');
 
 test('initial render of App has zero alert/status warnings', () => {
   const html = renderToStaticMarkup(React.createElement(App));
@@ -54,7 +59,7 @@ test('explicit Cancel shows the cooperative cancellation message', () => {
   assert.match(html, /Backend work may still finish/);
 });
 
-test('acceptance: fresh load at 1366x layout elements and empty states', () => {
+test('fresh load at 1366x shows Home screen with headline, both buttons and example card', () => {
   const html = renderToStaticMarkup(React.createElement(App));
 
   // Header status
@@ -67,19 +72,95 @@ test('acceptance: fresh load at 1366x layout elements and empty states', () => {
   assert.match(html, /Recommend/);
   assert.match(html, /Patch/);
 
-  // Left pane: empty path, disabled scan repository button, two secondary buttons, muted line
-  assert.match(html, /Scan repository/);
-  assert.match(html, /Use sample agent/);
-  assert.match(html, /Use current repo/);
-  assert.match(html, /Calls will appear here after a scan\./);
+  // Home Left column headline and copy
+  assert.match(html, /Pay frontier-model prices only where you need them\./);
+  assert.match(html, /CascadeRouter reads your Python AI app, tests cheaper NVIDIA Nemotron models on each LLM call/);
 
-  // Centre pane: empty state
-  assert.match(html, /Compare models on your own LLM calls/);
-  assert.match(html, /Scan a repository, pick a call, then run a benchmark\./);
-  assert.ok(!html.includes('Scan a repository first.'), 'Must not show Scan a repository first.');
+  // Buttons: filled "Try the sample agent" and outlined "Scan my own repository"
+  assert.match(html, /Try the sample agent/);
+  assert.match(html, /Scan my own repository/);
 
-  // Right pane: empty state
-  assert.match(html, /Recommendation/);
-  assert.match(html, /Run a benchmark to see which model each call can move to\./);
-  assert.ok(!html.includes('Get recommendation'), 'Must not render Get recommendation button when idle');
+  // Reassurance line
+  assert.match(html, /Your code is never run\./);
+  assert.match(html, /Nothing changes until you apply\./);
+  assert.match(html, /Every change is backed up\./);
+
+  // How it works steps
+  assert.match(html, /Finds every LLM call in your code without running it\./);
+  assert.match(html, /Runs your test cases on each candidate model and records cost, speed and pass or fail\./);
+  assert.match(html, /Picks the cheapest model that passes every check\./);
+  assert.match(html, /Shows the one-line change\. A \.bak backup is saved before anything is written\./);
+
+  // Example card on right column
+  assert.match(html, /What a result looks like/);
+  assert.match(html, /Example, not your data/);
+  assert.match(html, /Triage intent/);
+  assert.match(html, /Ultra to Nano/);
+  assert.match(html, /Extract context/);
+  assert.match(html, /Ultra to Lightning/);
+  assert.match(html, /Draft reply/);
+  assert.match(html, /Stays on Ultra/);
+  assert.match(html, /Two of three calls can move to a cheaper model\. The third stays where it is\./);
+  assert.match(html, /Models: NVIDIA Nemotron, served by Nebius Token Factory\./);
+});
+
+test('mandatory "Example, not your data" label renders whenever illustration fixture is shown', () => {
+  assert.equal(homeIllustrationFixture.isIllustration, true);
+  const html = renderToStaticMarkup(React.createElement(HomeScreen, {
+    onTrySampleAgent: () => {},
+    onScanOwnRepo: () => {},
+  }));
+  assert.match(html, /Example, not your data/);
+  assert.match(html, /data-testid="example-mandatory-label"/);
+});
+
+test('recorded run updates example card label to Recorded run, <date time>', () => {
+  const html = renderToStaticMarkup(React.createElement(HomeScreen, {
+    onTrySampleAgent: () => {},
+    onScanOwnRepo: () => {},
+    recordedRunDate: '31 Oct 12:01',
+  }));
+  assert.match(html, /Recorded run, 31 Oct 12:01/);
+});
+
+test('backend unavailable on Home renders inline notice with Retry button', () => {
+  const unavailableFailure = new ApiFailure('unavailable');
+  const html = renderToStaticMarkup(React.createElement(HomeScreen, {
+    onTrySampleAgent: () => {},
+    onScanOwnRepo: () => {},
+    healthError: unavailableFailure,
+    onRetryHealth: () => {},
+  }));
+  assert.match(html, /The local backend isn(&#x27;|')t responding/);
+  assert.match(html, /Start it with bash start\.sh, then press Retry/);
+  assert.match(html, /<button[^>]*>Retry<\/button>/);
+});
+
+test('workbench three-pane view displays repository, benchmark and recommendation panes', () => {
+  const repoHtml = renderToStaticMarkup(React.createElement(RepositoryPane, {
+    demo: false,
+    onAnalysis: () => {},
+    onSelect: () => {},
+    step: 'scan',
+  }));
+  assert.match(repoHtml, /Scan repository/);
+  assert.match(repoHtml, /Use sample agent/);
+  assert.match(repoHtml, /Use current repo/);
+  assert.match(repoHtml, /Calls will appear here after a scan\./);
+
+  const benchHtml = renderToStaticMarkup(React.createElement(BenchmarkPane, {
+    demo: false,
+    onJob: () => {},
+    step: 'scan',
+  }));
+  assert.match(benchHtml, /Compare models on your own LLM calls/);
+  assert.match(benchHtml, /Scan a repository, pick a call, then run a benchmark\./);
+
+  const rightHtml = renderToStaticMarkup(React.createElement(RightPane, {
+    demo: false,
+    step: 'scan',
+    onOptimization: () => {},
+  }));
+  assert.match(rightHtml, /Recommendation/);
+  assert.match(rightHtml, /Run a benchmark to see which model each call can move to\./);
 });

@@ -68,6 +68,7 @@ export function Header({
   optimization,
   onCheckHealth,
   onOpenDemo,
+  onGoHome,
   step: _step,
   onRetrieveAnalysis,
   onRetrieveRun,
@@ -83,6 +84,7 @@ export function Header({
   optimization?: Optimization;
   onCheckHealth: () => void;
   onOpenDemo: () => void;
+  onGoHome?: () => void;
   step?: WorkflowStep;
   onRetrieveAnalysis?: (id: string) => void;
   onRetrieveRun?: (id: string) => void;
@@ -107,14 +109,33 @@ export function Header({
       <header className="app-header">
         {/* Wordmark */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
-          <span className="wordmark">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="7 4 12 9 7 14" />
-              <polyline points="13 10 18 15 13 20" />
-              <circle cx="5" cy="19" r="1.5" fill="var(--gain)" stroke="var(--gain)" />
-            </svg>
-            CascadeRouter
-          </span>
+          {onGoHome ? (
+            <button
+              type="button"
+              className="wordmark-btn"
+              onClick={onGoHome}
+              title="Return to home screen"
+              aria-label="CascadeRouter Home"
+            >
+              <span className="wordmark">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="7 4 12 9 7 14" />
+                  <polyline points="13 10 18 15 13 20" />
+                  <circle cx="5" cy="19" r="1.5" fill="var(--gain)" stroke="var(--gain)" />
+                </svg>
+                CascadeRouter
+              </span>
+            </button>
+          ) : (
+            <span className="wordmark">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="7 4 12 9 7 14" />
+                <polyline points="13 10 18 15 13 20" />
+                <circle cx="5" cy="19" r="1.5" fill="var(--gain)" stroke="var(--gain)" />
+              </svg>
+              CascadeRouter
+            </span>
+          )}
 
           {/* Progress trail */}
           <ProgressTrail analysis={analysis} job={job} optimization={optimization} />

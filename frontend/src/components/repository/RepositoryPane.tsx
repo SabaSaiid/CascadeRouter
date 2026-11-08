@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ApiClient } from '../../services/api.ts';
 import type { Scan, Optimization } from '../../services/contracts.ts';
 import { useOperation } from '../../services/useOperation.ts';
@@ -243,6 +243,8 @@ export function RepositoryPane({
   onSelect,
   step,
   optimization,
+  autoFocusPath,
+  onPathFocused,
 }: {
   api?: ApiClient;
   demo: boolean;
@@ -251,12 +253,22 @@ export function RepositoryPane({
   onSelect: (id: string) => void;
   step: WorkflowStep;
   optimization?: Optimization;
+  autoFocusPath?: boolean;
+  onPathFocused?: () => void;
 }) {
   const [path, setPath] = useState('');
+  const pathInputRef = useRef<HTMLInputElement>(null);
   const [showGraph, setShowGraph] = useState(false);
   const [state, operation] = useOperation<Scan>();
   const scan = demo ? demoScan : state.data;
   const summary = scan ? scanSummary(scan) : null;
+
+  useEffect(() => {
+    if (autoFocusPath) {
+      pathInputRef.current?.focus();
+      onPathFocused?.();
+    }
+  }, [autoFocusPath, onPathFocused]);
 
   const isCurrent = step === 'scan';
   const busy = state.status === 'loading';
@@ -276,6 +288,7 @@ export function RepositoryPane({
           <label className="field-label" htmlFor="repo-path">
             Repository path
             <input
+              ref={pathInputRef}
               id="repo-path"
               className="field-input"
               value={path}
