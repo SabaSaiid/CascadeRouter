@@ -488,6 +488,12 @@ export function BenchmarkPane({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+      {/* Contextual Step 2 Banner */}
+      <div className="pane-context-banner">
+        <span className="pane-step-badge">Step 2: Empirical Benchmark</span>
+        <span className="pane-explainer-text">Nebius Token Factory • NVIDIA H100</span>
+      </div>
+
       {/* Title row: shown when a call is selected or a job is active/loaded */}
       {(selectedNode || job || busy) ? (
         <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--rule)', background: 'var(--sheet)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>

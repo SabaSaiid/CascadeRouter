@@ -11,6 +11,11 @@ const { HomeScreen } = await component('components/home/HomeScreen');
 const { RepositoryPane } = await component('components/repository/RepositoryPane');
 const { BenchmarkPane } = await component('components/benchmark/BenchmarkPane');
 const { RightPane } = await component('components/optimization/RightPane');
+const { Sidebar } = await component('components/layout/Sidebar');
+const { SettingsModal } = await component('components/modals/SettingsModal');
+const { TermsModal } = await component('components/modals/TermsModal');
+const { TourModal } = await component('components/home/TourModal');
+const { AnalyticsScreen } = await component('components/analytics/AnalyticsScreen');
 
 test('initial render of App has zero alert/status warnings', () => {
   const html = renderToStaticMarkup(React.createElement(App));
@@ -194,4 +199,97 @@ test('enhanced UI/UX: policy tab provides Download YAML and Copy actions', () =>
     onOptimization: () => {},
   }));
   assert.match(html, /Recommendation/);
+});
+
+test('enhanced UI/UX: sidebar navigation renders all key developer destinations', () => {
+  const html = renderToStaticMarkup(React.createElement(Sidebar, {
+    currentView: 'home',
+    onSelectView: () => {},
+    onOpenTour: () => {},
+    onOpenSettings: () => {},
+    onOpenTerms: () => {},
+    collapsed: false,
+    onToggleCollapse: () => {},
+    callCount: 3,
+  }));
+  assert.match(html, /Overview/);
+  assert.match(html, /Workbench/);
+  assert.match(html, /FinOps Analytics/);
+  assert.match(html, /How It Works/);
+  assert.match(html, /Security &amp; Terms|Security & Terms/);
+  assert.match(html, /Settings/);
+  assert.match(html, /3/); // Badge
+});
+
+test('enhanced UI/UX: settings modal provides theme selector, Nebius API key and safety checks', () => {
+  const html = renderToStaticMarkup(React.createElement(SettingsModal, {
+    onClose: () => {},
+    currentTheme: 'dark',
+    onThemeChange: () => {},
+    isLiveNebius: false,
+  }));
+  assert.match(html, /Compiler Settings &amp; Preferences|Compiler Settings & Preferences/);
+  assert.match(html, /Dark Theme/);
+  assert.match(html, /Light Theme/);
+  assert.match(html, /System Default/);
+  assert.match(html, /General &amp; Theme|General & Theme/);
+  assert.match(html, /Nebius &amp; Hardware|Nebius & Hardware/);
+  assert.match(html, /Safety &amp; Backups|Safety & Backups/);
+});
+
+test('enhanced UI/UX: terms modal displays zero-code-execution guarantee and data sovereignty', () => {
+  const html = renderToStaticMarkup(React.createElement(TermsModal, {
+    onClose: () => {},
+  }));
+  assert.match(html, /Security Policy &amp; Terms of Service|Security Policy & Terms of Service/);
+  assert.match(html, /Zero Code Execution Guarantee/);
+  assert.match(html, /Data Sovereignty &amp; Sovereign Inference|Data Sovereignty & Sovereign Inference/);
+  assert.match(html, /Non-Destructive Atomic Patching &amp; Rollback|Non-Destructive Atomic Patching & Rollback/);
+  assert.match(html, /MIT License/);
+});
+
+test('enhanced UI/UX: tour modal provides 4-step interactive compiler walkthrough', () => {
+  const html = renderToStaticMarkup(React.createElement(TourModal, {
+    onClose: () => {},
+    onLaunchDemo: () => {},
+  }));
+  assert.match(html, /How CascadeRouter Works/);
+  assert.match(html, /The FinOps Crisis/);
+  assert.match(html, /Why Developers Burn 80% of Their AI Budget/);
+});
+
+test('enhanced UI/UX: analytics screen renders KPI cards, ROI calculator and pricing matrix', () => {
+  const html = renderToStaticMarkup(React.createElement(AnalyticsScreen, {
+    onGoToWorkbench: () => {},
+  }));
+  assert.match(html, /FinOps Economics &amp; Latency Ledger|FinOps Economics & Latency Ledger/);
+  assert.match(html, /Inference Cost Reduction/);
+  assert.match(html, /Interactive Enterprise Savings Calculator/);
+  assert.match(html, /Official Nebius Token Factory &amp; NVIDIA Pricing Matrix|Official Nebius Token Factory & NVIDIA Pricing Matrix/);
+  assert.match(html, /meta-llama\/Meta-Llama-3\.1-8B-Instruct/);
+  assert.match(html, /nvidia\/Llama-3\.1-Nemotron-70B-Instruct/);
+});
+
+test('enhanced UI/UX: workbench panes render contextual step badges for clarity', () => {
+  const repoHtml = renderToStaticMarkup(React.createElement(RepositoryPane, {
+    demo: false,
+    onAnalysis: () => {},
+    onSelect: () => {},
+    step: 'scan',
+  }));
+  assert.match(repoHtml, /Step 1: Scan &amp; DAG|Step 1: Scan & DAG/);
+
+  const benchHtml = renderToStaticMarkup(React.createElement(BenchmarkPane, {
+    demo: false,
+    onJob: () => {},
+    step: 'scan',
+  }));
+  assert.match(benchHtml, /Step 2: Empirical Benchmark/);
+
+  const rightHtml = renderToStaticMarkup(React.createElement(RightPane, {
+    demo: false,
+    step: 'scan',
+    onOptimization: () => {},
+  }));
+  assert.match(rightHtml, /Step 3 &amp; 4: FinOps &amp; Patch|Step 3 & 4: FinOps & Patch/);
 });

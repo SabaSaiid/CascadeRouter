@@ -451,6 +451,12 @@ export function RightPane({
 
   return (
     <aside className="right-pane" aria-label="Recommendation and patch">
+      {/* Contextual Step 3 & 4 Banner */}
+      <div className="pane-context-banner">
+        <span className="pane-step-badge">Step 3 & 4: FinOps & Patch</span>
+        <span className="pane-explainer-text">Verified diff • .bak safety</span>
+      </div>
+
       {/* Headline */}
       <div style={{ padding: '16px 20px', borderBottom: (ready || optimization) ? '1px solid var(--rule)' : 'none' }}>
         {!optimization && !ready && (

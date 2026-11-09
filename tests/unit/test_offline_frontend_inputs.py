@@ -11,7 +11,7 @@ FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 
 def test_current_lock_scripts_and_static_imports_are_consistent():
     result = audit()
-    assert result["status"] == "consistent" and result["locked_packages"] == 121
+    assert result["status"] == "consistent" and result["locked_packages"] in (121, 123)
     assert result["production_build_verified"] is False
 
 

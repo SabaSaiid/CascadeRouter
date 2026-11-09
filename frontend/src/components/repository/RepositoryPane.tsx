@@ -329,6 +329,12 @@ export function RepositoryPane({
 
   return (
     <aside className="left-pane" aria-label="Repository">
+      {/* Contextual Step 1 Banner */}
+      <div className="pane-context-banner">
+        <span className="pane-step-badge">Step 1: Scan & DAG</span>
+        <span className="pane-explainer-text">Zero-execution AST parser</span>
+      </div>
+
       {/* Path field + actions */}
       <div style={{ padding: '16px 16px 12px', borderBottom: '1px solid var(--rule)' }}>
         <p className="pane-title" style={{ marginBottom: 8 }}>Repository</p>
