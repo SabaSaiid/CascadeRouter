@@ -1,7 +1,7 @@
 {
   "schema_version": "cascaderouter.source-inventory.v1",
   "version": null,
-  "source_commit": "1af42e4c7e6c429779a04a04cdeebf84dcd123a0",
+  "source_commit": "f688459a153e189ab97f6af7e7e4aa8fdff967ac",
   "scope": "Selected tracked runtime/frontend/contract/build inputs; canonical Git blob bytes, not a built distribution or target-source snapshot",
   "artifacts": [
     {
@@ -166,13 +166,13 @@
     },
     {
       "path": "frontend/package-lock.json",
-      "bytes": 70504,
-      "sha256": "483610387a5802e2b97d4dc1be41a0a6ba08dbd880293a578487505fe1d32c8b"
+      "bytes": 71412,
+      "sha256": "883aa6433c311c457c5bc8b0f7583b3bd87f8145ecafdfeb898288aa7753c84a"
     },
     {
       "path": "frontend/package.json",
-      "bytes": 875,
-      "sha256": "00b4a8e83d23a77c6b5d4ac5bb9663dd827953aead43111e412a5ebf321c078f"
+      "bytes": 961,
+      "sha256": "105f48211d985271d8b6441958604dd454068c0f1a76c7547ae2d80a2cf53ee9"
     },
     {
       "path": "frontend/scripts/check_cache.mjs",
@@ -201,8 +201,8 @@
     },
     {
       "path": "frontend/src/App.tsx",
-      "bytes": 6025,
-      "sha256": "f77059be751c315b5ee9b840baa875a5d86ebb973223d4ebb51e7ca7cb4f997b"
+      "bytes": 10335,
+      "sha256": "aa8f063f8ddaadcb91e56d6f24c01de708cca5ca807147ccbe3fafb30b5d2a5a"
     },
     {
       "path": "frontend/src/assets/react.svg",
@@ -216,23 +216,58 @@
     },
     {
       "path": "frontend/src/components/OperationStatus.tsx",
-      "bytes": 4359,
-      "sha256": "cabe2a3a89cf37be679bcb1847b6eb6d85c8f32bd44c3564e836d3cbd44b6b90"
+      "bytes": 3514,
+      "sha256": "a4501550331d9d2c65a01da1f88f9534a157d7ab9adf3e31eb6de094c72dedfb"
+    },
+    {
+      "path": "frontend/src/components/analytics/AnalyticsScreen.tsx",
+      "bytes": 9770,
+      "sha256": "584c00babc4b1d0b448bef01f37bdfc70f79b3ee462764b6ff5aa8cd16bbf03a"
     },
     {
       "path": "frontend/src/components/benchmark/BenchmarkPane.tsx",
-      "bytes": 14774,
-      "sha256": "8349c9b98badf305e991472ec2606664fd39cc72efd8be1822f83e83dee5f213"
+      "bytes": 39593,
+      "sha256": "ce751fcd371a26a0c6b9a4fc7e4bc93cd8f182b560396b72305b308d6f4b24d7"
+    },
+    {
+      "path": "frontend/src/components/home/HomeScreen.tsx",
+      "bytes": 7017,
+      "sha256": "878dbc937cbc325895eb06b25468fec0ea1fde0d93034078890bd60a507ddce7"
+    },
+    {
+      "path": "frontend/src/components/home/TourModal.tsx",
+      "bytes": 9755,
+      "sha256": "64521fa949cd7102058ef09a0bf983f95a2b037d1338111a310c0f706983cd07"
     },
     {
       "path": "frontend/src/components/layout/Header.tsx",
-      "bytes": 4309,
-      "sha256": "807406407c570c3238a03e8d1550c160d67d2290dfca7d792e57c58b8549cbfd"
+      "bytes": 19306,
+      "sha256": "0060c9cf474bebeab3e4ebdfae2a9386b099e282f8df6b25da10a3703e318c2e"
+    },
+    {
+      "path": "frontend/src/components/layout/Sidebar.tsx",
+      "bytes": 6402,
+      "sha256": "6d47175374526ae26b93a53bc81c2105703dde13bab6af47ff83f39f5a1b4b71"
+    },
+    {
+      "path": "frontend/src/components/modals/SettingsModal.tsx",
+      "bytes": 13172,
+      "sha256": "6938de8c0e7764bb306a94f51e12cb8470d919d3f67c2e03dd6afc48da6e2fe6"
+    },
+    {
+      "path": "frontend/src/components/modals/TermsModal.tsx",
+      "bytes": 4726,
+      "sha256": "6e3195280ceb8c95dc8d11998084e0b3bc77c37c902d44a785a85952850e8bc0"
     },
     {
       "path": "frontend/src/components/optimization/OptimizationPane.tsx",
       "bytes": 10043,
       "sha256": "77dd4b014faaad34570ed09b5c71e829f1214952df8982cf0e88172b2f930479"
+    },
+    {
+      "path": "frontend/src/components/optimization/RightPane.tsx",
+      "bytes": 27305,
+      "sha256": "0df9a9687a89e146698e40dbbe8c9d068d43cfa2ccd07a853dede2e937f741d4"
     },
     {
       "path": "frontend/src/components/patches/PatchPane.tsx",
@@ -246,13 +281,13 @@
     },
     {
       "path": "frontend/src/components/repository/RepositoryPane.tsx",
-      "bytes": 13084,
-      "sha256": "e0e70ad9607a65eb7a3cb7c960ca747fad3a7d4b27cc23a27197bd9f5bcd779c"
+      "bytes": 21150,
+      "sha256": "4360c02447caa381a5b5af3b61bb5d9f169c9c472250213d7cc27868c2cd2ff1"
     },
     {
       "path": "frontend/src/index.css",
-      "bytes": 25618,
-      "sha256": "37e61985a8fc28b1af766ab2cca7c1883ab662b5863b955012941bccdae0017d"
+      "bytes": 44015,
+      "sha256": "c62f44c1aa8b466e23418b2c009fc48d5703c2137625f8daf23f80ec12410d4e"
     },
     {
       "path": "frontend/src/main.tsx",
@@ -285,14 +320,24 @@
       "sha256": "7d8c9c2ceef9dc56c034fd6cb0a0514b40fafa7e314e046e2bc13d7ac56a9a30"
     },
     {
+      "path": "frontend/src/services/display.ts",
+      "bytes": 13000,
+      "sha256": "b68e12f61fa81621f08f49edbdf4f69db441c6762065126048367dbe1863a873"
+    },
+    {
       "path": "frontend/src/services/graph.ts",
       "bytes": 1187,
       "sha256": "b4e72d6751c3a7d4075cdb30851c0a3cb2cf3e1a3c8fee259be1533e75ee6cc7"
     },
     {
+      "path": "frontend/src/services/homeIllustration.ts",
+      "bytes": 1619,
+      "sha256": "bb4e070252a0bb08fad6a60b1208a35512b407384dd769a5619f9227983fd687"
+    },
+    {
       "path": "frontend/src/services/operation.ts",
-      "bytes": 1916,
-      "sha256": "7f0acc4314114bc0aa26fca46c534b568f890e136c27f1f77766a5ab32155d73"
+      "bytes": 1985,
+      "sha256": "876466cf7fe71926c3c3e87f191ce0fa65c945fe74574b6b9e143e0031bea734"
     },
     {
       "path": "frontend/src/services/patches.ts",
@@ -303,6 +348,11 @@
       "path": "frontend/src/services/presentation.ts",
       "bytes": 995,
       "sha256": "1b568f0a70b7f5b29f2025fc0d7a7a161abb9f7389eb06fb0ac0ea1621720321"
+    },
+    {
+      "path": "frontend/src/services/theme.ts",
+      "bytes": 1203,
+      "sha256": "9517111ef604c33b95f95240ed8531188adc5421332c1d7ce539f910272ba09f"
     },
     {
       "path": "frontend/src/services/transport.ts",
