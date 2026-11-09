@@ -119,7 +119,7 @@ def test_recognizable_provenance(tmp_path, imports, assignment):
     PREAMBLE + "def f():\n    global client\n    " + CALL,
     "from openai import OpenAI\nif condition:\n    client = OpenAI()\n" + CALL,
     "from openai import OpenAI\nclient = OpenAI()\nclient.responses.create(model='other-method')\n",
-    "import openai as oai\noai.chat.completions.create(model='module-level-sdk-shortcut')\n",
+    "import unknown as oai\noai.chat.completions.create(model='module-level-sdk-shortcut')\n",
     PREAMBLE + "[client.chat.completions.create() for client in unknown]\n",
     PREAMBLE + "lambda client: client.chat.completions.create()\n",
 ])

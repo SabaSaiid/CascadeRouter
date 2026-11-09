@@ -169,7 +169,12 @@ def load_local_assets(settings: BackendConfig, *, allow_test_assets: bool = Fals
         registry.validate_offline()
         registry.approval = assets
         assets.registry_identity = registry.identity
-        if settings.benchmark_recordings_path is not None:
+        if allow_test_assets:
+            executor = None if settings.benchmark_recordings_path is None else OfflineBenchmarkExecutor(
+                registry, OfflineRecordingDocument.model_validate(assets.load(settings.benchmark_recordings_path, "offline_recordings", 4 * 1024 * 1024)),
+                assets=assets,
+            )
+        elif settings.benchmark_recordings_path is not None:
             raw_rec = assets.load(settings.benchmark_recordings_path, "offline_recordings", 4 * 1024 * 1024)
             rec_doc = OfflineRecordingDocument.model_validate(raw_rec)
             executor = LiveBenchmarkExecutor(registry, assets=assets, pricing_records=rec_doc.pricing_records)
