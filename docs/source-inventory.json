@@ -1,7 +1,7 @@
 {
   "schema_version": "cascaderouter.source-inventory.v1",
   "version": null,
-  "source_commit": "f688459a153e189ab97f6af7e7e4aa8fdff967ac",
+  "source_commit": "4c342aab77b7d401d344f7140d9baff53742110d",
   "scope": "Selected tracked runtime/frontend/contract/build inputs; canonical Git blob bytes, not a built distribution or target-source snapshot",
   "artifacts": [
     {
@@ -96,8 +96,8 @@
     },
     {
       "path": "backend/services/benchmark_cases.py",
-      "bytes": 9364,
-      "sha256": "7496e7c1458921513968b4d2b9251fa189dcea334a8cd0641192141aa90193f4"
+      "bytes": 9701,
+      "sha256": "cc53615c3f860b208abdbc69da92d29165b4cb85e9cf981b3dbac80804947936"
     },
     {
       "path": "backend/services/compiler_adapter.py",
