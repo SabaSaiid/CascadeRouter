@@ -1,7 +1,7 @@
 {
   "schema_version": "cascaderouter.source-inventory.v1",
   "version": null,
-  "source_commit": "4c342aab77b7d401d344f7140d9baff53742110d",
+  "source_commit": "ba55ed478a48a6297a6b467892bead1cb576835f",
   "scope": "Selected tracked runtime/frontend/contract/build inputs; canonical Git blob bytes, not a built distribution or target-source snapshot",
   "artifacts": [
     {
@@ -121,8 +121,8 @@
     },
     {
       "path": "backend/services/live_benchmark.py",
-      "bytes": 8473,
-      "sha256": "a26f30d21526c42bda1555ea718806ad04e35aadbcf1961d88d067e85d86c5d1"
+      "bytes": 9386,
+      "sha256": "79c485cdfd0b8643464c33addc77a7f620af36630d8e427341388196cb7ce875"
     },
     {
       "path": "backend/services/offline_benchmark.py",
@@ -251,8 +251,8 @@
     },
     {
       "path": "frontend/src/components/modals/SettingsModal.tsx",
-      "bytes": 13172,
-      "sha256": "6938de8c0e7764bb306a94f51e12cb8470d919d3f67c2e03dd6afc48da6e2fe6"
+      "bytes": 13759,
+      "sha256": "85716317a494cfadfb4d18f734a4fcb2a5a59ccae6899b9bc7118de091421b7f"
     },
     {
       "path": "frontend/src/components/modals/TermsModal.tsx",
