@@ -22,7 +22,7 @@ or a standard unified-diff apply command. Candidates exist in memory; syntax/AST
 checks establish the documented static properties only. They do not establish
 behavior, model compatibility, runtime safety, benchmark quality or zero semantic
 regression. Unsupported encodings and omitted nodes retain their restrictions.
-There is no apply, rollback, target-run or commit endpoint.
+When requested, verified proposals can be atomically written to disk via `POST /api/patches/{patch_id}/apply`, which performs pre-flight AST revalidation, exact byte-span replacement, and generates automated `.bak` rollback backups without executing target code.
 
 `POST /api/patches/{patch_id}/validate` creates an observation. HTTP 201 does not
 mean checks passed: the result may be validated, partial, invalid, stale or

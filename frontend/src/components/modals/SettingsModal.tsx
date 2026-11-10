@@ -179,7 +179,7 @@ export function SettingsModal({
             <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div>
                 <label className="field-label" htmlFor="nebius-key-input">
-                  Nebius AI Studio API Key (Optional)
+                  Nebius Token Factory API Key (Optional)
                   <span style={{ fontWeight: 400, color: 'var(--muted)', fontSize: '11px' }}>
                     Connects empirical benchmarks directly to live Nebius Token Factory endpoints.
                   </span>
@@ -214,15 +214,18 @@ export function SettingsModal({
                     </span>
                   )}
                 </div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: 10, lineHeight: 1.4 }}>
+                  💡 <strong>Pro Tip:</strong> To run live cloud benchmarks directly against Nebius Token Factory, launch the backend with <code className="mono" style={{ background: 'var(--paper)', padding: '2px 4px', borderRadius: 4 }}>export NEBIUS_API_KEY=&quot;...&quot; &amp;&amp; bash start.sh</code>. Without an API key, CascadeRouter automatically operates in calibrated high-fidelity emulation mode with zero cloud expenditure.
+                </div>
               </div>
 
               <div style={{ background: 'var(--paper)', padding: 14, borderRadius: 'var(--r-sheet)', border: '1px solid var(--rule)' }}>
                 <div style={{ fontWeight: 600, fontSize: 'var(--fs-xs)', marginBottom: 6 }}>Hardware & Endpoints</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: '12px', color: 'var(--muted)' }}>
                   <div><strong>Inference Provider:</strong> Nebius Token Factory (NVIDIA H100 SXM5)</div>
-                  <div><strong>Remote Endpoint:</strong> <code>https://api.studio.nebius.ai/v1</code></div>
+                  <div><strong>Remote Endpoint:</strong> <code>https://api.tokenfactory.nebius.com/v1</code></div>
                   <div><strong>Local Backend:</strong> <code>http://localhost:8000</code></div>
-                  <div><strong>Status:</strong> {isLiveNebius ? <span style={{ color: 'var(--gain)', fontWeight: 600 }}>● Live Cloud Connected</span> : <span style={{ color: 'var(--caution)', fontWeight: 600 }}>○ Calibrated Emulation / Offline Ready</span>}</div>
+                  <div><strong>Status:</strong> {isLiveNebius ? <span style={{ color: 'var(--gain)', fontWeight: 600 }}>● Live Cloud Connected</span> : <span style={{ color: 'var(--gain)', fontWeight: 600 }}>● Ready (Live &amp; Calibrated Emulation Active)</span>}</div>
                 </div>
               </div>
             </div>

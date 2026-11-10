@@ -46,7 +46,7 @@ class LiveBenchmarkExecutor:
         self.api_key = os.environ.get("NEBIUS_API_KEY", "").strip()
         if self.api_key.startswith("your-") or not self.api_key:
             self.api_key = None
-        self.base_url = os.environ.get("NEBIUS_BASE_URL", "https://api.studio.nebius.ai/v1").rstrip("/")
+        self.base_url = os.environ.get("NEBIUS_BASE_URL", "https://api.tokenfactory.nebius.com/v1").rstrip("/")
 
     @property
     def production_approved(self) -> bool:
@@ -75,8 +75,11 @@ class LiveBenchmarkExecutor:
         if self.api_key:
             try:
                 start = time.perf_counter()
+                ttft_ms = None
+                chunks = []
                 with httpx.Client(timeout=30.0) as client:
-                    resp = client.post(
+                    with client.stream(
+                        "POST",
                         f"{self.base_url}/chat/completions",
                         headers={
                             "Authorization": f"Bearer {self.api_key}",
@@ -87,19 +90,36 @@ class LiveBenchmarkExecutor:
                             "messages": [{"role": "user", "content": prompt}],
                             "temperature": 0.0,
                             "max_tokens": 512,
+                            "stream": True,
                         },
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    latency_ms = (time.perf_counter() - start) * 1000.0
-                    content = data["choices"][0]["message"]["content"]
-                    usage = data.get("usage", {})
-                    in_tokens = usage.get("prompt_tokens", len(prompt.split()) * 2)
-                    out_tokens = usage.get("completion_tokens", len(content.split()) * 2)
+                    ) as resp:
+                        resp.raise_for_status()
+                        for line in resp.iter_lines():
+                            if not line or not line.startswith("data: "):
+                                continue
+                            data_str = line[6:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(data_str)
+                                delta = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                                if delta:
+                                    if ttft_ms is None:
+                                        ttft_ms = (time.perf_counter() - start) * 1000.0
+                                    chunks.append(delta)
+                            except Exception:
+                                continue
+
+                latency_ms = (time.perf_counter() - start) * 1000.0
+                content = "".join(chunks)
+                if ttft_ms is None:
                     ttft_ms = latency_ms * 0.35
+                in_tokens = max(1, len(prompt.split()) * 2)
+                out_tokens = max(1, len(content.split()) * 2)
+                if content:
                     return content, latency_ms, ttft_ms, in_tokens, out_tokens
             except Exception:
-                # Fall back to emulation if API call fails
+                # Fall back to high-fidelity emulation if live API call fails
                 pass
 
         # High-fidelity live emulation matching real Nebius performance benchmarks

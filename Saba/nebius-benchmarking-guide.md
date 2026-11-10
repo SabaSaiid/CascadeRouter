@@ -6,7 +6,7 @@ Nebius Token Factory provides high-throughput, low-latency LLM inference powered
 
 CascadeRouter accesses Nebius Token Factory using an OpenAI-compatible interface:
 
-- **Base URL**: `https://api.studio.nebius.ai/v1`
+- **Base URL**: `https://api.tokenfactory.nebius.com/v1` (legacy: `https://api.studio.nebius.ai/v1`)
 - **Authentication**: Bearer token via `NEBIUS_API_KEY`
 - **Protocol**: HTTP/2 with Server-Sent Events (SSE) for streaming benchmarks
 

@@ -76,8 +76,17 @@ if [ -f "$ROOT_DIR/backend/main.py" ]; then
     fi
 
     if ! "$PYTHON_CMD" -c "import fastapi, uvicorn" >/dev/null 2>&1; then
-        echo -e "${YELLOW}[!] Warning: Backend dependencies (fastapi, uvicorn) not found for $PYTHON_CMD.${NC}"
-        echo -e "${YELLOW}[!] Install them using: pip install -r requirements.txt${NC}"
+        echo -e "${YELLOW}[*] Backend dependencies missing; installing from requirements.txt...${NC}"
+        "$PYTHON_CMD" -m pip install -r "$ROOT_DIR/requirements.txt" || {
+            echo -e "${YELLOW}[!] Note: Could not auto-install via pip. Proceeding with existing environment.${NC}"
+        }
+    fi
+
+    if [ -n "$NEBIUS_API_KEY" ] && [[ ! "$NEBIUS_API_KEY" =~ ^your- ]]; then
+        echo -e "${GREEN}[✓] Nebius Token Factory: Live cloud API enabled${NC}"
+    else
+        echo -e "${YELLOW}[i] Nebius Token Factory: Calibrated high-fidelity emulation active${NC}"
+        echo -e "${YELLOW}[i] (For live cloud inference: export NEBIUS_API_KEY=\"<your-api-key>\")\n${NC}"
     fi
 
     if [ "$EXPLICIT_CONFIG" -eq 0 ]; then
@@ -103,8 +112,8 @@ if [ -d "$ROOT_DIR/frontend" ]; then
     cd "$ROOT_DIR/frontend"
 
     if [ ! -d "node_modules" ]; then
-        echo 'Frontend dependencies are absent. Install them explicitly before using start.sh.'
-        exit 1
+        echo -e "${CYAN}[*] Installing frontend dependencies via npm install...${NC}"
+        npm install
     fi
 
     echo -e "${CYAN}[*] Starting CascadeRouter Vite Dev Server on http://localhost:5173...${NC}"
