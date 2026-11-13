@@ -17,6 +17,21 @@ CascadeRouter analyzes multi-agent LLM systems, maps live data-dependency DAGs v
 - **[Runtime Guardrails](runtime-guardrails.md)**: Fallback execution, circuit breaking, schema enforcement, and telemetry tracking.
 - **[Latency Optimization](latency-optimization-notes.md)**: TTFT reduction techniques, streaming evaluation, prompt caching, and speculative routing.
 - **[Deployment & Operations](deployment-and-operations.md)**: Production deployment guide for the workbench, CLI workflows, and CI/CD FinOps gating.
+- **[Security & Compliance Architecture](security-and-compliance.md)**: Zero-execution static analysis guarantees, credential isolation, and audit controls.
+- **[Telemetry & Metrics Specification](telemetry-and-metrics-spec.md)**: OpenTelemetry semantic conventions, Prometheus alerting rules, and Grafana dashboard layout.
+- **[KV Cache Optimization](kv-cache-optimization.md)**: Block-level prefix caching mechanics, PagedAttention, and prefill latency acceleration.
+- **[Speculative Decoding Analysis](speculative-decoding-analysis.md)**: Draft-target verification modeling using 8B draft and Nemotron-70B target.
+- **[AST Scanner Edge Cases](edge-case-ast-handling.md)**: Dynamic keyword arguments, aliased imports, wrapper methods, and symbol propagation.
+- **[Pareto Frontier Algorithms](pareto-frontier-algorithms.md)**: Multi-objective epsilon-constraint solvers and integer programming formulation.
+- **[Circuit Breaker Patterns](circuit-breaker-patterns.md)**: Resilience state machines, exponential backoff with jitter, and provider failover.
+- **[Empirical Benchmarking Methodology](benchmarking-methodology.md)**: Monotonic timer instrumentation, statistical IQR filtering, and Wilson confidence bounds.
+- **[Developer Workbench Guide](developer-workbench-guide.md)**: Next.js/React studio, live ReactFlow DAG visualizer, and Monaco diff editor.
+- **[Continuous FinOps in CI/CD](continuous-finops-ci-cd.md)**: GitHub Actions workflow, automated PR comments, and budget threshold gating.
+- **[Structured Outputs with Nemotron](structured-outputs-nemotron.md)**: Grammar-guided decoding, DFA logit masking, and Pydantic validation benchmarks.
+- **[Cost Attribution & Chargeback](cost-allocation-and-chargeback.md)**: Multi-tenant token metering, departmental quotas, and financial ERP integration.
+- **[Troubleshooting & Diagnostics](troubleshooting-and-diagnostics.md)**: Operational triage decision trees, AST patch conflict recovery, and API diagnostics.
+- **[REST API Reference & Contracts](api-reference-and-contracts.md)**: FastAPI endpoints, OpenAPI models, and WebSocket streaming telemetry contracts.
+- **[Roadmap & Future Directions](roadmap-and-future-directions.md)**: Dynamic runtime arbitrage, FP8/INT4 quantization, and self-healing FinOps daemons.
 
 ## Core Design Principles
 
