@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Health, Scan, Job, Optimization } from '../../services/contracts.ts';
 import type { ApiFailure } from '../../services/transport.ts';
 import { dataSourceLabel, type WorkflowStep } from '../../services/display.ts';
@@ -58,35 +58,21 @@ function ProgressTrail({
   );
 }
 
-type RecentSessionItem = {
-  id: string;
-  type: 'analysis' | 'run';
-  label: string;
-  date: string;
-};
-
-function saveRecentSession(item: { id: string; type: 'analysis' | 'run'; label: string }) {
-  try {
-    if (typeof window === 'undefined' || !window.localStorage) return;
-    const raw = window.localStorage.getItem('cascaderouter_recent_sessions');
-    const existing: RecentSessionItem[] = raw ? JSON.parse(raw) : [];
-    const filtered = existing.filter(x => x.id !== item.id);
-    const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    filtered.unshift({ ...item, date });
-    window.localStorage.setItem('cascaderouter_recent_sessions', JSON.stringify(filtered.slice(0, 5)));
-  } catch {
-    // ignore
-  }
-}
-
-function getRecentSessions(): RecentSessionItem[] {
-  try {
-    if (typeof window === 'undefined' || !window.localStorage) return [];
-    const raw = window.localStorage.getItem('cascaderouter_recent_sessions');
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
+export interface HeaderProps {
+  demo: boolean;
+  health?: Health;
+  healthError?: ApiFailure;
+  healthLoading: boolean;
+  analysis?: Scan;
+  job?: Job;
+  optimization?: Optimization;
+  onCheckHealth: () => void;
+  onGoHome?: () => void;
+  step?: WorkflowStep;
+  onOpenSettings?: () => void;
+  onOpenHowItWorks?: () => void;
+  onOpenSecurityTerms?: () => void;
+  onOpenEarlierResult?: () => void;
 }
 
 export function Header({
@@ -98,95 +84,54 @@ export function Header({
   job,
   optimization,
   onCheckHealth,
-  onOpenDemo,
   onGoHome,
-  step: _step,
-  onRetrieveAnalysis,
-  onRetrieveRun,
-  onRetrievePatch,
-  onRetrieveValidation,
-  theme,
-  onToggleTheme,
   onOpenSettings,
-  onOpenTour,
-}: {
-  demo: boolean;
-  health?: Health;
-  healthError?: ApiFailure;
-  healthLoading: boolean;
-  analysis?: Scan;
-  job?: Job;
-  optimization?: Optimization;
-  onCheckHealth: () => void;
-  onOpenDemo: () => void;
-  onGoHome?: () => void;
-  step?: WorkflowStep;
-  onRetrieveAnalysis?: (id: string) => void;
-  onRetrieveRun?: (id: string) => void;
-  onRetrievePatch?: (id: string) => void;
-  onRetrieveValidation?: (id: string) => void;
-  theme?: 'dark' | 'light' | 'system';
-  onToggleTheme?: () => void;
-  onOpenSettings?: () => void;
-  onOpenTour?: () => void;
-}) {
-  const [popoverOpen, setPopoverOpen] = useState(false);
+  onOpenHowItWorks,
+  onOpenSecurityTerms,
+  onOpenEarlierResult,
+}: HeaderProps) {
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (analysis?.analysis_id) {
-      saveRecentSession({
-        id: analysis.analysis_id,
-        type: 'analysis',
-        label: `${analysis.nodes.length} call${analysis.nodes.length !== 1 ? 's' : ''} (${analysis.detected_framework ?? 'Scan'})`,
-      });
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    };
+    if (moreMenuOpen) {
+      window.addEventListener('mousedown', handleOutsideClick);
     }
-  }, [analysis?.analysis_id, analysis?.nodes.length, analysis?.detected_framework]);
-
-  useEffect(() => {
-    if (job?.run_id && job.status === 'complete') {
-      saveRecentSession({
-        id: job.run_id,
-        type: 'run',
-        label: `Benchmark: ${job.plan.models.length} models, ${job.plan.case_ids.length} cases`,
-      });
-    }
-  }, [job?.run_id, job?.status, job?.plan.models.length, job?.plan.case_ids.length]);
+    return () => window.removeEventListener('mousedown', handleOutsideClick);
+  }, [moreMenuOpen]);
 
   const hasData = Boolean(demo || analysis || (job && job.status === 'complete'));
   const dataSource = demo ? 'mock' : analysis?.data_source;
   const dsLabel = dataSourceLabel(dataSource, health?.benchmark_provenance, analysis?.timestamp);
 
-  const dsKindStyle: Record<string, React.CSSProperties> = {
-    mock:     { background: 'var(--caution-tint)', color: 'var(--caution)', borderColor: 'color-mix(in srgb, var(--caution) 30%, transparent)' },
-    emulated: { background: 'var(--caution-tint)', color: 'var(--caution)', borderColor: 'color-mix(in srgb, var(--caution) 30%, transparent)' },
-    recorded: { background: 'var(--chip-bg)',       color: 'var(--muted)',   borderColor: 'var(--rule)' },
-    live:     { background: 'var(--gain-tint)',     color: 'var(--gain)',   borderColor: 'color-mix(in srgb, var(--gain) 30%, transparent)' },
-  };
+  // In section 1 & 2:
+  // "The 'Mock data' chip (the amber banner is enough)."
+  // "Mention 'NVIDIA Nemotron on Nebius Token Factory' only when the data source is live."
+  // So do NOT render chip when mock.
+  const showDataChip = hasData && dataSource && dataSource !== 'mock';
+  const chipText = dataSource === 'live'
+    ? 'NVIDIA Nemotron on Nebius Token Factory'
+    : dsLabel.text;
 
   return (
-    <>
-      <header className="app-header">
-        {/* Wordmark */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexShrink: 0 }}>
-          {onGoHome ? (
-            <button
-              type="button"
-              className="wordmark-btn"
-              onClick={onGoHome}
-              title="Return to home screen"
-              aria-label="CascadeRouter Home"
-            >
-              <span className="wordmark">
-                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="7 4 12 9 7 14" />
-                  <polyline points="13 10 18 15 13 20" />
-                  <circle cx="5" cy="19" r="1.5" fill="var(--gain)" stroke="var(--gain)" />
-                </svg>
-                CascadeRouter
-              </span>
-            </button>
-          ) : (
-            <span className="wordmark">
+    <header className="app-header" style={{ height: 56, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', borderBottom: '1px solid var(--rule)', background: 'var(--sheet)', zIndex: 10 }}>
+      {/* Wordmark and Progress Trail */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 24, flexShrink: 0 }}>
+        {onGoHome ? (
+          <button
+            type="button"
+            className="wordmark-btn"
+            onClick={onGoHome}
+            title="Return to home screen"
+            aria-label="CascadeRouter Home"
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+          >
+            <span className="wordmark" style={{ fontFamily: 'var(--font-serif)', fontSize: '20px', fontWeight: 600, color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 8 }}>
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <polyline points="7 4 12 9 7 14" />
                 <polyline points="13 10 18 15 13 20" />
@@ -194,291 +139,204 @@ export function Header({
               </svg>
               CascadeRouter
             </span>
-          )}
-
-          {/* Progress trail */}
-          <ProgressTrail analysis={analysis} job={job} optimization={optimization} />
-        </div>
-
-        {/* Right side controls */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexShrink: 0, flexWrap: 'wrap' }}>
-          {/* Data-source chip: appears only once a scan or run exists (or in mock mode) */}
-          {hasData && dataSource && (
-            <span
-              className="chip"
-              style={{ ...(dsKindStyle[dsLabel.kind] ?? dsKindStyle.live), fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-xs)' }}
-            >
-              {dsLabel.text}
-            </span>
-          )}
-
-          {/* Backend status grouped as one unit */}
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
-            {health ? (
-              <>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--gain)', flexShrink: 0 }} aria-hidden="true" />
-                <span style={{ color: 'var(--ink)', fontWeight: 500 }}>Backend connected</span>
-              </>
-            ) : healthError ? (
-              <>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--loss)', flexShrink: 0 }} aria-hidden="true" />
-                <span style={{ color: 'var(--loss)' }}>{healthError.kind === 'unavailable' ? 'Backend unavailable' : 'Connection failed'}</span>
-                {!demo && (
-                  <button
-                    type="button"
-                    className="btn-link"
-                    disabled={healthLoading}
-                    onClick={onCheckHealth}
-                    style={{ padding: '0 4px' }}
-                  >
-                    {healthLoading ? 'Checking…' : 'Retry'}
-                  </button>
-                )}
-              </>
-            ) : (
-              <>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--field-border)', flexShrink: 0 }} aria-hidden="true" />
-                <span>Backend not checked</span>
-                {!demo && (
-                  <button
-                    type="button"
-                    className="btn-link"
-                    disabled={healthLoading || demo}
-                    onClick={onCheckHealth}
-                    style={{ padding: '0 4px' }}
-                  >
-                    {healthLoading ? 'Checking…' : 'Check'}
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-
-          {/* Use sample data toggle */}
-          <button
-            type="button"
-            className="btn-outline"
-            onClick={onOpenDemo}
-            title="Loads built-in mock data. Nothing is sent to a model."
-            style={{ fontSize: 'var(--fs-xs)', height: 32 }}
-          >
-            {demo ? 'Exit sample data' : 'Use sample data'}
           </button>
-
-          {/* Open earlier result secondary button */}
-          <button
-            type="button"
-            className="btn-outline"
-            onClick={() => setPopoverOpen(true)}
-            style={{ fontSize: 'var(--fs-xs)', height: 32 }}
-          >
-            Open earlier result
-          </button>
-
-          {/* Tour button */}
-          {onOpenTour && (
-            <button
-              type="button"
-              className="btn-outline"
-              onClick={onOpenTour}
-              title="How CascadeRouter works: interactive visual walkthrough"
-              style={{ fontSize: 'var(--fs-xs)', height: 32 }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="16" x2="12" y2="12" />
-                <line x1="12" y1="8" x2="12.01" y2="8" />
-              </svg>
-              <span>Tour</span>
-            </button>
-          )}
-
-          {/* Theme toggle button */}
-          {onToggleTheme && (
-            <button
-              type="button"
-              className="btn-outline"
-              onClick={onToggleTheme}
-              title={`Theme: ${theme ?? 'dark'} (Click to toggle)`}
-              aria-label={`Toggle theme, current is ${theme ?? 'dark'}`}
-              style={{ fontSize: 'var(--fs-xs)', height: 32, padding: '0 8px' }}
-            >
-              {theme === 'light' ? '☀️' : '🌙'}
-            </button>
-          )}
-
-          {/* Settings button */}
-          {onOpenSettings && (
-            <button
-              type="button"
-              className="btn-outline"
-              onClick={onOpenSettings}
-              title="Compiler Settings & API Configuration"
-              aria-label="Compiler settings"
-              style={{ fontSize: 'var(--fs-xs)', height: 32, padding: '0 8px' }}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-            </button>
-          )}
-        </div>
-      </header>
-
-      {/* Earlier-result popover */}
-      {popoverOpen && (
-        <EarlierResultPopover
-          onClose={() => setPopoverOpen(false)}
-          onRetrieveAnalysis={id => { onRetrieveAnalysis?.(id); setPopoverOpen(false); }}
-          onRetrieveRun={id => { onRetrieveRun?.(id); setPopoverOpen(false); }}
-          onRetrievePatch={id => { onRetrievePatch?.(id); setPopoverOpen(false); }}
-          onRetrieveValidation={id => { onRetrieveValidation?.(id); setPopoverOpen(false); }}
-        />
-      )}
-    </>
-  );
-}
-
-/** Popover containing the four ID retrieve fields — removed from the main flow. */
-function EarlierResultPopover({
-  onClose,
-  onRetrieveAnalysis,
-  onRetrieveRun,
-  onRetrievePatch,
-  onRetrieveValidation,
-}: {
-  onClose: () => void;
-  onRetrieveAnalysis?: (id: string) => void;
-  onRetrieveRun?: (id: string) => void;
-  onRetrievePatch?: (id: string) => void;
-  onRetrieveValidation?: (id: string) => void;
-}) {
-  const [recentSessions] = useState<RecentSessionItem[]>(() => getRecentSessions());
-
-  return (
-    <div
-      className="popover-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Open earlier result"
-      onClick={e => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="popover-panel">
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-          <h2 style={{ margin: 0, fontSize: 'var(--fs-base)', fontWeight: 600 }}>Open earlier result</h2>
-          <button type="button" className="btn-ghost" onClick={onClose} aria-label="Close popover" style={{ padding: '4px 8px' }}>✕</button>
-        </div>
-
-        {recentSessions.length > 0 && (
-          <div style={{ marginBottom: 16, paddingBottom: 14, borderBottom: '1px solid var(--rule)' }}>
-            <span style={{ fontSize: 'var(--fs-xs)', fontWeight: 600, color: 'var(--ink)', display: 'block', marginBottom: 8 }}>
-              Recent Sessions
-            </span>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {recentSessions.map(s => (
-                <div
-                  key={s.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    padding: '6px 10px',
-                    background: 'var(--paper)',
-                    border: '1px solid var(--rule)',
-                    borderRadius: 'var(--r-ctrl)',
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 500, fontSize: 'var(--fs-xs)', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {s.label}
-                    </div>
-                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '11px', color: 'var(--muted)' }}>
-                      {s.id.slice(0, 16)}… • {s.date}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn-ghost"
-                    style={{ fontSize: 'var(--fs-xs)', padding: '2px 8px', flexShrink: 0 }}
-                    onClick={() => {
-                      if (s.type === 'analysis') onRetrieveAnalysis?.(s.id);
-                      else if (s.type === 'run') onRetrieveRun?.(s.id);
-                      onClose();
-                    }}
-                  >
-                    Load
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
+        ) : (
+          <span className="wordmark" style={{ fontFamily: 'var(--font-serif)', fontSize: '20px', fontWeight: 600, color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="7 4 12 9 7 14" />
+              <polyline points="13 10 18 15 13 20" />
+              <circle cx="5" cy="19" r="1.5" fill="var(--gain)" stroke="var(--gain)" />
+            </svg>
+            CascadeRouter
+          </span>
         )}
 
-        <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', marginBottom: 16 }}>
-          Paste any stored ID to retrieve a previous result. Fields are independent.
-        </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <IdField label="Analysis ID" pattern="analysis_[0-9a-f]{32}" placeholder="analysis_…" onRetrieve={onRetrieveAnalysis} />
-          <IdField label="Run ID" pattern="run_[0-9a-f]{32}" placeholder="run_…" onRetrieve={onRetrieveRun} />
-          <IdField label="Patch ID" pattern="patch_[0-9a-f]{32}" placeholder="patch_…" onRetrieve={onRetrievePatch} />
-          <IdField label="Validation ID" pattern="validation_[0-9a-f]{64}" placeholder="validation_…" onRetrieve={onRetrieveValidation} />
-        </div>
-        <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--muted)', marginTop: 12 }}>
-          Retrieval connects to the configured local backend. No automatic operations.
-        </p>
+        {/* Progress trail */}
+        <ProgressTrail analysis={analysis} job={job} optimization={optimization} />
       </div>
-    </div>
-  );
-}
 
-function IdField({
-  label,
-  pattern,
-  placeholder,
-  onRetrieve,
-}: {
-  label: string;
-  pattern: string;
-  placeholder: string;
-  onRetrieve?: (value: string) => void;
-}) {
-  const [value, setValue] = useState('');
-  const valid = value === '' || new RegExp(`^${pattern}$`).test(value);
-  const canRetrieve = value.trim() !== '' && valid;
+      {/* Right Controls: Data-source chip, Backend status, ONE More button */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexShrink: 0 }}>
+        {/* Data-source chip: appears only once data exists and not in mock mode */}
+        {showDataChip && (
+          <span
+            className="chip"
+            style={{
+              background: dataSource === 'live' ? 'var(--gain-tint)' : 'var(--chip-bg)',
+              color: dataSource === 'live' ? 'var(--gain)' : 'var(--muted)',
+              border: `1px solid ${dataSource === 'live' ? 'color-mix(in srgb, var(--gain) 30%, transparent)' : 'var(--rule)'}`,
+              fontFamily: 'var(--font-mono)',
+              fontSize: 'var(--fs-xs)',
+              padding: '2px 8px',
+              borderRadius: 'var(--r-chip)',
+            }}
+          >
+            {chipText}
+          </span>
+        )}
 
-  return (
-    <div>
-      <label className="field-label">
-        {label}
-        <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-          <input
-            className={`field-input mono`}
-            value={value}
-            onChange={e => setValue(e.target.value)}
-            placeholder={placeholder}
-            pattern={pattern}
-            autoComplete="off"
-            spellCheck={false}
-            style={{ borderColor: !valid && value ? 'var(--loss)' : undefined }}
-          />
+        {/* Backend status grouped as one unit with "Check" */}
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
+          {health ? (
+            <>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--gain)', flexShrink: 0 }} aria-hidden="true" />
+              <span style={{ color: 'var(--ink)', fontWeight: 500 }}>Backend connected</span>
+            </>
+          ) : healthError ? (
+            <>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--loss)', flexShrink: 0 }} aria-hidden="true" />
+              <span style={{ color: 'var(--loss)' }}>{healthError.kind === 'unavailable' ? 'Backend unavailable' : 'Connection failed'}</span>
+              {!demo && (
+                <button
+                  type="button"
+                  className="btn-link"
+                  disabled={healthLoading}
+                  onClick={onCheckHealth}
+                  style={{ padding: '0 4px' }}
+                >
+                  {healthLoading ? 'Checking…' : 'Retry'}
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--field-border)', flexShrink: 0 }} aria-hidden="true" />
+              <span>Backend not checked</span>
+              {!demo && (
+                <button
+                  type="button"
+                  className="btn-link"
+                  disabled={healthLoading || demo}
+                  onClick={onCheckHealth}
+                  style={{ padding: '0 4px' }}
+                >
+                  {healthLoading ? 'Checking…' : 'Check'}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* ONE "More" button with dropdown */}
+        <div style={{ position: 'relative' }} ref={menuRef}>
           <button
             type="button"
-            className="btn-ghost"
-            disabled={!canRetrieve}
-            onClick={() => onRetrieve?.(value.trim())}
-            style={{ flexShrink: 0, padding: '0 12px' }}
+            className="btn-outline"
+            onClick={() => setMoreMenuOpen(!moreMenuOpen)}
+            aria-expanded={moreMenuOpen}
+            aria-haspopup="true"
+            style={{ fontSize: 'var(--fs-xs)', height: 32, padding: '0 12px' }}
           >
-            Retrieve
+            More
           </button>
+
+          {moreMenuOpen && (
+            <div
+              className="more-dropdown-menu"
+              role="menu"
+              style={{
+                position: 'absolute',
+                right: 0,
+                top: 'calc(100% + 6px)',
+                width: 190,
+                background: 'var(--sheet)',
+                border: '1px solid var(--rule)',
+                borderRadius: 'var(--r-ctrl)',
+                boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                zIndex: 100,
+                display: 'flex',
+                flexDirection: 'column',
+                padding: '4px 0',
+              }}
+            >
+              <button
+                type="button"
+                className="dropdown-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  onOpenEarlierResult?.();
+                }}
+                style={{
+                  textAlign: 'left',
+                  background: 'none',
+                  border: 'none',
+                  padding: '8px 16px',
+                  fontSize: 'var(--fs-xs)',
+                  color: 'var(--ink)',
+                  cursor: 'pointer',
+                  width: '100%',
+                }}
+              >
+                Open earlier result
+              </button>
+              <button
+                type="button"
+                className="dropdown-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  onOpenSettings?.();
+                }}
+                style={{
+                  textAlign: 'left',
+                  background: 'none',
+                  border: 'none',
+                  padding: '8px 16px',
+                  fontSize: 'var(--fs-xs)',
+                  color: 'var(--ink)',
+                  cursor: 'pointer',
+                  width: '100%',
+                }}
+              >
+                Settings
+              </button>
+              <button
+                type="button"
+                className="dropdown-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  onOpenHowItWorks?.();
+                }}
+                style={{
+                  textAlign: 'left',
+                  background: 'none',
+                  border: 'none',
+                  padding: '8px 16px',
+                  fontSize: 'var(--fs-xs)',
+                  color: 'var(--ink)',
+                  cursor: 'pointer',
+                  width: '100%',
+                }}
+              >
+                How it works
+              </button>
+              <button
+                type="button"
+                className="dropdown-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  onOpenSecurityTerms?.();
+                }}
+                style={{
+                  textAlign: 'left',
+                  background: 'none',
+                  border: 'none',
+                  padding: '8px 16px',
+                  fontSize: 'var(--fs-xs)',
+                  color: 'var(--ink)',
+                  cursor: 'pointer',
+                  width: '100%',
+                }}
+              >
+                Security and terms
+              </button>
+            </div>
+          )}
         </div>
-      </label>
-      {!valid && value && (
-        <p style={{ fontSize: 'var(--fs-xs)', color: 'var(--loss)', marginTop: 4 }}>
-          Format does not match expected ID pattern.
-        </p>
-      )}
-    </div>
+      </div>
+    </header>
   );
 }

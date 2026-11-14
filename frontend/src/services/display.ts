@@ -25,6 +25,142 @@ export function shortModelName(modelId: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Saving percentage
+// ---------------------------------------------------------------------------
+
+/**
+ * Calculates the saving percentage between baseline and selected cost:
+ * 100 * (baseline_cost - selected_cost) / baseline_cost from recorded costs.
+ * Returns an em dash '—' if either cost is unknown or baseline_cost <= 0.
+ */
+export function savingPercentage(
+  baselineCost: string | number | null | undefined,
+  selectedCost: string | number | null | undefined,
+): string {
+  if (baselineCost == null || selectedCost == null) return '—';
+  const b = typeof baselineCost === 'string' ? parseFloat(baselineCost) : baselineCost;
+  const s = typeof selectedCost === 'string' ? parseFloat(selectedCost) : selectedCost;
+  if (!isFinite(b) || !isFinite(s) || b <= 0) return '—';
+  const pct = Math.round((100 * (b - s)) / b);
+  return `${pct}%`;
+}
+
+// ---------------------------------------------------------------------------
+// Model pricing & column ordering
+// ---------------------------------------------------------------------------
+
+export interface ModelPricing {
+  inputPrice: number | null;
+  outputPrice: number | null;
+  label: string;
+}
+
+const KNOWN_PRICING: Record<string, { in: number; out: number }> = {
+  'nano': { in: 0.03, out: 0.09 },
+  'nvidia/nano': { in: 0.03, out: 0.09 },
+  'nvidia-nemotron-3-nano-3b-a3b': { in: 0.03, out: 0.09 },
+  'nvidia/nvidia-nemotron-3-nano-3b-a3b': { in: 0.03, out: 0.09 },
+  'meta-llama/meta-llama-3.1-8b-instruct': { in: 0.03, out: 0.09 },
+  'meta-llama-3.1-8b-instruct': { in: 0.03, out: 0.09 },
+  'lightning': { in: 0.06, out: 0.18 },
+  'nvidia/lightning': { in: 0.06, out: 0.18 },
+  'flash': { in: 0.15, out: 0.30 },
+  'nvidia/flash': { in: 0.15, out: 0.30 },
+  'ultra': { in: 0.35, out: 0.40 },
+  'nvidia/ultra': { in: 0.35, out: 0.40 },
+  'meta-llama/meta-llama-3.1-70b-instruct': { in: 0.35, out: 0.40 },
+  'meta-llama-3.1-70b-instruct': { in: 0.35, out: 0.40 },
+  'nvidia/llama-3.1-nemotron-70b-instruct': { in: 0.35, out: 0.40 },
+  'llama-3.1-nemotron-70b-instruct': { in: 0.35, out: 0.40 },
+  'meta-llama/meta-llama-3.1-405b-instruct': { in: 1.20, out: 2.40 },
+  'meta-llama-3.1-405b-instruct': { in: 1.20, out: 2.40 },
+  'fixture/async-model': { in: 0.35, out: 0.40 },
+  'fixture/model-one': { in: 0.35, out: 0.40 },
+  'openai/gpt-4o': { in: 2.50, out: 10.00 },
+  'gpt-4o': { in: 2.50, out: 10.00 },
+};
+
+export function getModelPricing(modelId: string): ModelPricing {
+  const key = modelId.toLowerCase().trim();
+  const found = KNOWN_PRICING[key] ?? KNOWN_PRICING[shortModelName(key).toLowerCase()];
+  if (found) {
+    return {
+      inputPrice: found.in,
+      outputPrice: found.out,
+      label: `$${found.in.toFixed(2)} in / $${found.out.toFixed(2)} out per 1M`,
+    };
+  }
+  return {
+    inputPrice: null,
+    outputPrice: null,
+    label: '$— in / $— out per 1M',
+  };
+}
+
+export function orderColumns<T extends string | { modelId: string }>(
+  models: readonly T[],
+  customPricing?: Record<string, { in: number; out: number }>
+): T[] {
+  return [...models].sort((a, b) => {
+    const idA = typeof a === 'string' ? a : a.modelId;
+    const idB = typeof b === 'string' ? b : b.modelId;
+    const priceA = customPricing?.[idA]?.in ?? getModelPricing(idA).inputPrice ?? Number.POSITIVE_INFINITY;
+    const priceB = customPricing?.[idB]?.in ?? getModelPricing(idB).inputPrice ?? Number.POSITIVE_INFINITY;
+    if (priceA !== priceB) return priceA - priceB;
+    return idA.localeCompare(idB);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Station states & accessibility
+// ---------------------------------------------------------------------------
+
+export type StationState = 'passed' | 'failed' | 'not_tested' | 'unavailable';
+
+export function getStationState(params: {
+  tested?: boolean;
+  passedAll?: boolean;
+  failed?: boolean;
+  unavailable?: boolean;
+}): StationState {
+  if (params.unavailable) return 'unavailable';
+  if (!params.tested) return 'not_tested';
+  if (params.failed) return 'failed';
+  if (params.passedAll) return 'passed';
+  return 'not_tested';
+}
+
+export function stationAriaLabel(modelName: string, state: StationState): string {
+  const cleanName = shortModelName(modelName);
+  switch (state) {
+    case 'passed':
+      return `${cleanName}: passed all checks`;
+    case 'failed':
+      return `${cleanName}: failed checks`;
+    case 'unavailable':
+      return `${cleanName}: unavailable or rate-limited`;
+    case 'not_tested':
+    default:
+      return `${cleanName}: not tested`;
+  }
+}
+
+export function hiddenRowSentence(params: {
+  callName: string;
+  currentModel: string;
+  recommendedModel?: string | null;
+  savingPct?: string | null;
+}): string {
+  const current = shortModelName(params.currentModel);
+  if (!params.recommendedModel || params.recommendedModel === params.currentModel) {
+    return `${params.callName} runs on ${current} today. No cheaper tier passed every check.`;
+  }
+  const rec = shortModelName(params.recommendedModel);
+  const saving = params.savingPct && params.savingPct !== '—' ? `, ${params.savingPct} less` : '';
+  return `${params.callName} runs on ${current} today. Cheapest passing tier: ${rec}${saving}.`;
+}
+
+// ---------------------------------------------------------------------------
 // Cost bar
 // ---------------------------------------------------------------------------
 

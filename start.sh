@@ -38,6 +38,16 @@ if [ "$#" -gt 0 ]; then
     EXPLICIT_CONFIG=1
 fi
 
+# Free ports 8000 and 5173 if lingering from previous runs
+for port in 8000 5173; do
+    occupied_pid=$(lsof -ti :$port 2>/dev/null || true)
+    if [ -n "$occupied_pid" ]; then
+        echo -e "${YELLOW}[*] Port $port is in use (PID: $occupied_pid); freeing port...${NC}"
+        kill -9 $occupied_pid 2>/dev/null || true
+        sleep 0.3
+    fi
+done
+
 # Cleanup on exit
 PIDS=()
 cleanup() {
@@ -46,7 +56,14 @@ cleanup() {
     echo -e "\n${YELLOW}[*] Shutting down CascadeRouter services...${NC}"
     for pid in "${PIDS[@]}"; do
         if kill -0 "$pid" 2>/dev/null; then
+            pkill -P "$pid" 2>/dev/null || true
             kill "$pid" 2>/dev/null || true
+        fi
+    done
+    for port in 8000 5173; do
+        occupied_pid=$(lsof -ti :$port 2>/dev/null || true)
+        if [ -n "$occupied_pid" ]; then
+            kill -9 $occupied_pid 2>/dev/null || true
         fi
     done
     wait 2>/dev/null || true
@@ -76,6 +93,12 @@ if [ -f "$ROOT_DIR/backend/main.py" ]; then
     fi
 
     if ! "$PYTHON_CMD" -c "import fastapi, uvicorn" >/dev/null 2>&1; then
+        if [ ! -d "$ROOT_DIR/.venv" ] && [ ! -d "$ROOT_DIR/venv" ]; then
+            echo -e "${CYAN}[*] Creating Python virtual environment in .venv...${NC}"
+            "$PYTHON_CMD" -m venv "$ROOT_DIR/.venv"
+            source "$ROOT_DIR/.venv/bin/activate"
+            PYTHON_CMD="python"
+        fi
         echo -e "${YELLOW}[*] Backend dependencies missing; installing from requirements.txt...${NC}"
         "$PYTHON_CMD" -m pip install -r "$ROOT_DIR/requirements.txt" || {
             echo -e "${YELLOW}[!] Note: Could not auto-install via pip. Proceeding with existing environment.${NC}"
@@ -120,13 +143,28 @@ if [ -d "$ROOT_DIR/frontend" ]; then
     echo -e "${GREEN}"
     echo -e "=================================================================="
     echo -e "  🚀 CascadeRouter IDE is launching!"
-    echo -e "  👉 Open your browser: http://localhost:5173"
+    echo -e "  👉 Opening your browser: http://localhost:5173"
     echo -e "=================================================================="
     echo -e "${NC}"
 
     npm run dev &
     FRONTEND_PID=$!
     PIDS+=("$FRONTEND_PID")
+
+    # Automatically open the browser once the frontend server is listening
+    (
+        for i in {1..40}; do
+            if curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:5173" 2>/dev/null | grep -q "200\|304"; then
+                if command -v open >/dev/null 2>&1; then
+                    open "http://localhost:5173"
+                elif command -v xdg-open >/dev/null 2>&1; then
+                    xdg-open "http://localhost:5173"
+                fi
+                break
+            fi
+            sleep 0.5
+        done
+    ) &
 
     # Wait for child processes
     # Bash 4.3+: wait -n propagates either service's failure and stops its sibling.

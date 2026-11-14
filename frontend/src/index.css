@@ -1,7 +1,7 @@
 /* ==============================================================================
-   CascadeRouter IDE – Design System (light workbench)
-   Tokens → CSS custom properties, mapped into Tailwind v4 @theme.
+   CascadeRouter IDE – Visual Identity & Design System
    IBM Plex Sans for UI. IBM Plex Mono for code, paths, model IDs.
+   Source Serif 4 for wordmark, board headings, detail headings, decision headline.
    ============================================================================= */
 
 @import "@fontsource/ibm-plex-sans/400.css";
@@ -9,10 +9,13 @@
 @import "@fontsource/ibm-plex-sans/600.css";
 @import "@fontsource/ibm-plex-mono/400.css";
 @import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/source-serif-4/400.css";
+@import "@fontsource/source-serif-4/500.css";
+@import "@fontsource/source-serif-4/600.css";
 @import "tailwindcss";
 
 /* --------------------------------------------------------------------------- */
-/* Design tokens                                                                */
+/* Design tokens (light theme only)                                            */
 /* --------------------------------------------------------------------------- */
 :root {
   /* Surfaces */
@@ -38,6 +41,11 @@
   /* Neutral chip */
   --chip-bg:        #EEF1F5;
 
+  /* Fonts */
+  --font-sans:      "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --font-mono:      "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif:     "Source Serif 4", Georgia, serif;
+
   /* Type scale */
   --fs-xs:   12px;
   --fs-sm:   13px;
@@ -52,57 +60,7 @@
 
   /* Layout */
   --header-h:  56px;
-  --left-w:   280px;
   --right-w:  420px;
-  --sidebar-w: 230px;
-  --sidebar-w-collapsed: 64px;
-}
-
-/* --------------------------------------------------------------------------- */
-/* Dark Mode tokens                                                             */
-/* --------------------------------------------------------------------------- */
-[data-theme="dark"] {
-  --paper:          #0B0F17;   /* deep rich slate background */
-  --sheet:          #111827;   /* elevated surface */
-  --ink:            #F3F4F6;   /* crisp white text */
-  --muted:          #9CA3AF;   /* soft muted text */
-  --rule:           #1F2937;   /* clean dark border */
-  --field-border:   #374151;   /* dark input border */
-
-  --navy:           #3B82F6;   /* luminous blue accent */
-  --navy-hover:     #60A5FA;
-
-  --gain:           #10B981;   /* vibrant emerald */
-  --gain-tint:      rgba(16, 185, 129, 0.15);
-  --loss:           #EF4444;   /* vivid crimson */
-  --loss-tint:      rgba(239, 68, 68, 0.15);
-  --caution:        #F59E0B;   /* amber warning */
-  --caution-tint:   rgba(245, 158, 11, 0.15);
-
-  --chip-bg:        #1E293B;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper:          #0B0F17;
-    --sheet:          #111827;
-    --ink:            #F3F4F6;
-    --muted:          #9CA3AF;
-    --rule:           #1F2937;
-    --field-border:   #374151;
-
-    --navy:           #3B82F6;
-    --navy-hover:     #60A5FA;
-
-    --gain:           #10B981;
-    --gain-tint:      rgba(16, 185, 129, 0.15);
-    --loss:           #EF4444;
-    --loss-tint:      rgba(239, 68, 68, 0.15);
-    --caution:        #F59E0B;
-    --caution-tint:   rgba(245, 158, 11, 0.15);
-
-    --chip-bg:        #1E293B;
-  }
 }
 
 /* --------------------------------------------------------------------------- */
@@ -123,8 +81,9 @@
   --color-caution-tint: var(--caution-tint);
   --color-chip-bg:      var(--chip-bg);
 
-  --font-sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-sans:  "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  --font-mono:  "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --font-serif: "Source Serif 4", Georgia, serif;
 }
 
 /* --------------------------------------------------------------------------- */
@@ -1414,381 +1373,268 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 /* ==============================================================================
-   Application Shell with Navigation Sidebar & Main Viewport
+   Workbench Layout (1280px+ and stacked below 1280px)
    ============================================================================= */
 
-.app-body-container {
+.workbench-container {
   display: flex;
+  flex-direction: column;
   flex: 1;
-  min-height: 0;
-  overflow: hidden;
-  position: relative;
+  min-height: calc(100vh - var(--header-h));
+  background: var(--paper);
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
-/* Sidebar navigation */
-.app-sidebar {
-  width: var(--sidebar-w);
-  min-width: var(--sidebar-w);
+.repo-bar-container {
+  padding: 10px 20px;
+  background: var(--sheet);
+  border-bottom: 1px solid var(--rule);
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+}
+
+.repo-bar-scanned {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.workbench-board-section {
+  width: 100%;
+  background: var(--sheet);
+  border-bottom: 1px solid var(--rule);
+}
+
+/* Bottom Split: Left Detail Table, Right Decision Panel (400-420px) */
+.workbench-bottom-split {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  min-height: 380px;
+}
+
+.workbench-detail-col {
+  flex: 1;
+  min-width: 0;
   background: var(--sheet);
   border-right: 1px solid var(--rule);
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  transition: width 160ms ease, min-width 160ms ease;
-  z-index: 30;
-  overflow-y: auto;
-  overflow-x: hidden;
-  flex-shrink: 0;
 }
 
-.app-sidebar.collapsed {
-  width: var(--sidebar-w-collapsed);
-  min-width: var(--sidebar-w-collapsed);
-}
-
-.sidebar-section {
-  padding: 12px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.sidebar-heading {
-  padding: 6px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--muted);
-}
-
-.sidebar-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 8px 10px;
-  border-radius: var(--r-ctrl);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--muted);
-  font-size: var(--fs-sm);
-  font-weight: 500;
-  font-family: var(--font-sans);
-  cursor: pointer;
-  text-align: left;
-  transition: all 120ms ease;
-  white-space: nowrap;
-}
-
-.sidebar-btn:hover {
-  background: var(--paper);
-  color: var(--ink);
-}
-
-.sidebar-btn.active {
-  background: color-mix(in srgb, var(--navy) 10%, var(--sheet));
-  color: var(--navy);
-  border-color: color-mix(in srgb, var(--navy) 20%, transparent);
-  font-weight: 600;
-}
-
-.sidebar-btn-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-}
-
-.sidebar-btn-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-btn-badge {
-  margin-left: auto;
-  padding: 1px 6px;
-  border-radius: var(--r-chip);
-  font-size: 11px;
-  font-weight: 600;
-  background: var(--chip-bg);
-  color: var(--ink);
-}
-
-.sidebar-footer {
-  padding: 10px 8px;
-  border-top: 1px solid var(--rule);
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
+.workbench-decision-col {
+  width: 420px;
+  min-width: 400px;
+  max-width: 420px;
   background: var(--sheet);
-}
-
-.sidebar-collapse-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  padding: 6px;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-ctrl);
-  background: var(--paper);
-  color: var(--muted);
-  font-size: 11px;
-  cursor: pointer;
-}
-.sidebar-collapse-btn:hover {
-  color: var(--ink);
-}
-
-.app-main-viewport {
-  flex: 1;
-  min-width: 0;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  position: relative;
+  flex-shrink: 0;
+}
+
+/* Responsive Stack below 1280px: Board -> Detail -> Decision */
+@media (max-width: 1279px) {
+  .workbench-bottom-split {
+    flex-direction: column;
+  }
+  .workbench-detail-col {
+    border-right: none;
+    border-bottom: 1px solid var(--rule);
+  }
+  .workbench-decision-col {
+    width: 100%;
+    min-width: 100%;
+    max-width: 100%;
+  }
 }
 
 /* ==============================================================================
-   Contextual Pane Banners (Educational layer)
+   Signature Component: The Route Board (TierBoard)
    ============================================================================= */
 
-.pane-context-banner {
-  padding: 8px 12px;
-  background: color-mix(in srgb, var(--navy) 4%, var(--sheet));
-  border-bottom: 1px solid var(--rule);
+.tier-board-container {
+  padding: 20px;
+  width: 100%;
+}
+
+.tier-board-header {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
-.pane-step-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 11px;
+.tier-board-title {
+  font-family: var(--font-serif);
+  font-size: 20px;
   font-weight: 600;
-  font-family: var(--font-mono);
-  color: var(--navy);
-  background: color-mix(in srgb, var(--navy) 12%, transparent);
-  padding: 2px 7px;
-  border-radius: var(--r-chip);
-}
-
-.pane-explainer-text {
-  font-size: 12px;
-  color: var(--muted);
+  color: var(--ink);
+  margin: 0;
   line-height: 1.3;
 }
 
-.pane-info-btn {
-  background: transparent;
-  border: 1px solid var(--rule);
-  border-radius: var(--r-chip);
-  padding: 2px 6px;
-  font-size: 11px;
+.tier-board-subtitle {
+  font-size: var(--fs-sm);
   color: var(--muted);
-  cursor: pointer;
+  line-height: 1.4;
+}
+
+.tier-board-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--r-chip);
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--chip-bg);
+  color: var(--muted);
 }
-.pane-info-btn:hover {
-  color: var(--ink);
+
+.tier-board-empty {
+  padding: 36px 20px;
+  text-align: center;
   background: var(--paper);
+  border-radius: var(--r-sheet);
+  border: 1px dashed var(--rule);
+}
+
+.tier-board-row:hover {
+  background: color-mix(in srgb, var(--navy) 2%, var(--sheet)) !important;
+}
+
+.tier-board-row.selected {
+  background: color-mix(in srgb, var(--navy) 4%, var(--sheet)) !important;
+  border-left: 3px solid var(--navy) !important;
+}
+
+.tier-station {
+  user-select: none;
 }
 
 /* ==============================================================================
-   Universal Modals (Settings, Terms, Tour)
+   Detail Table Component
    ============================================================================= */
 
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(3px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: 20px;
-}
-
-.modal-dialog {
-  background: var(--sheet);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sheet);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.25);
-  width: 100%;
-  max-width: 640px;
-  max-height: 88vh;
+.detail-table-container {
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  animation: modalIn 140ms cubic-bezier(0.16, 1, 0.3, 1);
+  flex: 1;
 }
 
-.modal-dialog-large {
-  max-width: 820px;
-}
-
-@keyframes modalIn {
-  from { opacity: 0; transform: scale(0.97) translateY(8px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
-}
-
-.modal-header {
+.detail-table-header {
   padding: 16px 20px;
   border-bottom: 1px solid var(--rule);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--sheet);
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
-.modal-title {
-  font-size: var(--fs-md);
+.detail-table-title {
+  font-family: var(--font-serif);
+  font-size: 16px;
   font-weight: 600;
   color: var(--ink);
   margin: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
-.modal-body {
-  padding: 20px;
-  overflow-y: auto;
-  font-size: var(--fs-sm);
-  color: var(--ink);
-  line-height: 1.5;
-}
-
-.modal-footer {
-  padding: 12px 20px;
-  border-top: 1px solid var(--rule);
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  background: var(--paper);
-}
-
-/* Modal Settings tabs */
-.modal-tabs {
-  display: flex;
-  border-bottom: 1px solid var(--rule);
-  background: var(--paper);
-  padding: 0 16px;
-  gap: 8px;
-}
-
-.modal-tab-btn {
-  padding: 10px 14px;
+.detail-table-case-count {
   font-size: var(--fs-xs);
-  font-weight: 500;
   color: var(--muted);
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-  transition: all 120ms ease;
-}
-.modal-tab-btn:hover {
-  color: var(--ink);
-}
-.modal-tab-btn.active {
-  color: var(--navy);
-  border-bottom-color: var(--navy);
-  font-weight: 600;
+  font-weight: 400;
 }
 
-/* ==============================================================================
-   FinOps Analytics Screen
-   ============================================================================= */
-
-.analytics-view {
-  padding: 24px 32px;
-  overflow-y: auto;
-  height: 100%;
-  background: var(--paper);
+.detail-table-empty {
+  padding: 40px 20px;
+  text-align: center;
 }
 
-.analytics-header {
-  margin-bottom: 24px;
-}
-
-.analytics-title {
-  font-size: var(--fs-lg);
-  font-weight: 700;
-  color: var(--ink);
-  margin: 0 0 4px;
-}
-
-.analytics-subtitle {
-  font-size: var(--fs-sm);
-  color: var(--muted);
-  margin: 0;
-}
-
-.analytics-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 16px;
-  margin-bottom: 24px;
-}
-
-.analytics-card {
-  background: var(--sheet);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sheet);
-  padding: 16px 18px;
-}
-
-.analytics-kpi-val {
-  font-size: 26px;
-  font-weight: 700;
-  color: var(--gain);
-  font-family: var(--font-mono);
-  margin: 4px 0 2px;
-}
-
-.analytics-kpi-sub {
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.price-comparison-table {
+.detail-table {
   width: 100%;
   border-collapse: collapse;
   font-size: var(--fs-xs);
-  background: var(--sheet);
-  border: 1px solid var(--rule);
-  border-radius: var(--r-sheet);
-  overflow: hidden;
 }
 
-.price-comparison-table th {
-  padding: 10px 14px;
-  background: var(--paper);
+.detail-table th {
+  padding: 10px 16px;
   border-bottom: 1px solid var(--rule);
-  text-align: left;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: var(--fs-xs);
+}
+
+.detail-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: middle;
+}
+
+.detail-table-row:hover {
+  background: color-mix(in srgb, var(--navy) 2%, var(--sheet));
+}
+
+.detail-table-row.row-recommended {
+  background: color-mix(in srgb, var(--gain) 3%, var(--sheet));
+}
+
+/* ==============================================================================
+   Decision & Patch Panel
+   ============================================================================= */
+
+.decision-panel-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.decision-panel-title {
+  font-family: var(--font-serif);
+  font-size: 16px;
   font-weight: 600;
   color: var(--ink);
+  margin: 0;
 }
 
-.price-comparison-table td {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--rule);
-  color: var(--ink);
+.decision-headline {
+  font-family: var(--font-serif);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
 }
 
-.price-comparison-table tr:last-child td {
-  border-bottom: none;
+/* ==============================================================================
+   Drawers (Right slide-in / modal card)
+   ============================================================================= */
+
+.drawer-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: var(--sheet);
+  border-left: 1px solid var(--rule);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  z-index: 101;
+  animation: drawerSlide 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
+
+@keyframes drawerSlide {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+.dropdown-menu-item:hover {
+  background: var(--paper) !important;
+}
+
 

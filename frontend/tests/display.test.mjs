@@ -47,7 +47,17 @@ function compile(folder) {
 compile(resolve(root, 'src'));
 
 const displayPath = pathToFileURL(join(build, 'services/display.js')).href;
-const { shortModelName, costBarScale, savingsSentence, dataSourceLabel } = await import(displayPath);
+const {
+  shortModelName,
+  costBarScale,
+  savingsSentence,
+  dataSourceLabel,
+  savingPercentage,
+  orderColumns,
+  getStationState,
+  stationAriaLabel,
+  hiddenRowSentence,
+} = await import(displayPath);
 
 // ---------------------------------------------------------------------------
 // shortModelName
@@ -153,5 +163,103 @@ test('dataSourceLabel returns live kind for live data_source', () => {
 test('dataSourceLabel handles undefined scan source gracefully', () => {
   const result = dataSourceLabel(undefined, undefined, undefined);
   assert.equal(result.kind, 'live');
+});
+
+// ---------------------------------------------------------------------------
+// savingPercentage
+// ---------------------------------------------------------------------------
+test('savingPercentage calculates exact percentage from baseline and selected cost', () => {
+  // 100 * (0.000459 - 0.000030) / 0.000459 = 93.46% -> 93%
+  assert.equal(savingPercentage('0.000459', '0.000030'), '93%');
+  assert.equal(savingPercentage(0.000459, 0.000030), '93%');
+  assert.equal(savingPercentage('0.000612', '0.000052'), '92%');
+  assert.equal(savingPercentage(100, 50), '50%');
+  assert.equal(savingPercentage(100, 100), '0%');
+  assert.equal(savingPercentage(100, 0), '100%');
+});
+
+test('savingPercentage returns em dash for unavailable or zero baseline costs', () => {
+  assert.equal(savingPercentage(null, '0.000030'), '—');
+  assert.equal(savingPercentage('0.000459', null), '—');
+  assert.equal(savingPercentage(undefined, undefined), '—');
+  assert.equal(savingPercentage(0, 0), '—');
+  assert.equal(savingPercentage(-10, 5), '—');
+});
+
+// ---------------------------------------------------------------------------
+// orderColumns
+// ---------------------------------------------------------------------------
+test('orderColumns orders model tiers by input price ascending', () => {
+  const input = [
+    'nvidia/Ultra', // 0.35
+    'nvidia/Nano', // 0.03
+    'nvidia/Flash', // 0.15
+    'nvidia/Lightning', // 0.06
+  ];
+  const sorted = orderColumns(input);
+  assert.deepEqual(sorted, [
+    'nvidia/Nano',
+    'nvidia/Lightning',
+    'nvidia/Flash',
+    'nvidia/Ultra',
+  ]);
+});
+
+test('orderColumns works with object items containing modelId', () => {
+  const input = [
+    { modelId: 'meta-llama/Meta-Llama-3.1-70B-Instruct' }, // 0.35
+    { modelId: 'meta-llama/Meta-Llama-3.1-8B-Instruct' },  // 0.03
+  ];
+  const sorted = orderColumns(input);
+  assert.equal(sorted[0].modelId, 'meta-llama/Meta-Llama-3.1-8B-Instruct');
+  assert.equal(sorted[1].modelId, 'meta-llama/Meta-Llama-3.1-70B-Instruct');
+});
+
+// ---------------------------------------------------------------------------
+// getStationState & stationAriaLabel
+// ---------------------------------------------------------------------------
+test('getStationState correctly resolves states', () => {
+  assert.equal(getStationState({ tested: false }), 'not_tested');
+  assert.equal(getStationState({ unavailable: true }), 'unavailable');
+  assert.equal(getStationState({ tested: true, failed: true }), 'failed');
+  assert.equal(getStationState({ tested: true, passedAll: true }), 'passed');
+});
+
+test('stationAriaLabel produces descriptive accessibility strings', () => {
+  assert.equal(stationAriaLabel('nvidia/Nano', 'passed'), 'Nano: passed all checks');
+  assert.equal(stationAriaLabel('Nano', 'failed'), 'Nano: failed checks');
+  assert.equal(stationAriaLabel('Ultra', 'not_tested'), 'Ultra: not tested');
+  assert.equal(stationAriaLabel('Plus', 'unavailable'), 'Plus: unavailable or rate-limited');
+});
+
+// ---------------------------------------------------------------------------
+// hiddenRowSentence
+// ---------------------------------------------------------------------------
+test('hiddenRowSentence summarizes call routing with savings', () => {
+  const sentence = hiddenRowSentence({
+    callName: 'Triage intent',
+    currentModel: 'nvidia/Ultra',
+    recommendedModel: 'nvidia/Nano',
+    savingPct: '93%',
+  });
+  assert.equal(sentence, 'Triage intent runs on Ultra today. Cheapest passing tier: Nano, 93% less.');
+});
+
+test('hiddenRowSentence reports when no cheaper tier passed', () => {
+  const sentence = hiddenRowSentence({
+    callName: 'Draft reply',
+    currentModel: 'nvidia/Ultra',
+    recommendedModel: 'nvidia/Ultra',
+  });
+  assert.equal(sentence, 'Draft reply runs on Ultra today. No cheaper tier passed every check.');
+});
+
+test('hiddenRowSentence handles null recommended model as no cheaper tier', () => {
+  const sentence = hiddenRowSentence({
+    callName: 'Draft reply',
+    currentModel: 'nvidia/Ultra',
+    recommendedModel: null,
+  });
+  assert.equal(sentence, 'Draft reply runs on Ultra today. No cheaper tier passed every check.');
 });
 

@@ -1,8 +1,9 @@
 /**
  * Home screen illustration fixture.
- * Explicit illustrative data for the first-run example card.
+ * Explicit illustrative data for the first-run example card and route board.
  * Never an API fallback or backend authorization.
  */
+import type { BoardCallItem } from '../components/board/TierBoard.tsx';
 
 export interface IllustrationCall {
   name: string;
@@ -17,6 +18,7 @@ export interface HomeIllustration {
   mandatoryLabel: string;
   title: string;
   calls: readonly IllustrationCall[];
+  boardCalls: readonly BoardCallItem[];
   summarySentence: string;
   footerNote: string;
 }
@@ -24,7 +26,7 @@ export interface HomeIllustration {
 export const homeIllustrationFixture: HomeIllustration = {
   isIllustration: true,
   mandatoryLabel: 'Example, not your data',
-  title: 'What a result looks like',
+  title: 'Where each call runs',
   calls: [
     {
       name: 'Triage intent',
@@ -44,7 +46,50 @@ export const homeIllustrationFixture: HomeIllustration = {
       note: 'No cheaper model passed every check, so nothing changes.',
     },
   ],
+  boardCalls: [
+    {
+      id: 'call_triage',
+      name: 'Triage intent',
+      location: 'support_agent.py:14',
+      currentModel: 'nvidia/Ultra',
+      illustrationPick: 'nvidia/Nano',
+      illustrationSavings: '93%',
+      illustrationStations: {
+        'nvidia/Nano': 'passed',
+        'nvidia/Lightning': 'passed',
+        'nvidia/Flash': 'passed',
+        'nvidia/Ultra': 'passed',
+      },
+    },
+    {
+      id: 'call_extract',
+      name: 'Extract context',
+      location: 'support_agent.py:28',
+      currentModel: 'nvidia/Ultra',
+      illustrationPick: 'nvidia/Lightning',
+      illustrationSavings: '87%',
+      illustrationStations: {
+        'nvidia/Nano': 'failed',
+        'nvidia/Lightning': 'passed',
+        'nvidia/Flash': 'passed',
+        'nvidia/Ultra': 'passed',
+      },
+    },
+    {
+      id: 'call_reply',
+      name: 'Draft reply',
+      location: 'support_agent.py:42',
+      currentModel: 'nvidia/Ultra',
+      illustrationPick: 'nvidia/Ultra',
+      illustrationSavings: null,
+      illustrationStations: {
+        'nvidia/Nano': 'failed',
+        'nvidia/Lightning': 'failed',
+        'nvidia/Flash': 'failed',
+        'nvidia/Ultra': 'passed',
+      },
+    },
+  ],
   summarySentence: 'Two of three calls can move to a cheaper model. The third stays where it is.',
   footerNote: 'Models: NVIDIA Nemotron, served by Nebius Token Factory.',
 };
-

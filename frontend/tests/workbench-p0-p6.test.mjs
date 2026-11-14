@@ -8,14 +8,11 @@ import { homeIllustrationFixture } from '../src/services/homeIllustration.ts';
 const { default: App } = await component('App');
 const { OperationStatus } = await component('components/OperationStatus');
 const { HomeScreen } = await component('components/home/HomeScreen');
-const { RepositoryPane } = await component('components/repository/RepositoryPane');
-const { BenchmarkPane } = await component('components/benchmark/BenchmarkPane');
-const { RightPane } = await component('components/optimization/RightPane');
-const { Sidebar } = await component('components/layout/Sidebar');
-const { SettingsModal } = await component('components/modals/SettingsModal');
-const { TermsModal } = await component('components/modals/TermsModal');
-const { TourModal } = await component('components/home/TourModal');
-const { AnalyticsScreen } = await component('components/analytics/AnalyticsScreen');
+const { TierBoard } = await component('components/board/TierBoard');
+const { DetailTable } = await component('components/detail/DetailTable');
+const { DecisionPanel } = await component('components/decision/DecisionPanel');
+const { RepoBar } = await component('components/repository/RepoBar');
+const { SettingsDrawer, HowItWorksDrawer, SecurityTermsDrawer } = await component('components/modals/Drawers');
 
 test('initial render of App has zero alert/status warnings', () => {
   const html = renderToStaticMarkup(React.createElement(App));
@@ -96,15 +93,12 @@ test('fresh load at 1366x shows Home screen with headline, both buttons and exam
   assert.match(html, /Picks the cheapest model that passes every check\./);
   assert.match(html, /Shows the one-line change\. A \.bak backup is saved before anything is written\./);
 
-  // Example card on right column
-  assert.match(html, /What a result looks like/);
+  // Route board example on right column
+  assert.match(html, /Where each call runs/);
   assert.match(html, /Example, not your data/);
   assert.match(html, /Triage intent/);
-  assert.match(html, /Ultra to Nano/);
   assert.match(html, /Extract context/);
-  assert.match(html, /Ultra to Lightning/);
   assert.match(html, /Draft reply/);
-  assert.match(html, /Stays on Ultra/);
   assert.match(html, /Two of three calls can move to a cheaper model\. The third stays where it is\./);
   assert.match(html, /Models: NVIDIA Nemotron, served by Nebius Token Factory\./);
 });
@@ -141,155 +135,153 @@ test('backend unavailable on Home renders inline notice with Retry button', () =
   assert.match(html, /<button[^>]*>Retry<\/button>/);
 });
 
-test('workbench three-pane view displays repository, benchmark and recommendation panes', () => {
-  const repoHtml = renderToStaticMarkup(React.createElement(RepositoryPane, {
+test('workbench displays repository bar, tier board, detail table and decision panel', () => {
+  const repoHtml = renderToStaticMarkup(React.createElement(RepoBar, {
     demo: false,
     onAnalysis: () => {},
-    onSelect: () => {},
-    step: 'scan',
+    callSearch: '',
+    onCallSearchChange: () => {},
   }));
   assert.match(repoHtml, /Scan repository/);
-  assert.match(repoHtml, /Use sample agent/);
-  assert.match(repoHtml, /Use current repo/);
-  assert.match(repoHtml, /Calls will appear here after a scan\./);
+  assert.match(repoHtml, /Sample agent/);
+  assert.match(repoHtml, /Current dir/);
 
-  const benchHtml = renderToStaticMarkup(React.createElement(BenchmarkPane, {
-    demo: false,
-    onJob: () => {},
-    step: 'scan',
+  const boardHtml = renderToStaticMarkup(React.createElement(TierBoard, {
+    calls: [],
   }));
-  assert.match(benchHtml, /Compare models on your own LLM calls/);
-  assert.match(benchHtml, /Scan a repository, pick a call, then run a benchmark\./);
+  assert.match(boardHtml, /Where each call runs/);
+  assert.match(boardHtml, /Cheaper tiers on the left/);
 
-  const rightHtml = renderToStaticMarkup(React.createElement(RightPane, {
+  const detailHtml = renderToStaticMarkup(React.createElement(DetailTable, {
+    selectedNode: undefined,
+  }));
+  assert.match(detailHtml, /Select a call on the board/);
+
+  const decisionHtml = renderToStaticMarkup(React.createElement(DecisionPanel, {
     demo: false,
     step: 'scan',
     onOptimization: () => {},
   }));
-  assert.match(rightHtml, /Recommendation/);
-  assert.match(rightHtml, /Run a benchmark to see which model each call can move to\./);
+  assert.match(decisionHtml, /Decision &amp; patch|Decision & patch/);
+  assert.match(decisionHtml, /Run a benchmark to see which model each call can move to\./);
 });
 
-test('enhanced UI/UX: benchmark pane provides interactive sortable headers and presets', () => {
-  const html = renderToStaticMarkup(React.createElement(BenchmarkPane, {
-    demo: true,
-    onJob: () => {},
-    step: 'benchmark',
+test('acceptance: no sidebar, no ALL-CAPS labels, no mono badges rendered in App', () => {
+  const html = renderToStaticMarkup(React.createElement(App));
+  assert.ok(!html.includes('app-sidebar'), 'Must have no app-sidebar');
+  assert.ok(!html.includes('Step 1: Scan & DAG'), 'Must have no Step 1 badge');
+  assert.ok(!html.includes('Step 2: Empirical Benchmark'), 'Must have no Step 2 badge');
+  assert.ok(!html.includes('Step 3 & 4: FinOps & Patch'), 'Must have no Step 3 & 4 badge');
+  assert.ok(!html.includes('NVIDIA H100'), 'Must have no unverified H100 hardware claims');
+  assert.ok(!html.includes('Mock data</span>'), 'Must not render Mock data chip');
+});
+
+test('acceptance: TierBoard renders columns, tracks, stations, and accessibility', () => {
+  const html = renderToStaticMarkup(React.createElement(TierBoard, {
+    calls: [
+      {
+        node_id: 'llm_1',
+        function_name: 'triage_intent',
+        file_path: 'app.py',
+        line_number: 14,
+        current_model: 'meta-llama/Meta-Llama-3.1-70B-Instruct',
+        call_signature: '',
+        model_resolution: 'literal',
+        model_reference: null,
+        model_references: [],
+        prompt_resolution: 'literal',
+        prompt_reference: null,
+        prompt_references: [],
+        schema_resolution: 'missing',
+        schema_reference: null,
+        schema_references: [],
+        limited_schema_summary: null,
+      }
+    ],
   }));
-  assert.match(html, /Use Nebius \/ NVIDIA defaults/);
-  assert.match(html, /Nemotron Suite \(70B, 8B\)/);
-  assert.match(html, /Fast Eval \(8B only\)/);
+  assert.match(html, /Where each call runs/);
+  assert.match(html, /Cheaper tiers on the left/);
+  assert.match(html, /triage_intent/);
+  assert.match(html, /app\.py:14/);
+  assert.match(html, /Meta-Llama-3\.1-8B-Instruct/);
 });
 
-test('enhanced UI/UX: repository pane provides instant call search and filter bar', () => {
-  const html = renderToStaticMarkup(React.createElement(RepositoryPane, {
+test('acceptance: DetailTable displays model comparison without first-token in table', () => {
+  const html = renderToStaticMarkup(React.createElement(DetailTable, {
+    selectedNode: {
+      node_id: 'llm_1',
+      function_name: 'triage_intent',
+      file_path: 'app.py',
+      line_number: 14,
+      current_model: 'meta-llama/Meta-Llama-3.1-70B-Instruct',
+      call_signature: '',
+      model_resolution: 'literal',
+      model_reference: null,
+      model_references: [],
+      prompt_resolution: 'literal',
+      prompt_reference: null,
+      prompt_references: [],
+      schema_resolution: 'missing',
+      schema_reference: null,
+      schema_references: [],
+      limited_schema_summary: null,
+    },
+  }));
+  assert.match(html, /triage_intent, in detail/);
+  assert.ok(!html.includes('First token'), 'First token / TTFT must not appear in table columns');
+});
+
+test('acceptance: SettingsDrawer has single control for strict checks', () => {
+  const html = renderToStaticMarkup(React.createElement(SettingsDrawer, {
+    onClose: () => {},
+    strictAllChecks: true,
+    onStrictAllChecksChange: () => {},
+  }));
+  assert.match(html, /Only recommend a model if it passes every check/);
+  assert.ok(!html.includes('Dark Theme'), 'Theme options must be removed');
+  assert.ok(!html.includes('Nebius & Hardware'), 'Hardware options must be removed');
+});
+
+test('acceptance: HowItWorksDrawer and SecurityTermsDrawer render without hardware claims', () => {
+  const howHtml = renderToStaticMarkup(React.createElement(HowItWorksDrawer, { onClose: () => {} }));
+  assert.match(howHtml, /How it works/);
+  assert.ok(!howHtml.includes('H100'));
+
+  const secHtml = renderToStaticMarkup(React.createElement(SecurityTermsDrawer, { onClose: () => {} }));
+  assert.match(secHtml, /Security and terms/);
+  assert.match(secHtml, /Zero code execution guarantee/i);
+  assert.ok(!secHtml.includes('H100'));
+});
+
+test('acceptance: RepoBar hides search field when calls <= 8 and shows Scan again', () => {
+  const html = renderToStaticMarkup(React.createElement(RepoBar, {
     demo: false,
+    analysis: {
+      analysis_id: 'analysis_' + '0'.repeat(32),
+      repository_path: 'examples/customer_support_agent',
+      nodes: [
+        { node_id: 'llm_1', function_name: 'call_1', file_path: 'app.py', line_number: 1, current_model: 'm', call_signature: '', model_resolution: 'literal', model_reference: null, model_references: [], prompt_resolution: 'literal', prompt_reference: null, prompt_references: [], schema_resolution: 'missing', schema_reference: null, schema_references: [], limited_schema_summary: null },
+      ],
+      graph_edges: [],
+      scanned_files_count: 1,
+      discovered_files_count: 1,
+      total_source_bytes_read: 100,
+      detected_framework: 'OpenAI SDK',
+      data_source: 'live',
+      scan_complete: true,
+      graph_complete: true,
+      complete: true,
+      scan_diagnostics: [],
+      graph_diagnostics: [],
+      schema_version: 'cascaderouter.scan.v1',
+      timestamp: '2026-10-31T12:00:00Z',
+    },
     onAnalysis: () => {},
-    onSelect: () => {},
-    step: 'scan',
-    autoFocusPath: false,
+    callSearch: '',
+    onCallSearchChange: () => {},
   }));
-  assert.match(html, /Scan repository/);
-});
-
-test('enhanced UI/UX: policy tab provides Download YAML and Copy actions', () => {
-  const html = renderToStaticMarkup(React.createElement(RightPane, {
-    demo: false,
-    step: 'recommend',
-    onOptimization: () => {},
-  }));
-  assert.match(html, /Recommendation/);
-});
-
-test('enhanced UI/UX: sidebar navigation renders all key developer destinations', () => {
-  const html = renderToStaticMarkup(React.createElement(Sidebar, {
-    currentView: 'home',
-    onSelectView: () => {},
-    onOpenTour: () => {},
-    onOpenSettings: () => {},
-    onOpenTerms: () => {},
-    collapsed: false,
-    onToggleCollapse: () => {},
-    callCount: 3,
-  }));
-  assert.match(html, /Overview/);
-  assert.match(html, /Workbench/);
-  assert.match(html, /FinOps Analytics/);
-  assert.match(html, /How It Works/);
-  assert.match(html, /Security &amp; Terms|Security & Terms/);
-  assert.match(html, /Settings/);
-  assert.match(html, /3/); // Badge
-});
-
-test('enhanced UI/UX: settings modal provides theme selector, Nebius API key and safety checks', () => {
-  const html = renderToStaticMarkup(React.createElement(SettingsModal, {
-    onClose: () => {},
-    currentTheme: 'dark',
-    onThemeChange: () => {},
-    isLiveNebius: false,
-  }));
-  assert.match(html, /Compiler Settings &amp; Preferences|Compiler Settings & Preferences/);
-  assert.match(html, /Dark Theme/);
-  assert.match(html, /Light Theme/);
-  assert.match(html, /System Default/);
-  assert.match(html, /General &amp; Theme|General & Theme/);
-  assert.match(html, /Nebius &amp; Hardware|Nebius & Hardware/);
-  assert.match(html, /Safety &amp; Backups|Safety & Backups/);
-});
-
-test('enhanced UI/UX: terms modal displays zero-code-execution guarantee and data sovereignty', () => {
-  const html = renderToStaticMarkup(React.createElement(TermsModal, {
-    onClose: () => {},
-  }));
-  assert.match(html, /Security Policy &amp; Terms of Service|Security Policy & Terms of Service/);
-  assert.match(html, /Zero Code Execution Guarantee/);
-  assert.match(html, /Data Sovereignty &amp; Sovereign Inference|Data Sovereignty & Sovereign Inference/);
-  assert.match(html, /Non-Destructive Atomic Patching &amp; Rollback|Non-Destructive Atomic Patching & Rollback/);
-  assert.match(html, /MIT License/);
-});
-
-test('enhanced UI/UX: tour modal provides 4-step interactive compiler walkthrough', () => {
-  const html = renderToStaticMarkup(React.createElement(TourModal, {
-    onClose: () => {},
-    onLaunchDemo: () => {},
-  }));
-  assert.match(html, /How CascadeRouter Works/);
-  assert.match(html, /The FinOps Crisis/);
-  assert.match(html, /Why Developers Burn 80% of Their AI Budget/);
-});
-
-test('enhanced UI/UX: analytics screen renders KPI cards, ROI calculator and pricing matrix', () => {
-  const html = renderToStaticMarkup(React.createElement(AnalyticsScreen, {
-    onGoToWorkbench: () => {},
-  }));
-  assert.match(html, /FinOps Economics &amp; Latency Ledger|FinOps Economics & Latency Ledger/);
-  assert.match(html, /Inference Cost Reduction/);
-  assert.match(html, /Interactive Enterprise Savings Calculator/);
-  assert.match(html, /Official Nebius Token Factory &amp; NVIDIA Pricing Matrix|Official Nebius Token Factory & NVIDIA Pricing Matrix/);
-  assert.match(html, /meta-llama\/Meta-Llama-3\.1-8B-Instruct/);
-  assert.match(html, /nvidia\/Llama-3\.1-Nemotron-70B-Instruct/);
-});
-
-test('enhanced UI/UX: workbench panes render contextual step badges for clarity', () => {
-  const repoHtml = renderToStaticMarkup(React.createElement(RepositoryPane, {
-    demo: false,
-    onAnalysis: () => {},
-    onSelect: () => {},
-    step: 'scan',
-  }));
-  assert.match(repoHtml, /Step 1: Scan &amp; DAG|Step 1: Scan & DAG/);
-
-  const benchHtml = renderToStaticMarkup(React.createElement(BenchmarkPane, {
-    demo: false,
-    onJob: () => {},
-    step: 'scan',
-  }));
-  assert.match(benchHtml, /Step 2: Empirical Benchmark/);
-
-  const rightHtml = renderToStaticMarkup(React.createElement(RightPane, {
-    demo: false,
-    step: 'scan',
-    onOptimization: () => {},
-  }));
-  assert.match(rightHtml, /Step 3 &amp; 4: FinOps &amp; Patch|Step 3 & 4: FinOps & Patch/);
+  assert.match(html, /examples\/customer_support_agent/);
+  assert.match(html, /1 file scanned, 1 LLM call found, OpenAI SDK/);
+  assert.match(html, /Scan again/);
+  assert.ok(!html.includes('Search calls…'), 'Search field must be hidden when calls <= 8');
 });

@@ -1,5 +1,6 @@
 import type { ApiFailure } from '../../services/transport.ts';
 import { homeIllustrationFixture } from '../../services/homeIllustration.ts';
+import { TierBoard } from '../board/TierBoard.tsx';
 
 export interface HomeScreenProps {
   onTrySampleAgent: () => void;
@@ -29,7 +30,7 @@ export function HomeScreen({
       <div className="home-layout">
         {/* Left Column */}
         <section className="home-col-left" aria-labelledby="home-headline">
-          <h1 id="home-headline" className="home-headline">
+          <h1 id="home-headline" className="home-headline" style={{ fontFamily: 'var(--font-serif)', fontSize: '28px', fontWeight: 600, lineHeight: 1.25 }}>
             Pay frontier-model prices only where you need them.
           </h1>
 
@@ -103,78 +104,28 @@ export function HomeScreen({
           </div>
         </section>
 
-        {/* Right Column: Example Card */}
-        <section className="home-col-right" aria-labelledby="example-card-heading">
-          <div className="example-card">
-            {/* Card Header */}
-            <div className="example-card-header">
-              <h2 id="example-card-heading" className="example-card-title">
-                {illustration.title}
-              </h2>
-              <span className="example-card-badge" data-testid="example-mandatory-label">
-                {exampleLabel}
-              </span>
-            </div>
+        {/* Right Column: Signature TierBoard Route Board */}
+        <section className="home-col-right" aria-labelledby="tier-board-heading">
+          <div className="home-board-wrapper" style={{ background: 'var(--sheet)', border: '1px solid var(--rule)', borderRadius: 'var(--r-sheet)', overflow: 'hidden', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' }}>
+            <TierBoard
+              isIllustration={true}
+              illustrationCalls={illustration.boardCalls}
+              mandatoryLabel={exampleLabel}
+            />
 
-            {/* Three call rows separated by hairlines */}
-            <div className="example-calls">
-              {illustration.calls.map(call => (
-                <div key={call.name} className="example-call-row">
-                  <div className="example-call-title-row">
-                    <span className="example-call-name">{call.name}</span>
-                    <span className={`chip ${call.chip.kind === 'gain' ? 'chip-gain' : 'chip-neutral'}`}>
-                      {call.chip.text}
-                    </span>
-                  </div>
-
-                  {call.now && call.recommended ? (
-                    <div className="example-cost-lines">
-                      <div className="example-cost-line">
-                        <span className="example-cost-label">{call.now.label}</span>
-                        <div
-                          className="example-cost-bar bar-now"
-                          style={{ width: `${call.now.barWidthPx}px` }}
-                          aria-hidden="true"
-                        />
-                        <span className="example-cost-val num">{call.now.cost}</span>
-                      </div>
-                      <div className="example-cost-line">
-                        <span className="example-cost-label">{call.recommended.label}</span>
-                        <div
-                          className="example-cost-bar bar-rec"
-                          style={{ width: `${call.recommended.barWidthPx}px` }}
-                          aria-hidden="true"
-                        />
-                        <span className="example-cost-val num">{call.recommended.cost}</span>
-                      </div>
-                    </div>
-                  ) : (
-                    <p className="example-call-note">
-                      {call.note}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {/* Closing sentence */}
-            <div className="example-card-summary">
-              {illustration.summarySentence}
-            </div>
-
-            {/* Footer line */}
-            <div className="example-card-footer">
-              {illustration.footerNote}
+            {/* Explanatory summary footer line */}
+            <div style={{ padding: '12px 16px', background: 'var(--paper)', borderTop: '1px solid var(--rule)', fontSize: 'var(--fs-xs)', color: 'var(--muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>{illustration.summarySentence}</span>
+              <span style={{ fontSize: '11px' }}>{illustration.footerNote}</span>
             </div>
           </div>
         </section>
       </div>
 
       {/* Small centred footer line */}
-      <footer className="home-footer">
+      <footer className="home-footer" style={{ textAlign: 'center', padding: '24px 0', fontSize: 'var(--fs-xs)', color: 'var(--muted)' }}>
         CascadeRouter — local, verifiable LLM routing
       </footer>
     </div>
   );
 }
-

@@ -1,3 +1,81 @@
 import { parseContract } from './contractCheck.ts';
 // Explicit illustrative fixture. Never an API fallback or backend authorization.
-export const demoScan = parseContract('Scan', {"schema_version": "cascaderouter.scan.v1", "analysis_id": "analysis_5dca3dad3cee4697b67de955d385d92f", "timestamp": "2026-10-29T08:37:16.525480Z", "repository_path": "demo/repository", "nodes": [{"file_path": "app.py", "line_number": 3, "column_number": 11, "node_id": "llm_4d6f1d6629a81593fae3739f", "current_model": "local/baseline", "call_signature": "openai.OpenAI.chat.completions.create(...)", "function_name": null, "model_resolution": "literal", "model_reference": null, "model_references": [], "prompt_resolution": "literal", "prompt_reference": null, "prompt_references": [], "schema_resolution": "missing", "schema_reference": null, "schema_references": [], "limited_schema_summary": null}], "graph_edges": [], "scanned_files_count": 1, "discovered_files_count": 1, "total_source_bytes_read": 123, "detected_framework": "OpenAI SDK", "data_source": "mock", "scan_complete": true, "graph_complete": true, "complete": true, "scan_diagnostics": [], "graph_diagnostics": []});
+export const demoScan = parseContract('Scan', {
+  "schema_version": "cascaderouter.scan.v1",
+  "analysis_id": "analysis_5dca3dad3cee4697b67de955d385d92f",
+  "timestamp": "2026-10-29T08:37:16.525480Z",
+  "repository_path": "examples/customer_support_agent",
+  "nodes": [
+    {
+      "file_path": "support_agent.py",
+      "line_number": 14,
+      "column_number": 11,
+      "node_id": "llm_4d6f1d6629a81593fae3739f",
+      "current_model": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+      "call_signature": "openai.OpenAI.chat.completions.create(...)",
+      "function_name": "triage_intent",
+      "model_resolution": "literal",
+      "model_reference": null,
+      "model_references": [],
+      "prompt_resolution": "literal",
+      "prompt_reference": null,
+      "prompt_references": [],
+      "schema_resolution": "missing",
+      "schema_reference": null,
+      "schema_references": [],
+      "limited_schema_summary": null
+    },
+    {
+      "file_path": "support_agent.py",
+      "line_number": 28,
+      "column_number": 11,
+      "node_id": "llm_5e7a2b3318b72481eba2841a",
+      "current_model": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+      "call_signature": "openai.OpenAI.chat.completions.create(...)",
+      "function_name": "extract_context",
+      "model_resolution": "literal",
+      "model_reference": null,
+      "model_references": [],
+      "prompt_resolution": "literal",
+      "prompt_reference": null,
+      "prompt_references": [],
+      "schema_resolution": "missing",
+      "schema_reference": null,
+      "schema_references": [],
+      "limited_schema_summary": null
+    },
+    {
+      "file_path": "support_agent.py",
+      "line_number": 42,
+      "column_number": 11,
+      "node_id": "llm_6f8b3c4429c83592fcb3952b",
+      "current_model": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+      "call_signature": "openai.OpenAI.chat.completions.create(...)",
+      "function_name": "draft_reply",
+      "model_resolution": "literal",
+      "model_reference": null,
+      "model_references": [],
+      "prompt_resolution": "literal",
+      "prompt_reference": null,
+      "prompt_references": [],
+      "schema_resolution": "missing",
+      "schema_reference": null,
+      "schema_references": [],
+      "limited_schema_summary": null
+    }
+  ],
+  "graph_edges": [
+    ["llm_4d6f1d6629a81593fae3739f", "llm_5e7a2b3318b72481eba2841a"],
+    ["llm_5e7a2b3318b72481eba2841a", "llm_6f8b3c4429c83592fcb3952b"]
+  ],
+  "scanned_files_count": 1,
+  "discovered_files_count": 1,
+  "total_source_bytes_read": 1420,
+  "detected_framework": "OpenAI SDK",
+  "data_source": "mock",
+  "scan_complete": true,
+  "graph_complete": true,
+  "complete": true,
+  "scan_diagnostics": [],
+  "graph_diagnostics": []
+});
