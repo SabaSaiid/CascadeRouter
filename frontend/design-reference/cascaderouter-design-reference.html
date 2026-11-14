@@ -1,0 +1,1365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CascadeRouter IDE – 5 Reference Frames (1440px)</title>
+  <style>
+    /* Design Tokens */
+    :root {
+      --paper: #F6F7F9;
+      --sheet: #FFFFFF;
+      --ink: #151A23;
+      --muted: #5B6575;
+      --rule: #DFE3EA;
+      --field-border: #C9CFD9;
+      --navy: #1E2F5C;
+      --navy-hover: #263d75;
+      --navy-text: #FFFFFF;
+      --gain: #0E7A55;
+      --gain-tint: #E7F4EE;
+      --loss: #B3261E;
+      --loss-tint: #FBEAE8;
+      --caution: #8A5A00;
+      --caution-tint: #FBF1DC;
+      --chip-bg: #EEF1F5;
+      --ring-untested: #9AA4B5;
+      --active-nav-bg: #EEF1F8;
+
+      --font-sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+      --font-mono: "IBM Plex Mono", monospace;
+      --font-serif: "Source Serif 4", Georgia, serif;
+
+      --r-chip: 4px;
+      --r-ctrl: 6px;
+      --r-sheet: 10px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0B0E14;
+      color: var(--ink);
+      font-family: var(--font-sans);
+      padding: 40px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 60px;
+    }
+
+    .frame-container {
+      width: 1440px;
+      height: 900px;
+      background: var(--paper);
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .frame-label {
+      color: #9AA4B5;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      margin-bottom: 12px;
+      width: 1440px;
+      text-transform: uppercase;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    /* Layout inside 1440px frame */
+    .frame-shell {
+      display: flex;
+      width: 1440px;
+      height: 900px;
+      background: var(--paper);
+    }
+
+    /* 232px Sidebar */
+    .sidebar {
+      width: 232px;
+      min-width: 232px;
+      height: 100%;
+      background: var(--sheet);
+      border-right: 1px solid var(--rule);
+      display: flex;
+      flex-direction: column;
+      padding: 16px 0;
+    }
+
+    .sidebar-header {
+      padding: 0 16px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .wordmark {
+      font-family: var(--font-serif);
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+
+    .pipeline-block {
+      padding: 4px 16px 12px;
+    }
+    .pipeline-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .pipeline-step {
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      border-radius: var(--r-ctrl);
+    }
+    .pipeline-step-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot.done { background: var(--gain); width: 7px; height: 7px; }
+    .dot.current { background: transparent; border: 2px solid var(--navy); width: 8px; height: 8px; }
+    .dot.pending { background: var(--ring-untested); width: 6px; height: 6px; }
+    .step-name { font-size: 13px; font-weight: 500; color: var(--ink); }
+    .step-summary { font-size: 11px; color: var(--muted); margin-left: 16px; }
+    .progress-bar-4px {
+      margin-top: 4px;
+      margin-left: 16px;
+      height: 4px;
+      background: var(--rule);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: var(--navy);
+      border-radius: 2px;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--rule);
+      margin: 8px 16px 12px;
+    }
+
+    .nav-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 0 8px;
+    }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px 8px 9px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--ink);
+      border-left: 3px solid transparent;
+      border-radius: 0 var(--r-ctrl) var(--r-ctrl) 0;
+    }
+    .nav-item.active {
+      background: var(--active-nav-bg);
+      border-left: 3px solid var(--navy);
+      font-weight: 600;
+    }
+    .nav-count {
+      font-variant-numeric: tabular-nums;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 16px 8px 0;
+      border-top: 1px solid var(--rule);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .version-note {
+      font-size: 11px;
+      color: var(--muted);
+      padding: 4px 12px;
+    }
+
+    /* 56px Top Bar */
+    .topbar {
+      height: 56px;
+      background: var(--sheet);
+      border-bottom: 1px solid var(--rule);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      width: 100%;
+    }
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .topbar-title {
+      font-family: var(--font-serif);
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .repo-chip {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--chip-bg);
+      color: var(--ink);
+      padding: 2px 8px;
+      border-radius: var(--r-chip);
+      border: 1px solid var(--rule);
+    }
+
+    .topbar-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .topbar-activity {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--navy);
+      font-weight: 500;
+    }
+    .activity-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--navy);
+      animation: pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(0.85); opacity: 0.5; }
+      50% { transform: scale(1.2); opacity: 1; }
+    }
+    .chip-provenance {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: var(--r-chip);
+      background: var(--gain-tint);
+      color: var(--gain);
+      border: 1px solid color-mix(in srgb, var(--gain) 30%, transparent);
+    }
+    .status-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .btn-link {
+      background: none;
+      border: none;
+      color: var(--navy);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .btn-primary {
+      background: var(--navy);
+      color: #fff;
+      border: none;
+      border-radius: var(--r-ctrl);
+      padding: 8px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .btn-outline {
+      background: var(--sheet);
+      border: 1px solid var(--field-border);
+      color: var(--ink);
+      border-radius: var(--r-ctrl);
+      padding: 6px 14px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .main-viewport {
+      flex: 1;
+      height: 900px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+    .view-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 24px;
+    }
+
+    /* Notice Toast */
+    .notice-card {
+      position: absolute;
+      top: 64px;
+      right: 24px;
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      border-left: 3px solid var(--gain);
+      border-radius: var(--r-ctrl);
+      padding: 10px 14px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      width: 360px;
+      z-index: 100;
+    }
+
+    /* Tier Board */
+    .tier-board-box {
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      border-radius: var(--r-sheet);
+      margin-bottom: 20px;
+      overflow: hidden;
+    }
+    .tier-board-head {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--rule);
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+    .tier-board-title {
+      font-family: var(--font-serif);
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .tier-board-cols {
+      display: flex;
+      border-bottom: 1px solid var(--rule);
+      background: var(--paper);
+    }
+    .col-meta { width: 240px; padding: 10px 16px; font-size: 12px; color: var(--muted); font-weight: 600; }
+    .col-model { flex: 1; text-align: center; padding: 10px 12px; border-left: 1px solid var(--rule); }
+    .model-name { font-weight: 600; font-size: 13px; color: var(--ink); }
+    .model-price { font-family: var(--font-mono); font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    .board-row {
+      display: flex;
+      height: 72px;
+      border-bottom: 1px solid var(--rule);
+      align-items: center;
+    }
+    .row-meta { width: 240px; padding: 0 16px; display: flex; flex-direction: column; gap: 3px; }
+    .call-name { font-weight: 600; font-size: 13px; color: var(--ink); }
+    .call-loc { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+    .row-track { flex: 1; height: 100%; position: relative; display: flex; align-items: center; }
+
+    /* Bottom split */
+    .bottom-split {
+      display: flex;
+      gap: 20px;
+      height: 440px;
+    }
+    .bottom-left { flex: 1; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r-sheet); overflow: hidden; }
+    .bottom-right { width: 420px; background: var(--sheet); border: 1px solid var(--rule); border-radius: var(--r-sheet); overflow: hidden; display: flex; flex-direction: column; }
+
+    /* Diff box */
+    .diff-box {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      border-radius: var(--r-ctrl);
+      padding: 10px;
+      line-height: 1.5;
+    }
+
+    /* Settings 220px column */
+    .settings-layout {
+      max-width: 900px;
+      background: var(--sheet);
+      border: 1px solid var(--rule);
+      border-radius: var(--r-sheet);
+      overflow: hidden;
+      margin-top: 10px;
+    }
+    .settings-row {
+      display: flex;
+      padding: 20px 24px;
+      gap: 28px;
+    }
+    .settings-label-220 {
+      width: 220px;
+      flex-shrink: 0;
+    }
+    .settings-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .settings-hr {
+      border: none;
+      border-top: 1px solid var(--rule);
+      margin: 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ========================================================================= -->
+  <!-- FRAME 1: HOME (FIRST RUN)                                                 -->
+  <!-- ========================================================================= -->
+  <div>
+    <div class="frame-label">
+      <span>Frame 1: Home (First Run)</span>
+      <span>1440 × 900</span>
+    </div>
+    <div class="frame-container">
+      <div class="frame-shell">
+        <!-- Sidebar 232px -->
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--navy)" stroke-width="2.2">
+              <polyline points="7 4 12 9 7 14" /><polyline points="13 10 18 15 13 20" />
+              <circle cx="5" cy="19" r="1.5" fill="var(--gain)" stroke="var(--gain)" />
+            </svg>
+            <span class="wordmark">CascadeRouter</span>
+          </div>
+
+          <div class="pipeline-block">
+            <div class="pipeline-title">Pipeline</div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot current"></span>
+                <span class="step-name">Scan</span>
+              </div>
+              <span class="step-summary">Pick a repository</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot pending"></span>
+                <span class="step-name">Benchmark</span>
+              </div>
+              <span class="step-summary">Not started</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot pending"></span>
+                <span class="step-name">Recommend</span>
+              </div>
+              <span class="step-summary">Waiting for results</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot pending"></span>
+                <span class="step-name">Patch</span>
+              </div>
+              <span class="step-summary">Not started</span>
+            </div>
+          </div>
+
+          <hr class="divider">
+
+          <div class="nav-list">
+            <div class="nav-item active">Home</div>
+            <div class="nav-item">Workbench</div>
+            <div class="nav-item">
+              <span>Recent results</span>
+              <span class="nav-count">(0)</span>
+            </div>
+          </div>
+
+          <div class="sidebar-footer">
+            <div class="nav-list">
+              <div class="nav-item">Settings</div>
+              <div class="nav-item">How it works</div>
+              <div class="nav-item">Security and terms</div>
+            </div>
+            <div class="version-note">Version 1.0, local backend</div>
+          </div>
+        </aside>
+
+        <!-- Main Viewport -->
+        <div class="main-viewport">
+          <header class="topbar">
+            <div class="topbar-left">
+              <h1 class="topbar-title">Home</h1>
+            </div>
+            <div class="topbar-right">
+              <div class="status-group">
+                <span class="dot" style="background:var(--ring-untested)"></span>
+                <span>Backend not checked</span>
+                <button class="btn-link">Check</button>
+              </div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                <input type="checkbox"> Sample data
+              </label>
+            </div>
+          </header>
+
+          <div class="view-content" style="display:flex;gap:36px;align-items:flex-start;padding:36px 40px;">
+            <div style="flex:1;max-width:540px;">
+              <h2 style="font-family:var(--font-serif);font-size:28px;line-height:1.25;margin-bottom:12px;">
+                Pay frontier-model prices only where you need them.
+              </h2>
+              <p style="font-size:14px;color:var(--muted);line-height:1.55;margin-bottom:24px;">
+                CascadeRouter reads your Python AI app, tests cheaper NVIDIA Nemotron models on each LLM call, and proposes one-line changes with automatic .bak backups.
+              </p>
+
+              <div style="display:flex;gap:12px;margin-bottom:24px;">
+                <button class="btn-primary" style="padding:10px 20px;font-size:14px;">Try the sample agent</button>
+                <button class="btn-outline" style="padding:10px 20px;font-size:14px;">Scan my own repository</button>
+              </div>
+
+              <div style="font-size:12px;color:var(--muted);margin-bottom:32px;">
+                Your code is never run. • Nothing changes until you apply. • Every change is backed up.
+              </div>
+
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+                <div style="background:var(--sheet);border:1px solid var(--rule);padding:14px;border-radius:var(--r-ctrl);">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px;">1. Scan</div>
+                  <div style="font-size:12px;color:var(--muted);line-height:1.4;">Finds every LLM call in your code without running it.</div>
+                </div>
+                <div style="background:var(--sheet);border:1px solid var(--rule);padding:14px;border-radius:var(--r-ctrl);">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px;">2. Benchmark</div>
+                  <div style="font-size:12px;color:var(--muted);line-height:1.4;">Runs your test cases on each candidate model and records cost and speed.</div>
+                </div>
+                <div style="background:var(--sheet);border:1px solid var(--rule);padding:14px;border-radius:var(--r-ctrl);">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px;">3. Recommend</div>
+                  <div style="font-size:12px;color:var(--muted);line-height:1.4;">Picks the cheapest model that passes every check.</div>
+                </div>
+                <div style="background:var(--sheet);border:1px solid var(--rule);padding:14px;border-radius:var(--r-ctrl);">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px;">4. Patch</div>
+                  <div style="font-size:12px;color:var(--muted);line-height:1.4;">Shows the one-line change. A .bak backup is saved first.</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Example TierBoard card -->
+            <div style="flex:1;background:var(--sheet);border:1px solid var(--rule);border-radius:var(--r-sheet);padding:20px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <span style="font-family:var(--font-serif);font-size:16px;font-weight:600;">Where each call runs</span>
+                <span class="chip-provenance" style="background:var(--caution-tint);color:var(--caution);border-color:color-mix(in srgb,var(--caution)30%,transparent)">
+                  Example, not your data
+                </span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:12px;">
+                <div style="border:1px solid var(--rule);border-radius:var(--r-ctrl);padding:12px;">
+                  <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:500;">
+                    <span>Triage intent</span>
+                    <span style="color:var(--gain);font-weight:600;">Ultra to Nano (93% less)</span>
+                  </div>
+                </div>
+                <div style="border:1px solid var(--rule);border-radius:var(--r-ctrl);padding:12px;">
+                  <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:500;">
+                    <span>Extract context</span>
+                    <span style="color:var(--gain);font-weight:600;">Ultra to Lightning (85% less)</span>
+                  </div>
+                </div>
+                <div style="border:1px solid var(--rule);border-radius:var(--r-ctrl);padding:12px;">
+                  <div style="display:flex;justify-content:space-between;font-size:13px;font-weight:500;">
+                    <span>Draft reply</span>
+                    <span style="color:var(--muted);">Stays on Ultra (No cheaper model passed)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- FRAME 2: SCANNED (UNTESTED WORKBENCH)                                     -->
+  <!-- ========================================================================= -->
+  <div>
+    <div class="frame-label">
+      <span>Frame 2: Scanned (Untested Workbench)</span>
+      <span>1440 × 900</span>
+    </div>
+    <div class="frame-container">
+      <div class="frame-shell">
+        <!-- Sidebar 232px -->
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <span class="wordmark">CascadeRouter</span>
+          </div>
+
+          <div class="pipeline-block">
+            <div class="pipeline-title">Pipeline</div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot done"></span>
+                <span class="step-name">Scan</span>
+              </div>
+              <span class="step-summary">3 calls found</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot current"></span>
+                <span class="step-name">Benchmark</span>
+              </div>
+              <span class="step-summary">Not started</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot pending"></span>
+                <span class="step-name">Recommend</span>
+              </div>
+              <span class="step-summary">Waiting for results</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot pending"></span>
+                <span class="step-name">Patch</span>
+              </div>
+              <span class="step-summary">Not started</span>
+            </div>
+          </div>
+
+          <hr class="divider">
+
+          <div class="nav-list">
+            <div class="nav-item">Home</div>
+            <div class="nav-item active">Workbench</div>
+            <div class="nav-item">
+              <span>Recent results</span>
+              <span class="nav-count">(1)</span>
+            </div>
+          </div>
+
+          <div class="sidebar-footer">
+            <div class="nav-list">
+              <div class="nav-item">Settings</div>
+              <div class="nav-item">How it works</div>
+              <div class="nav-item">Security and terms</div>
+            </div>
+            <div class="version-note">Version 1.0, local backend</div>
+          </div>
+        </aside>
+
+        <!-- Main Viewport -->
+        <div class="main-viewport">
+          <header class="topbar">
+            <div class="topbar-left">
+              <h1 class="topbar-title">Workbench</h1>
+              <span class="repo-chip">customer_support_agent</span>
+            </div>
+            <div class="topbar-right">
+              <div class="status-group">
+                <span class="dot done"></span>
+                <span>Backend connected</span>
+                <button class="btn-link">Check</button>
+              </div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                <input type="checkbox"> Sample data
+              </label>
+              <button class="btn-link">Scan again</button>
+            </div>
+          </header>
+
+          <div class="view-content">
+            <!-- RepoBar -->
+            <div style="background:var(--sheet);border:1px solid var(--rule);border-radius:var(--r-ctrl);padding:10px 16px;display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+              <span style="font-family:var(--font-mono);font-size:12px;color:var(--muted);">examples/customer_support_agent</span>
+              <span style="font-size:12px;color:var(--muted);">1 file scanned, 3 LLM calls found, OpenAI SDK</span>
+            </div>
+
+            <!-- TierBoard Untested -->
+            <div class="tier-board-box">
+              <div class="tier-board-head">
+                <span class="tier-board-title">Where each call runs</span>
+                <span style="font-size:12px;color:var(--muted);">Cheaper tiers on the left. Ring: runs here today.</span>
+              </div>
+              <div class="tier-board-cols">
+                <div class="col-meta">Call &amp; location</div>
+                <div class="col-model"><div class="model-name">Nano</div><div class="model-price">$0.03 in / $0.09 out</div></div>
+                <div class="col-model"><div class="model-name">Lightning</div><div class="model-price">$0.06 in / $0.18 out</div></div>
+                <div class="col-model"><div class="model-name">Flash</div><div class="model-price">$0.15 in / $0.30 out</div></div>
+                <div class="col-model"><div class="model-name">Ultra</div><div class="model-price">$0.35 in / $0.40 out</div></div>
+              </div>
+
+              <!-- Rows -->
+              <div class="board-row">
+                <div class="row-meta"><span class="call-name">Triage intent</span><span class="call-loc">support_agent.py:14</span></div>
+                <div class="row-track" style="justify-content:space-around;">
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot current" style="width:14px;height:14px;" title="Runs here today"></span>
+                  <button class="btn-outline" style="position:absolute;right:16px;">Benchmark this call</button>
+                </div>
+              </div>
+              <div class="board-row">
+                <div class="row-meta"><span class="call-name">Extract context</span><span class="call-loc">support_agent.py:28</span></div>
+                <div class="row-track" style="justify-content:space-around;">
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot current" style="width:14px;height:14px;"></span>
+                  <button class="btn-outline" style="position:absolute;right:16px;">Benchmark this call</button>
+                </div>
+              </div>
+              <div class="board-row">
+                <div class="row-meta"><span class="call-name">Draft reply</span><span class="call-loc">support_agent.py:42</span></div>
+                <div class="row-track" style="justify-content:space-around;">
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot current" style="width:14px;height:14px;"></span>
+                  <button class="btn-outline" style="position:absolute;right:16px;">Benchmark this call</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Bottom Split -->
+            <div class="bottom-split">
+              <div class="bottom-left" style="padding:24px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:13px;">
+                Select a call on the board to view comparative benchmarks.
+              </div>
+              <div class="bottom-right" style="padding:24px;">
+                <h3 style="font-family:var(--font-serif);font-size:16px;margin-bottom:12px;">Decision &amp; patch</h3>
+                <p style="font-size:13px;color:var(--muted);">Run a benchmark to see which model each call can move to.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- FRAME 3: BENCHMARKED (COMPLETE RECOMMENDATION)                            -->
+  <!-- ========================================================================= -->
+  <div>
+    <div class="frame-label">
+      <span>Frame 3: Benchmarked (Complete Recommendation)</span>
+      <span>1440 × 900</span>
+    </div>
+    <div class="frame-container">
+      <div class="frame-shell">
+        <!-- Sidebar 232px -->
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <span class="wordmark">CascadeRouter</span>
+          </div>
+
+          <div class="pipeline-block">
+            <div class="pipeline-title">Pipeline</div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot done"></span>
+                <span class="step-name">Scan</span>
+              </div>
+              <span class="step-summary">3 calls found</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot done"></span>
+                <span class="step-name">Benchmark</span>
+              </div>
+              <span class="step-summary">3 of 3 tested</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot done"></span>
+                <span class="step-name">Recommend</span>
+              </div>
+              <span class="step-summary">2 calls can move</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot current"></span>
+                <span class="step-name">Patch</span>
+              </div>
+              <span class="step-summary">Ready to apply</span>
+            </div>
+          </div>
+
+          <hr class="divider">
+
+          <div class="nav-list">
+            <div class="nav-item">Home</div>
+            <div class="nav-item active">Workbench</div>
+            <div class="nav-item">
+              <span>Recent results</span>
+              <span class="nav-count">(1)</span>
+            </div>
+          </div>
+
+          <div class="sidebar-footer">
+            <div class="nav-list">
+              <div class="nav-item">Settings</div>
+              <div class="nav-item">How it works</div>
+              <div class="nav-item">Security and terms</div>
+            </div>
+            <div class="version-note">Version 1.0, local backend</div>
+          </div>
+        </aside>
+
+        <!-- Main Viewport -->
+        <div class="main-viewport">
+          <header class="topbar">
+            <div class="topbar-left">
+              <h1 class="topbar-title">Workbench</h1>
+              <span class="repo-chip">customer_support_agent</span>
+            </div>
+            <div class="topbar-right">
+              <span class="chip-provenance">Recorded run, 14 Nov 2026</span>
+              <div class="status-group">
+                <span class="dot done"></span>
+                <span>Backend connected</span>
+                <button class="btn-link">Check</button>
+              </div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                <input type="checkbox"> Sample data
+              </label>
+              <button class="btn-link">Scan again</button>
+            </div>
+          </header>
+
+          <div class="view-content">
+            <!-- TierBoard with green passing stations & routing arc -->
+            <div class="tier-board-box">
+              <div class="tier-board-head">
+                <span class="tier-board-title">Where each call runs</span>
+                <span style="font-size:12px;color:var(--muted);">Dashed arc: recommended move with savings percentage.</span>
+              </div>
+              <div class="tier-board-cols">
+                <div class="col-meta">Call &amp; location</div>
+                <div class="col-model"><div class="model-name">Nano</div><div class="model-price">$0.03 in / $0.09 out</div></div>
+                <div class="col-model"><div class="model-name">Lightning</div><div class="model-price">$0.06 in / $0.18 out</div></div>
+                <div class="col-model"><div class="model-name">Flash</div><div class="model-price">$0.15 in / $0.30 out</div></div>
+                <div class="col-model"><div class="model-name">Ultra</div><div class="model-price">$0.35 in / $0.40 out</div></div>
+              </div>
+
+              <!-- Row 1: Arc from Ultra to Nano (93% less) -->
+              <div class="board-row" style="background:#F4F9F6;">
+                <div class="row-meta"><span class="call-name">Triage intent</span><span class="call-loc">support_agent.py:14</span></div>
+                <div class="row-track">
+                  <svg style="position:absolute;left:0;top:0;width:100%;height:100%;" preserveAspectRatio="none">
+                    <line x1="12.5%" y1="36" x2="87.5%" y2="36" stroke="var(--rule)" stroke-width="2" />
+                    <path d="M 87.5% 26 C 68.75% 8, 31.25% 8, 12.5% 26" fill="none" stroke="var(--gain)" stroke-width="2" stroke-dasharray="4 3" />
+                  </svg>
+                  <div style="position:absolute;top:2px;left:50%;transform:translateX(-50%);background:var(--gain-tint);color:var(--gain);padding:1px 6px;border-radius:3px;border:1px solid var(--gain);font-size:10px;font-weight:600;">
+                    93% less
+                  </div>
+                  <div style="display:flex;width:100%;justify-content:space-around;position:relative;z-index:2;">
+                    <span class="dot done" style="width:16px;height:16px;background:var(--gain);" title="Pick: Nano"></span>
+                    <span class="dot done" style="width:14px;height:14px;"></span>
+                    <span class="dot done" style="width:14px;height:14px;"></span>
+                    <span class="dot current" style="width:16px;height:16px;" title="Now: Ultra"></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Row 2: Arc to Lightning (85% less) -->
+              <div class="board-row">
+                <div class="row-meta"><span class="call-name">Extract context</span><span class="call-loc">support_agent.py:28</span></div>
+                <div class="row-track">
+                  <svg style="position:absolute;left:0;top:0;width:100%;height:100%;" preserveAspectRatio="none">
+                    <line x1="12.5%" y1="36" x2="87.5%" y2="36" stroke="var(--rule)" stroke-width="2" />
+                    <path d="M 87.5% 26 C 75% 10, 50% 10, 37.5% 26" fill="none" stroke="var(--gain)" stroke-width="2" stroke-dasharray="4 3" />
+                  </svg>
+                  <div style="position:absolute;top:2px;left:62.5%;transform:translateX(-50%);background:var(--gain-tint);color:var(--gain);padding:1px 6px;border-radius:3px;border:1px solid var(--gain);font-size:10px;font-weight:600;">
+                    85% less
+                  </div>
+                  <div style="display:flex;width:100%;justify-content:space-around;position:relative;z-index:2;">
+                    <span class="dot" style="width:14px;height:14px;background:#fff;border:1.5px solid var(--loss);color:var(--loss);display:flex;align-items:center;justify-content:center;font-size:9px;">✕</span>
+                    <span class="dot done" style="width:16px;height:16px;"></span>
+                    <span class="dot done" style="width:14px;height:14px;"></span>
+                    <span class="dot current" style="width:16px;height:16px;"></span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Row 3: Stays on Ultra -->
+              <div class="board-row">
+                <div class="row-meta"><span class="call-name">Draft reply</span><span class="call-loc">support_agent.py:42</span></div>
+                <div class="row-track">
+                  <span style="position:absolute;width:100%;text-align:center;top:8px;font-size:11px;color:var(--muted);">
+                    No cheaper tier passed every check
+                  </span>
+                  <div style="display:flex;width:100%;justify-content:space-around;position:relative;z-index:2;">
+                    <span class="dot" style="width:14px;height:14px;background:#fff;border:1.5px solid var(--loss);">✕</span>
+                    <span class="dot" style="width:14px;height:14px;background:#fff;border:1.5px solid var(--loss);">✕</span>
+                    <span class="dot" style="width:14px;height:14px;background:#fff;border:1.5px solid var(--loss);">✕</span>
+                    <span class="dot done" style="width:16px;height:16px;"></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Bottom Split -->
+            <div class="bottom-split">
+              <!-- DetailTable -->
+              <div class="bottom-left" style="padding:16px 20px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+                  <h3 style="font-family:var(--font-serif);font-size:16px;">Triage intent, in detail</h3>
+                  <span style="font-size:12px;color:var(--muted);">2 test cases</span>
+                </div>
+                <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                  <thead>
+                    <tr style="border-bottom:1px solid var(--rule);color:var(--muted);text-align:left;">
+                      <th style="padding:8px;">Model</th>
+                      <th style="padding:8px;">Cost / run</th>
+                      <th style="padding:8px;">Latency</th>
+                      <th style="padding:8px;">Checks</th>
+                      <th style="padding:8px;">Result</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style="background:var(--gain-tint);border-bottom:1px solid var(--rule);">
+                      <td style="padding:8px;font-weight:600;">Nano</td>
+                      <td style="padding:8px;">$0.000030</td>
+                      <td style="padding:8px;">140ms</td>
+                      <td style="padding:8px;">2/2 passed</td>
+                      <td style="padding:8px;color:var(--gain);font-weight:600;">Pick (93% less)</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--rule);">
+                      <td style="padding:8px;">Lightning</td>
+                      <td style="padding:8px;">$0.000052</td>
+                      <td style="padding:8px;">190ms</td>
+                      <td style="padding:8px;">2/2 passed</td>
+                      <td style="padding:8px;color:var(--gain);">Passed</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid var(--rule);">
+                      <td style="padding:8px;">Flash</td>
+                      <td style="padding:8px;">$0.000120</td>
+                      <td style="padding:8px;">260ms</td>
+                      <td style="padding:8px;">2/2 passed</td>
+                      <td style="padding:8px;color:var(--gain);">Passed</td>
+                    </tr>
+                    <tr>
+                      <td style="padding:8px;">Ultra (Baseline)</td>
+                      <td style="padding:8px;">$0.000459</td>
+                      <td style="padding:8px;">420ms</td>
+                      <td style="padding:8px;">2/2 passed</td>
+                      <td style="padding:8px;color:var(--muted);">Now</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- DecisionPanel -->
+              <div class="bottom-right" style="padding:18px 20px;gap:12px;">
+                <h3 style="font-family:var(--font-serif);font-size:16px;">Decision &amp; patch</h3>
+                <div style="font-family:var(--font-serif);font-size:16px;font-weight:600;color:var(--gain);">
+                  Move triage_intent to Nano and pay 93% less.
+                </div>
+                <div style="font-size:12px;color:var(--muted);">
+                  Per run, this call drops from $0.000459 to $0.000030. 2 calls can move.
+                </div>
+
+                <div class="diff-box">
+                  <div style="color:var(--muted);">--- support_agent.py (original)</div>
+                  <div style="color:var(--muted);">+++ support_agent.py (proposed)</div>
+                  <div>@@ -14,1 +14,1 @@</div>
+                  <div style="background:var(--loss-tint);color:var(--loss);">- model="meta-llama/Meta-Llama-3.1-70B-Instruct",</div>
+                  <div style="background:var(--gain-tint);color:var(--gain);">+ model="nvidia/NVIDIA-Nemotron-3-Nano-3B-A3B",</div>
+                </div>
+
+                <div style="font-size:11px;color:var(--muted);">
+                  Only the model name changes. Tests on the sample app: not run.
+                </div>
+
+                <button class="btn-primary" style="margin-top:auto;width:100%;padding:10px;">
+                  Apply patch (Saves support_agent.py.bak first)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- FRAME 4: BENCHMARK RUNNING (IN FLIGHT WITH COMPLETION NOTICE)              -->
+  <!-- ========================================================================= -->
+  <div>
+    <div class="frame-label">
+      <span>Frame 4: Benchmark Running (In Flight)</span>
+      <span>1440 × 900</span>
+    </div>
+    <div class="frame-container">
+      <div class="frame-shell">
+        <!-- Sidebar 232px -->
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <span class="wordmark">CascadeRouter</span>
+          </div>
+
+          <div class="pipeline-block">
+            <div class="pipeline-title">Pipeline</div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot done"></span>
+                <span class="step-name">Scan</span>
+              </div>
+              <span class="step-summary">3 calls found</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot current"></span>
+                <span class="step-name">Benchmark</span>
+              </div>
+              <span class="step-summary">2 of 6 tested</span>
+              <div class="progress-bar-4px">
+                <div class="progress-bar-fill" style="width:33%;"></div>
+              </div>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot pending"></span>
+                <span class="step-name">Recommend</span>
+              </div>
+              <span class="step-summary">Waiting for results</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot pending"></span>
+                <span class="step-name">Patch</span>
+              </div>
+              <span class="step-summary">Not started</span>
+            </div>
+          </div>
+
+          <hr class="divider">
+
+          <div class="nav-list">
+            <div class="nav-item">Home</div>
+            <div class="nav-item active">Workbench</div>
+            <div class="nav-item">
+              <span>Recent results</span>
+              <span class="nav-count">(1)</span>
+            </div>
+          </div>
+
+          <div class="sidebar-footer">
+            <div class="nav-list">
+              <div class="nav-item">Settings</div>
+              <div class="nav-item">How it works</div>
+              <div class="nav-item">Security and terms</div>
+            </div>
+            <div class="version-note">Version 1.0, local backend</div>
+          </div>
+        </aside>
+
+        <!-- Main Viewport -->
+        <div class="main-viewport">
+          <header class="topbar">
+            <div class="topbar-left">
+              <h1 class="topbar-title">Workbench</h1>
+              <span class="repo-chip">customer_support_agent</span>
+            </div>
+            <div class="topbar-right">
+              <div class="topbar-activity">
+                <span class="activity-dot"></span>
+                <span>Benchmarking, 2 of 3 calls</span>
+              </div>
+              <div class="status-group">
+                <span class="dot done"></span>
+                <span>Backend connected</span>
+                <button class="btn-link">Check</button>
+              </div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                <input type="checkbox"> Sample data
+              </label>
+              <button class="btn-link">Scan again</button>
+            </div>
+          </header>
+
+          <!-- Completion Notice below top bar on the right -->
+          <div class="notice-card">
+            <span><strong>Triage intent</strong> finished. It can move to <strong>Nano</strong> and save <strong>93%</strong>.</span>
+            <button class="btn-link" style="text-decoration:none;color:var(--muted);">✕</button>
+          </div>
+
+          <div class="view-content">
+            <!-- TierBoard with actively benchmarking node -->
+            <div class="tier-board-box">
+              <div class="tier-board-head">
+                <span class="tier-board-title">Where each call runs</span>
+                <span style="font-size:12px;color:var(--navy);font-weight:500;">Benchmarking in progress…</span>
+              </div>
+              <div class="tier-board-cols">
+                <div class="col-meta">Call &amp; location</div>
+                <div class="col-model"><div class="model-name">Nano</div></div>
+                <div class="col-model"><div class="model-name">Lightning</div></div>
+                <div class="col-model"><div class="model-name">Flash</div></div>
+                <div class="col-model"><div class="model-name">Ultra</div></div>
+              </div>
+
+              <div class="board-row">
+                <div class="row-meta"><span class="call-name">Triage intent</span><span class="call-loc">support_agent.py:14</span></div>
+                <div class="row-track" style="justify-content:space-around;">
+                  <span class="dot done" style="width:14px;height:14px;"></span>
+                  <span class="dot done" style="width:14px;height:14px;"></span>
+                  <span class="dot done" style="width:14px;height:14px;"></span>
+                  <span class="dot current" style="width:14px;height:14px;"></span>
+                </div>
+              </div>
+
+              <div class="board-row" style="background:#F6F8FC;">
+                <div class="row-meta"><span class="call-name">Extract context</span><span class="call-loc">support_agent.py:28</span></div>
+                <div class="row-track" style="justify-content:space-around;">
+                  <span class="dot done" style="width:14px;height:14px;"></span>
+                  <span class="dot current" style="width:14px;height:14px;"></span>
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot current" style="width:14px;height:14px;"></span>
+                  <span style="position:absolute;right:16px;font-size:12px;color:var(--navy);font-weight:500;">Benchmarking…</span>
+                </div>
+              </div>
+
+              <div class="board-row">
+                <div class="row-meta"><span class="call-name">Draft reply</span><span class="call-loc">support_agent.py:42</span></div>
+                <div class="row-track" style="justify-content:space-around;">
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot pending" style="width:14px;height:14px;"></span>
+                  <span class="dot current" style="width:14px;height:14px;"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- FRAME 5: SETTINGS                                                         -->
+  <!-- ========================================================================= -->
+  <div>
+    <div class="frame-label">
+      <span>Frame 5: Settings</span>
+      <span>1440 × 900</span>
+    </div>
+    <div class="frame-container">
+      <div class="frame-shell">
+        <!-- Sidebar 232px -->
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <span class="wordmark">CascadeRouter</span>
+          </div>
+
+          <div class="pipeline-block">
+            <div class="pipeline-title">Pipeline</div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot done"></span>
+                <span class="step-name">Scan</span>
+              </div>
+              <span class="step-summary">3 calls found</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot done"></span>
+                <span class="step-name">Benchmark</span>
+              </div>
+              <span class="step-summary">3 of 3 tested</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot done"></span>
+                <span class="step-name">Recommend</span>
+              </div>
+              <span class="step-summary">2 calls can move</span>
+            </div>
+            <div class="pipeline-step">
+              <div class="pipeline-step-head">
+                <span class="dot current"></span>
+                <span class="step-name">Patch</span>
+              </div>
+              <span class="step-summary">Ready to apply</span>
+            </div>
+          </div>
+
+          <hr class="divider">
+
+          <div class="nav-list">
+            <div class="nav-item">Home</div>
+            <div class="nav-item">Workbench</div>
+            <div class="nav-item">
+              <span>Recent results</span>
+              <span class="nav-count">(1)</span>
+            </div>
+          </div>
+
+          <div class="sidebar-footer">
+            <div class="nav-list">
+              <div class="nav-item active">Settings</div>
+              <div class="nav-item">How it works</div>
+              <div class="nav-item">Security and terms</div>
+            </div>
+            <div class="version-note">Version 1.0, local backend</div>
+          </div>
+        </aside>
+
+        <!-- Main Viewport -->
+        <div class="main-viewport">
+          <header class="topbar">
+            <div class="topbar-left">
+              <h1 class="topbar-title">Settings</h1>
+            </div>
+            <div class="topbar-right">
+              <div class="status-group">
+                <span class="dot done"></span>
+                <span>Backend connected</span>
+                <button class="btn-link">Check</button>
+              </div>
+              <label style="display:flex;align-items:center;gap:6px;font-size:12px;">
+                <input type="checkbox"> Sample data
+              </label>
+            </div>
+          </header>
+
+          <div class="view-content" style="padding:28px 36px;">
+            <div style="margin-bottom:20px;">
+              <h2 style="font-family:var(--font-serif);font-size:22px;font-weight:600;margin-bottom:4px;">Settings</h2>
+              <p style="font-size:13px;color:var(--muted);">Configure compiler rules, benchmark presets, data sources and appearance.</p>
+            </div>
+
+            <!-- Settings Card with 220px label column and hairlines -->
+            <div class="settings-layout">
+              <!-- Group 1: Recommendation rules -->
+              <div class="settings-row">
+                <div class="settings-label-220">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px;">Recommendation rules</div>
+                  <div style="font-size:12px;color:var(--muted);line-height:1.4;">Controls the quality threshold passed to the compiler optimizer.</div>
+                </div>
+                <div class="settings-content">
+                  <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:500;">
+                    <input type="checkbox" checked> Only recommend a model if it passes every check
+                  </label>
+                  <div style="margin-left:24px;font-size:11px;color:var(--muted);">
+                    Contract quality threshold: <code>1.000000</code>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="settings-hr">
+
+              <!-- Group 2: Benchmark defaults -->
+              <div class="settings-row">
+                <div class="settings-label-220">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px;">Benchmark defaults</div>
+                  <div style="font-size:12px;color:var(--muted);line-height:1.4;">Pre-fills every call benchmark and "Benchmark all".</div>
+                </div>
+                <div class="settings-content">
+                  <div>
+                    <div style="font-size:12px;color:var(--muted);margin-bottom:4px;">Baseline model ID</div>
+                    <input class="btn-outline" style="width:100%;text-align:left;font-family:var(--font-mono);" value="meta-llama/Meta-Llama-3.1-70B-Instruct" readonly>
+                  </div>
+                  <div>
+                    <div style="font-size:12px;color:var(--muted);margin-bottom:4px;">Candidate models (comma-separated, max 8)</div>
+                    <input class="btn-outline" style="width:100%;text-align:left;font-family:var(--font-mono);" value="nvidia/Llama-3.1-Nemotron-70B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct" readonly>
+                  </div>
+                  <div>
+                    <div style="font-size:12px;color:var(--muted);margin-bottom:4px;">Case set ID</div>
+                    <input class="btn-outline" style="width:100%;text-align:left;font-family:var(--font-mono);" value="nebius_standard_cases" readonly>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="settings-hr">
+
+              <!-- Group 3: Data source -->
+              <div class="settings-row">
+                <div class="settings-label-220">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px;">Data source</div>
+                  <div style="font-size:12px;color:var(--muted);line-height:1.4;">Choose live inference, recorded runs, or synthetic sample fixtures.</div>
+                </div>
+                <div class="settings-content" style="gap:10px;">
+                  <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;">
+                    <input type="radio" name="ds" checked>
+                    <div>
+                      <div style="font-weight:500;">Live</div>
+                      <div style="font-size:12px;color:var(--muted);">NVIDIA Nemotron via Nebius Token Factory loopback.</div>
+                    </div>
+                  </label>
+                  <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;">
+                    <input type="radio" name="ds">
+                    <div>
+                      <div style="font-weight:500;">Recorded</div>
+                      <div style="font-size:12px;color:var(--muted);">Authenticated recorded benchmark dataset.</div>
+                    </div>
+                  </label>
+                  <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;">
+                    <input type="radio" name="ds">
+                    <div>
+                      <div style="font-weight:500;">Sample data</div>
+                      <div style="font-size:12px;color:var(--muted);">Synthetic test fixtures for customer support agent.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <hr class="settings-hr">
+
+              <!-- Group 4: Appearance -->
+              <div class="settings-row">
+                <div class="settings-label-220">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px;">Appearance</div>
+                  <div style="font-size:12px;color:var(--muted);line-height:1.4;">Select your preferred color theme.</div>
+                </div>
+                <div class="settings-content">
+                  <div style="display:inline-flex;border:1px solid var(--field-border);border-radius:var(--r-ctrl);overflow:hidden;width:fit-content;">
+                    <button class="btn-primary" style="border-radius:0;padding:6px 16px;font-size:12px;">Light</button>
+                    <button class="btn-outline" style="border:none;border-left:1px solid var(--rule);border-radius:0;padding:6px 16px;font-size:12px;">Dark</button>
+                    <button class="btn-outline" style="border:none;border-left:1px solid var(--rule);border-radius:0;padding:6px 16px;font-size:12px;">System</button>
+                  </div>
+                </div>
+              </div>
+
+              <hr class="settings-hr">
+
+              <!-- Group 5: About (read-only) -->
+              <div class="settings-row">
+                <div class="settings-label-220">
+                  <div style="font-weight:600;font-size:13px;margin-bottom:4px;">About</div>
+                  <div style="font-size:12px;color:var(--muted);line-height:1.4;">Local environment and security guarantees.</div>
+                </div>
+                <div class="settings-content" style="font-size:12px;gap:8px;">
+                  <div><span style="color:var(--muted);">Backend address:</span> <code>http://127.0.0.1:8000</code></div>
+                  <div><span style="color:var(--muted);">Version:</span> Version 1.0</div>
+                  <div style="color:var(--muted);font-style:italic;margin-top:4px;">A .bak copy is saved before every patch. This cannot be turned off.</div>
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:20px;display:flex;justify-content:flex-end;max-width:900px;">
+              <button class="btn-outline">Reset to defaults</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>

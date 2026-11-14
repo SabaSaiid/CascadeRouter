@@ -166,9 +166,10 @@ test('workbench displays repository bar, tier board, detail table and decision p
   assert.match(decisionHtml, /Run a benchmark to see which model each call can move to\./);
 });
 
-test('acceptance: no sidebar, no ALL-CAPS labels, no mono badges rendered in App', () => {
+test('acceptance: sidebar present, pipeline block rendered, no ALL-CAPS labels, no mono badges', () => {
   const html = renderToStaticMarkup(React.createElement(App));
-  assert.ok(!html.includes('app-sidebar'), 'Must have no app-sidebar');
+  assert.ok(html.includes('app-sidebar'), 'Must render app-sidebar');
+  assert.ok(html.includes('sidebar-pipeline-block'), 'Must render pipeline block');
   assert.ok(!html.includes('Step 1: Scan & DAG'), 'Must have no Step 1 badge');
   assert.ok(!html.includes('Step 2: Empirical Benchmark'), 'Must have no Step 2 badge');
   assert.ok(!html.includes('Step 3 & 4: FinOps & Patch'), 'Must have no Step 3 & 4 badge');
